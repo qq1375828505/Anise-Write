@@ -103,10 +103,10 @@ jobs:
       # assembleDebug 会构建 full + fdroid 两个风味：full 走 :mnn/:llama/app 原生
       # 编译（NDK 主战场），fdroid 无预编译原生库，顺带覆盖 F-Droid 风味可构建性。
       - name: 构建 Debug APK（full + fdroid 风味）
-        run: ./gradlew :app:assembleDebug --stacktrace
+        run: ./gradlew :app:assembleDebug --refresh-dependencies --stacktrace
 
       - name: 运行 :app JVM 单元测试
-        run: ./gradlew :app:testDebugUnitTest --stacktrace
+        run: ./gradlew :app:testDebugUnitTest --refresh-dependencies --stacktrace
 
       - name: 上传 Debug APK
         uses: actions/upload-artifact@v4
