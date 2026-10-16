@@ -58,15 +58,14 @@ jobs:
       #   :app 与 :aidl-aci-browser 未锁版本，AGP 默认解析同为 3.22.1。
       #   cmdline-tools;latest 提供 sdkmanager/licence；NDK 必装——full 风味与
       #   :mnn / :llama / :terminal-core 均含 native 构建，缺 NDK 直接配置失败。
+      # runner 预装 SDK（cmdline-tools 12.0），直接 sdkmanager 装目标组件；
+      # 不用 android-actions/setup-android@v3：其 cmdline-tools 16.0 的
+      # 非交互 --licenses 流程会因许可证交互提示退出 1（已实测）。
       - name: 安装 Android SDK 组件
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            cmdline-tools;latest
-            platforms;android-36
-            build-tools;36.0.0
-            ndk;27.0.12077973
-            cmake;3.22.1
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973" "cmake;3.22.1" > /dev/null
 
       - name: 缓存 Gradle 依赖与 wrapper（actions/cache）
         uses: actions/cache@v4
