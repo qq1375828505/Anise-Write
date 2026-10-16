@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="docx-page-size" content="A4">
+<title>PenAi 软件改造计划书</title>
+<style>
+/* 页面规则：正文页脚居中页码（仅当前页） */
+@page { @bottom-center { content: "第 " counter(page) " 页"; } }
+/* 封面命名页：无页脚 */
+@page cover { @bottom-center { content: none; } }
+section[role="cover"] { page: cover; }
+
+:root {
+  /* Typography design tokens（literary-publishing 主题注入） */
+  --typography-fontFamily-heading: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+  --typography-fontFamily-bodyLatin: "Times New Roman", Georgia, serif;
+  --typography-fontFamily-code: Consolas, "Source Code Pro", monospace;
+  --typography-lineHeight-body: 1.6;
+  --typography-lineHeight-compact: 1.35;
+  --typography-fontWeight-heading: 600;
+  --typography-fontWeight-body: 400;
+  --typography-fontWeight-bold: 700;
+  /* Color design tokens */
+  --color-primary: #3E5C76;
+  --color-secondary: #6E8697;
+  --color-accent: #3E5C76;
+  --color-text: #1F1E1C;
+  --color-muted: #6B6660;
+  --color-heading: #2B3A4A;
+  --color-divider: #E5E1D8;
+  --color-bg: #FFFFFF;
+  --color-highlight: #F5F2EA;
+  --color-emphasis: #9E4A4A;
+  --color-warning-bg: #F7F1E8;
+  --color-note-bg: #F5F2EA;
+  /* Spacing design tokens */
+  --spacing-paragraph: 0.75em;
+  --spacing-section: 2.2em;
+  --spacing-block: 1em;
+  --margin-page: 2.5cm;
+  /* 本地映射层（版式硬规范：正文宋体小四、首行缩进 2em） */
+  --ff-heading: var(--typography-fontFamily-heading);
+  --ff-body: "SimSun", "宋体", serif;
+  --ff-mono: var(--typography-fontFamily-code);
+  --fs-body: 12pt;
+  --fs-h2: 16pt;
+  --fs-h3: 14pt;
+  --fs-table: 10.5pt;
+  --fs-small: 10.5pt;
+  --fs-tiny: 9pt;
+  --fs-cover-title: 26pt;
+  --fs-cover-subtitle: 15pt;
+  --fs-cover-meta: 11pt;
+  --lh-body: var(--typography-lineHeight-body);
+  --lh-compact: var(--typography-lineHeight-compact);
+  --fw-bold: var(--typography-fontWeight-bold);
+  --indent-body: 2em;
+  --page-content-width: 15.6cm;
+  /* Spacing 本地变量（消除裸间距） */
+  --spacing-2xs: 0.1em;
+  --spacing-xs: 0.25em;
+  --spacing-s: 0.45em;
+  --spacing-sm: 0.3em;
+  --spacing-li: 0.35em;
+  --spacing-m: 0.6em;
+  --spacing-ml: 0.8em;
+  --spacing-l: 1.2em;
+  --spacing-xl: 1.5em;
+  --spacing-2xl: 2em;
+  --spacing-3xl: 3.2em;
+  --spacing-card-x: 1.4em;
+  --spacing-callout-x: 0.9em;
+  --spacing-list-indent: 2em;
+  --spacing-toc-indent: 1.5em;
+  --spacing-cover-top: 5.5cm;
+  --spacing-summary-top: 1.5cm;
+  --spacing-toc-top: 1.5cm;
+  --border-heading-width: 4px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--ff-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--color-text);
+  background: var(--color-bg);
+  max-width: var(--page-content-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ===== 封面 ===== */
+section[role="cover"].cover { padding-top: var(--spacing-cover-top); }
+.cover-category {
+  font-family: var(--ff-heading);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-bold);
+  color: var(--color-secondary);
+  letter-spacing: 0.25em;
+  text-align: center;
+  margin-bottom: var(--spacing-l);
+}
+.cover-title {
+  font-family: var(--ff-heading);
+  font-size: var(--fs-cover-title);
+  font-weight: var(--fw-bold);
+  color: var(--color-primary);
+  text-align: center;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--spacing-m);
+}
+.cover-subtitle {
+  font-family: var(--ff-heading);
+  font-size: var(--fs-cover-subtitle);
+  font-weight: var(--typography-fontWeight-heading);
+  color: var(--color-heading);
+  text-align: center;
+  margin-bottom: var(--spacing-3xl);
+}
+.cover-meta { text-align: center; margin-top: var(--spacing-2xl); }
+.cover-meta-item {
+  font-size: var(--fs-cover-meta);
+  color: var(--color-muted);
+  text-align: center;
+  margin-bottom: var(--spacing-s);
+}
+
+/* ===== 执行摘要（前置部分，独立成节） ===== */
+.summary-card {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--spacing-summary-top);
+}
+.summary-card > tbody > tr > td {
+  background: var(--color-note-bg);
+  border-left: var(--border-heading-width) solid var(--color-primary);
+  padding: var(--spacing-l) var(--spacing-card-x);
+}
+.summary-title {
+  font-family: var(--ff-heading);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-bold);
+  color: var(--color-heading);
+  text-indent: 0;
+  margin-bottom: var(--spacing-ml);
+}
+.summary-card p { text-indent: var(--indent-body); margin-bottom: var(--spacing-paragraph); }
+.summary-metric-line {
+  text-indent: 0;
+  font-size: var(--fs-small);
+  color: var(--color-muted);
+  margin-bottom: var(--spacing-paragraph);
+}
+
+/* ===== 目录 ===== */
+.toc-section { padding-top: var(--spacing-toc-top); }
+nav.doc-toc { padding: 0; }
+.toc-title {
+  font-family: var(--ff-heading);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-bold);
+  color: var(--color-heading);
+  text-align: center;
+  text-indent: 0;
+  margin-bottom: var(--spacing-block);
+}
+.toc-list, .toc-list ol, .toc-list ul {
+  list-style: none;
+  list-style-type: none;
+  padding-left: var(--spacing-toc-indent);
+}
+.toc-list > li {
+  font-family: var(--ff-heading);
+  font-weight: var(--typography-fontWeight-heading);
+  margin-bottom: var(--spacing-s);
+  text-indent: 0;
+}
+.toc-list ol li {
+  font-family: var(--ff-body);
+  font-weight: var(--typography-fontWeight-body);
+  font-size: var(--fs-table);
+  margin-bottom: var(--spacing-xs);
+}
+.toc-list a { color: var(--color-text); text-decoration: none; }
+
+/* ===== 正文 ===== */
+.report-body h2 {
+  font-family: var(--ff-heading);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-bold);
+  color: var(--color-heading);
+  border-left: var(--border-heading-width) solid var(--color-primary);
+  margin-top: var(--spacing-section);
+  margin-bottom: var(--spacing-ml);
+  text-indent: 0;
+  line-height: var(--lh-compact);
+}
+.report-body h3 {
+  font-family: var(--ff-heading);
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-bold);
+  color: var(--color-primary);
+  margin-top: var(--spacing-block);
+  margin-bottom: var(--spacing-m);
+  text-indent: 0;
+  line-height: var(--lh-compact);
+}
+.report-body p {
+  font-family: var(--ff-body);
+  font-size: var(--fs-body);
+  color: var(--color-text);
+  text-indent: var(--indent-body);
+  margin-bottom: var(--spacing-paragraph);
+  text-align: justify;
+}
+.report-body ul, .report-body ol { margin-bottom: var(--spacing-paragraph); padding-left: var(--spacing-list-indent); }
+.report-body li { font-size: var(--fs-body); margin-bottom: var(--spacing-li); text-indent: 0; }
+.report-body li p { text-indent: 0; margin-bottom: var(--spacing-sm); }
+.report-body strong { font-weight: var(--fw-bold); }
+.report-body code {
+  font-family: var(--ff-mono);
+  font-size: var(--fs-small);
+  background: var(--color-highlight);
+  padding: var(--spacing-2xs) var(--spacing-sm);
+}
+.report-body pre {
+  font-family: var(--ff-mono);
+  font-size: var(--fs-small);
+  line-height: var(--lh-compact);
+  background: var(--color-highlight);
+  border: 1px solid var(--color-divider);
+  padding: var(--spacing-ml) var(--spacing-block);
+  white-space: pre-wrap;
+  word-break: break-all;
+  text-indent: 0;
+  margin-bottom: var(--spacing-paragraph);
+}
+.report-body pre code { background: none; padding: 0; font-size: var(--fs-small); }
+
+/* ===== 表格 ===== */
+.report-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--spacing-paragraph);
+}
+.report-body th {
+  font-family: var(--ff-heading);
+  font-size: var(--fs-table);
+  font-weight: var(--fw-bold);
+  color: var(--color-heading);
+  background: var(--color-highlight);
+  border: 1px solid var(--color-divider);
+  padding: var(--spacing-s) var(--spacing-m);
+  text-align: left;
+  text-indent: 0;
+}
+.report-body td {
+  font-family: var(--ff-body);
+  font-size: var(--fs-table);
+  color: var(--color-text);
+  border: 1px solid var(--color-divider);
+  padding: var(--spacing-s) var(--spacing-m);
+  text-indent: 0;
+  vertical-align: top;
+}
+.report-body td p { text-indent: 0; font-size: var(--fs-table); margin-bottom: var(--spacing-sm); }
+
+/* ===== 强调组件 ===== */
+.data-emphasis { color: var(--color-emphasis); font-weight: var(--fw-bold); }
+.callout-warning {
+  border-left: 3px solid var(--color-emphasis);
+  background: var(--color-warning-bg);
+  padding: var(--spacing-m) var(--spacing-callout-x);
+  text-indent: 0;
+  font-size: var(--fs-small);
+  margin-bottom: var(--spacing-paragraph);
+}
+.callout-info {
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-note-bg);
+  padding: var(--spacing-m) var(--spacing-callout-x);
+  text-indent: 0;
+  font-size: var(--fs-small);
+  margin-bottom: var(--spacing-paragraph);
+}
+.src-note {
+  font-size: var(--fs-tiny);
+  color: var(--color-muted);
+  background: var(--color-note-bg);
+  padding: var(--spacing-m) var(--spacing-callout-x);
+  text-indent: 0;
+  margin-top: var(--spacing-section);
+}
+.priority-p0 { color: var(--color-emphasis); font-weight: var(--fw-bold); }
+</style>
+
+</head>
+<body>
+
+<!-- 封面 -->
+<section role="cover" class="cover">
+  <p class="cover-category" style="text-align: center;">软件改造计划书 · SOFTWARE RENOVATION PLAN</p>
+  <p class="cover-title" style="text-align: center;">PenAi 软件改造计划书</p>
+  <p class="cover-subtitle" style="text-align: center;">——基于 ZorvAI 基座的网文写作 AI Agent 改造方案</p>
+  <div class="cover-meta" style="text-align: center;">
+    <p class="cover-meta-item" style="text-align: center;">文档版本：V1.1</p>
+    <p class="cover-meta-item" style="text-align: center;">编制日期：2026 年 10 月 16 日</p>
+    <p class="cover-meta-item" style="text-align: center;">基座版本：ZorvAI v1.1.7（Kotlin 2.3 + Jetpack Compose，Apache-2.0）</p>
+    <p class="cover-meta-item" style="text-align: center;">目标仓库：qq1375828505/PenAi</p>
+    <p class="cover-meta-item" style="text-align: center;">修订说明：V1.1 纳入用户评审决策（2026-10-16）</p>
+  </div>
+</section>
+
+<!-- 执行摘要（前置部分，独立成节） -->
+<section role="cover">
+  <table class="executive-summary summary-card">
+    <thead>
+      <tr><th id="section-1" class="summary-title">&nbsp;&nbsp;执行摘要</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <p class="summary-metric-line"><strong>新增工具域</strong>：30 个 novel_* 工具 ｜ <strong>基座缺陷修复</strong>：7 项（3 项 P0） ｜ <strong>移植资产</strong>：50 个工具定义 + 25 个流派预设 + 6 个子 Agent ｜ <strong>实施阶段</strong>：Phase 0–9 共 10 个</p>
+          <p>本项目以开源安卓端侧 AI Agent <strong>ZorvAI</strong>（v1.1.7，Apache-2.0）为基座，通过领域化改造构建专注于小说创作的 AI Agent 软件 <strong>PenAi</strong>（目标仓库 qq1375828505/PenAi）。改造遵循「基座最小侵入、端到端闭环先行、资产平移而非重造」三大原则：Agent 内核（ReAct 主循环、长程编排、交付闸门、记忆四型、知识库 RAG）零改动复用，全部工作量集中于网文领域层。</p>
+          <p>领域层建设以两个既有资产来源为输入：novelIDE 的 50 个工具定义与三段式中文描述、25 个番茄流派预设、6 个子 Agent 提示词与双轨记忆设计；AIGC-NetNov 的实体数据模型、章节状态机与上下文管理设计；两者均经代码级核查，确认约 95% 业务逻辑与 UI 框架无关，具备整体平移条件。同时，针对使用者向 ZorvAI 官方仓库反馈的 <span class="data-emphasis">7 项缺陷</span>（Issues #15–#21），本文档第 7 章逐条给出代码级核实结论、根因分析与修复方案，随 PenAi 分支同步修复并回馈上游。</p>
+          <p>经用户评审决策，本版计划书冻结以下关键设计：<strong>多角色集群整体硬裁剪</strong>（子 Agent 降级为 callable 技能，经 novel_delegate_subagent 统一调度，零写权限、写操作一律回流主 AI，以职责边界矩阵消除冲突）；<strong>提示词资产以双技能套件承载</strong>（novel-writing 写作规约 + tomato-genre 二十五流派预设，用户可查看、修改、开关、导出）；<strong>富文本编辑器以独立可插拔模块保留</strong>（桥接契约冻结 + 端到端验收 + 降级纯文本不阻塞）；<strong>新增人物关系图系统</strong>（三表数据 + Compose Canvas 物理渲染，5-7 人周）；<strong>不做导入导出</strong>（数据依托基座本地工作区）；界面采用现代文学出版风（暖白纸底、墨黑正文、衬线标题、深靛蓝强调、细线大留白）。</p>
+          <p>实施按 Phase 0–9 十个阶段推进，第一里程碑为端到端最小闭环（入口→工作台→建作品→AI 写一章→保存），全面规避 AIGC-NetNov「最后一公里失守」的失败模式。预期产出：可安装发布的 PenAi 应用、完整网文领域层代码、25 个流派预设与全套中文 prompt 资产、基座修复 Patch 及配套单测与端到端测试套件。</p>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 目录 -->
+<section role="cover" class="toc-section">
+  <nav class="doc-toc" aria-label="文档目录">
+    <p class="toc-title">目 录</p>
+    <ol class="toc-list">
+      <li><a href="#section-1">执行摘要</a></li>
+      <li><a href="#section-2">1. 项目概述</a>
+        <ol>
+          <li><a href="#section-2-1">1.1 项目背景</a></li>
+          <li><a href="#section-2-2">1.2 产品定位与目标</a></li>
+          <li><a href="#section-2-3">1.3 改造对象与范围</a></li>
+          <li><a href="#section-2-4">1.4 术语定义</a></li>
+        </ol>
+      </li>
+      <li><a href="#section-3">2. 基座调研结论（ZorvAI）</a>
+        <ol>
+          <li><a href="#section-3-1">2.1 基座概况</a></li>
+          <li><a href="#section-3-2">2.2 Agent 内核能力（可直接复用）</a></li>
+          <li><a href="#section-3-3">2.3 工具系统与扩展机制</a></li>
+          <li><a href="#section-3-4">2.4 技能、人格与提示词体系</a></li>
+          <li><a href="#section-3-5">2.5 数据与记忆层</a></li>
+          <li><a href="#section-3-6">2.6 推理层</a></li>
+          <li><a href="#section-3-7">2.7 许可证分析</a></li>
+        </ol>
+      </li>
+      <li><a href="#section-4">3. 领域资产移植分析（novelIDE）</a>
+        <ol>
+          <li><a href="#section-4-1">3.1 资产清点</a></li>
+          <li><a href="#section-4-2">3.2 可移植资产分级</a></li>
+          <li><a href="#section-4-3">3.3 移植映射方法</a></li>
+          <li><a href="#section-4-4">3.4 不宜移植部分</a></li>
+        </ol>
+      </li>
+      <li><a href="#section-5">4. 前车之鉴：AIGC-NetNov 改造实践分析</a>
+        <ol>
+          <li><a href="#section-5-1">4.1 项目概况</a></li>
+          <li><a href="#section-5-2">4.2 已验证有效的架构决策</a></li>
+          <li><a href="#section-5-3">4.3 失败模式分析（PenAi 必须规避）</a></li>
+        </ol>
+      </li>
+      <li><a href="#section-6">5. 总体改造方案</a>
+        <ol>
+          <li><a href="#section-6-1">5.1 改造原则</a></li>
+          <li><a href="#section-6-2">5.2 目标架构</a></li>
+          <li><a href="#section-6-3">5.3 功能矩阵</a></li>
+          <li><a href="#section-6-4">5.4 基座裁剪策略</a></li>
+        </ol>
+      </li>
+      <li><a href="#section-7">6. 详细设计</a>
+        <ol>
+          <li><a href="#section-7-1">6.1 网文工具域设计</a></li>
+          <li><a href="#section-7-2">6.2 技能包设计</a></li>
+          <li><a href="#section-7-3">6.3 人格与系统提示词设计</a></li>
+          <li><a href="#section-7-4">6.4 数据层设计</a></li>
+          <li><a href="#section-7-5">6.5 记忆与上下文管理设计</a></li>
+          <li><a href="#section-7-6">6.6 子 Agent 体系设计</a></li>
+          <li><a href="#section-7-7">6.7 界面设计</a></li>
+          <li><a href="#section-7-8">6.8 人物关系图系统</a></li>
+          <li><a href="#section-7-9">6.9 模型配置与推理策略</a></li>
+        </ol>
+      </li>
+      <li><a href="#section-8">7. 基座缺陷修复与优化</a>
+        <ol>
+          <li><a href="#section-8-1">7.1 修复总览与优先级</a></li>
+          <li><a href="#section-8-2">7.2 Issue #15：子智能体上下文压缩缺失</a></li>
+          <li><a href="#section-8-3">7.3 Issue #16：长耗时任务进度不可观测</a></li>
+          <li><a href="#section-8-4">7.4 Issue #17：文件读取链路与技能库工具缺口</a></li>
+          <li><a href="#section-8-5">7.5 Issue #18：技能列表中文化</a></li>
+          <li><a href="#section-8-6">7.6 Issue #19 / #20：甘特图卡片渲染崩溃（复验项）</a></li>
+          <li><a href="#section-8-7">7.7 Issue #21：深度思考开关对 Anthropic 兼容端点不生效</a></li>
+        </ol>
+      </li>
+      <li><a href="#section-9">8. 实施路线图</a>
+        <ol>
+          <li><a href="#section-9-1">8.1 阶段划分</a></li>
+          <li><a href="#section-9-2">8.2 环境准备</a></li>
+          <li><a href="#section-9-3">8.3 工程协作规范</a></li>
+        </ol>
+      </li>
+      <li><a href="#section-10">9. 测试方案</a>
+        <ol>
+        </ol>
+      </li>
+      <li><a href="#section-11">10. 风险登记与对策</a>
+        <ol>
+        </ol>
+      </li>
+      <li><a href="#section-12">11. 预期产出</a>
+        <ol>
+        </ol>
+      </li>
+      <li><a href="#section-13">12. 附录</a>
+        <ol>
+          <li><a href="#section-13-1">12.1 关键文件索引（基座）</a></li>
+          <li><a href="#section-13-2">12.2 领域资产来源索引</a></li>
+          <li><a href="#section-13-3">12.3 基座缺陷 Issue 索引</a></li>
+        </ol>
+      </li>
+    </ol>
+  </nav>
+</section>
+
+<!-- 正文 -->
+<section role="body" class="report-body" data-page-restart="1">
+
+<h2 id="section-2">&nbsp;&nbsp;1. 项目概述</h2>
+<p>本章说明项目的提出背景、产品定位与核心目标、改造对象与范围，并约定全文使用的术语体系。</p>
+<h3 id="section-2-1">1.1 项目背景</h3>
+<p>网文创作是典型的高强度长文本生产活动：一部长篇作品涉及数十万至数百万字的正文、成体系的世界观设定、密集的人物关系与伏笔网络，且对「爽点密度」「节奏控制」「去 AI 味」等流派技法有专业化要求。通用 AI 对话工具无法承载这一工作流，而纯人工创作的认知负荷极高。</p>
+<p>本项目选定 <strong>ZorvAI</strong>（开源安卓端侧 AI Agent，包名 <code>com.ai.assistance.quro</code>，当前版本 1.1.7）作为基座，通过领域化改造，构建一款专注于小说创作的 AI Agent 软件 <strong>PenAi</strong>。改造完成后，PenAi 需同时满足两类用户场景：面向读者的「能写」（续写、润色、精修、风格化改写）与面向作者的「能管」（作品结构、资料库、伏笔跟踪、一致性审查）。</p>
+<h3 id="section-2-2">1.2 产品定位与目标</h3>
+<p><strong>产品定位</strong>：端侧优先的网文创作智能体——以 Agent 自主执行为核心，以网文领域知识为约束，以本地数据主权为底线。</p>
+<p><strong>核心目标</strong>：</p>
+<ol>
+<li>在 ZorvAI 既有 Agent 内核之上构建网文写作工具域，覆盖作品、卷章、八类资料、伏笔、大纲的完整生命周期管理；</li>
+<li>移植成熟网文创作资产（流派预设、子 Agent 提示词、审查规则集），使 AI 输出符合网文工业标准；</li>
+<li>建立面向长篇创作的一致性保障机制（上下文预算管理、记忆分型、前文检索）；</li>
+<li>修复基座已确认的影响垂直场景的缺陷（详见第 7 章，共 <span class="data-emphasis">7 项</span>，均经代码级核实）；</li>
+<li>保持基座可升级性，改造以最小侵入为原则，避免与上游产生不可合并的分叉。</li>
+</ol>
+<p><strong>非目标</strong>：不做通用设备控制、不做 IM 机器人平台、不做多角色集群编排（基座集群整体移除，不做软裁剪）、不自建导入导出管线（数据依托基座本地工作区）、不追求全平台（本期仅 Android）。</p>
+<h3 id="section-2-3">1.3 改造对象与范围</h3>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>基座</td><td>ZorvAI v1.1.7（Kotlin 2.3 + Jetpack Compose，Apache-2.0）</td></tr>
+<tr><td>领域资产来源一</td><td>novelIDE（Flutter 网文写作 IDE，MIT，50 工具 + 6 子 Agent + 25 流派预设 + 双轨记忆）</td></tr>
+<tr><td>领域资产来源二</td><td>AIGC-NetNov（Operit 分支的网文化改造尝试，20 张数据表 + 66 工具 + 107 桥接方法的设计资产）</td></tr>
+<tr><td>交付物</td><td>PenAi 安卓应用（仓库 <code>qq1375828505/PenAi</code>，应用名 PenAi）</td></tr>
+<tr><td>基座缺陷输入</td><td>使用者通过 GitHub Issues #15–#21 提交的 <span class="data-emphasis">7 项</span>问题（全部纳入第 7 章）</td></tr>
+</tbody>
+</table>
+<h3 id="section-2-4">1.4 术语定义</h3>
+<table>
+<thead>
+<tr>
+<th>术语</th>
+<th>定义</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>QuroTool</td><td>ZorvAI 工具接口，四要素：name / description / parametersJson / run</td></tr>
+<tr><td>coreNames</td><td>ZorvAI 工具默认下发白名单（<code>QuroTool.kt:143</code>），未入列的工具模型不可见</td></tr>
+<tr><td>ALWAYS_ON</td><td>ZorvAI 工具常驻集（<code>QuroToolRouter.kt:59</code>），渐进式披露模式下免检索直接下发</td></tr>
+<tr><td>suite</td><td>ZorvAI 技能分组机制，技能页按套件折叠，可整体默认启用</td></tr>
+<tr><td>交付闸门</td><td>LongHorizonOrchestrator 对产物原文做可交付性判定、不可交付则带记忆重规划的机制</td></tr>
+<tr><td>ToolPkg</td><td>Operit/AIGC-NetNov 体系的插件包机制（ZIP + manifest），本项目仅作设计参考</td></tr>
+</tbody>
+</table>
+<h2 id="section-3">&nbsp;&nbsp;2. 基座调研结论（ZorvAI）</h2>
+<p>本章汇总对 ZorvAI 基座的代码级调研结论，覆盖工程概况、Agent 内核、工具系统、技能与提示词体系、数据与记忆层、推理层与许可证，作为全部改造决策的事实基础。</p>
+<h3 id="section-3-1">2.1 基座概况</h3>
+<p>ZorvAI 是运行于 Android 8.0+（minSdk 26）的端侧 AI Agent，技术栈为 Kotlin 2.3 + Jetpack Compose 1.10.2（Material3），AGP 8.13 / compileSdk 36。工程为多模块 Gradle 项目（rootProject 名 「Quro AI」），核心模块包括 <code>:app</code>（宿主，857 个源文件）、<code>:mnn</code> 与 <code>:llama</code>（离线推理引擎）、<code>:terminal-core</code>（proot + Ubuntu 24.04 终端）、<code>:genuiagent-sdk</code>（530+ 组件的生成式界面 SDK）、<code>:miniapp-sdk</code>、<code>:kaleidobox</code>、6 个 <code>:cluster-*</code> 模块（多角色集群）、插件框架系列与 ACI 跨应用协议系列。</p>
+<p>构建约束（改造全程必须遵守）：NDK r27、ABI 仅 arm64-v8a、Maven 仓库走阿里云镜像、release 签名仅允许经 <code>scripts/sign.sh</code> 且禁止接触私钥（AGENTS.md 硬红线）、<code>requireSameSignature</code> 不得弱化。</p>
+<h3 id="section-3-2">2.2 Agent 内核能力（可直接复用）</h3>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>实现位置</th>
+<th>对 PenAi 的价值</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>ReAct 主循环 + 任务级闭环</td><td><code>core/QuroAssistant.kt</code>（1588 行）<code>reactPass()</code> + <code>LongHorizonOrchestrator.runTask</code></td><td>写作任务（读前文→产出→自检→重写）的调度骨架现成</td></tr>
+<tr><td>交付闸门</td><td><code>core/agent/orchestration/</code>：<code>DefaultTaskPlanner</code> / <code>HeuristicDeliverabilityJudge</code> / <code>FreePlanComposer</code></td><td>章节稿「不可交付则带原因重规划」，直接提升成稿率</td></tr>
+<tr><td>只读并发 / 副作用串行</td><td><code>QuroToolEngine</code>（<code>readOnly</code> 双条件白名单）</td><td>多资料并行读取不牺牲写序</td></tr>
+<tr><td>失败闭环回喂</td><td><code>ClosedLoopExecutor</code> + <code>QuroToolFeedback.compose</code></td><td>工具失败可自愈重试</td></tr>
+<tr><td>检查点恢复</td><td><code>QuroRunCheckpoint</code> 每轮落盘</td><td>长章节生成中断可恢复</td></tr>
+<tr><td>死循环防护</td><td>签名滑动窗口（LOOP_WINDOW=16）</td><td>防写作循环空转</td></tr>
+</tbody>
+</table>
+<p class="callout-info">&nbsp;&nbsp;<strong>结论：Agent 内核无需任何改造， PenAi 的全部工作量集中在领域层。</strong></p>
+<h3 id="section-3-3">2.3 工具系统与扩展机制</h3>
+<p>工具接口定义（<code>core/tools/QuroTool.kt:31-55</code>）：</p>
+<pre><code>interface QuroTool {
+    val name: String
+    val description: String
+    val parametersJson: String          // JSON-Schema
+    fun run(context: Context, arguments: String): String
+    val requiredPermissions: List&lt;String&gt; get() = emptyList()
+    val readOnly: Boolean get() = false
+}</code></pre>
+<p><strong>新增工具的完整注册链路（七步法，以 <code>QuroCalculatorTool</code> 为样本）</strong>：</p>
+<ol>
+<li>实现 <code>QuroTool</code> 子类（<code>run</code> 同步返回字符串）；</li>
+<li>在 <code>buildQuroRegistry()</code>（<code>QuroBuiltInTools.kt:183</code>）注册一行；</li>
+<li>工具名加入 <code>coreNames</code>（<code>QuroTool.kt:143</code>）；</li>
+<li>工具名加入 <code>QuroToolRouter.ALWAYS_ON</code>（<code>QuroToolRouter.kt:59</code>，约 <span class="data-emphasis">154 个</span>）；</li>
+<li>（建议）<code>ToolCapabilityDirectory</code> 补 <code>ToolInfo</code>（useCases/examples/tips），提升意图检索召回；</li>
+<li>（建议）<code>QuroToolUsageHints.TOOL_USAGE_HINTS</code> 补口语映射，注入系统提示词；</li>
+<li>按 <code>app/src/test/</code> 现成范式补 JVM 单测。</li>
+</ol>
+<p class="callout-warning">&nbsp;&nbsp;⚠ 第 3、4 步为隐性硬约束：在默认 PROGRESSIVE 配置下，未入 <code>coreNames</code> 或 <code>ALWAYS_ON</code> 的工具模型永远不可见——这是基座仓库内大量「功能完好但模型调不到」故障的根因，PenAi 工具域必须双写。</p>
+<p>现有 <span class="data-emphasis">248 个工具注册</span>（<code>QuroBuiltInTools.kt</code> 实测 248 处 <code>register(</code>），其中 <span class="data-emphasis">203 个</span>进入 <code>coreNames</code> 默认下发白名单、<span class="data-emphasis">154 个</span>进入 <code>ALWAYS_ON</code> 常驻集；按能力域组织（基础/设备、应用管理、通信、文件、联网、代码执行、终端、特权控屏、记忆、知识库、文档生成、UI 组件、生成式界面、多媒体、构建台、CMS/ACI/MCP/插件、集群/工作流、UI 动作、技能工具等）。其中文件读写、联网检索、记忆、知识库、代码执行（QuickJS）、文档生成（AIP 排版）六类与写作场景直接相关，全部保留。</p>
+<h3 id="section-3-4">2.4 技能、人格与提示词体系</h3>
+<ul>
+<li><strong>技能系统</strong>：内置技能播种自 <code>assets/skills/zorv/manifest.json</code>（<code>core/skill/QuroSkill.kt</code> 的 <code>seedBuiltinZorvSkills</code>），技能可 <code>alwaysOn</code> 注入系统提示词，或 <code>callable</code> 注册为 <code>skill__*</code> 工具（上限 16 个）。<code>suite</code> 字段分组，现有唯一默认启用套件为 <code>design-studio</code>。增量播种有一次性守卫 key 机制，新增技能套件需新开守卫 key。</li>
+<li><strong>人格卡</strong>：<code>core/QuroPersona.kt</code> 的 <code>seed()</code>（:163-193）定义默认人格，持久化于 <code>filesDir/quro_personas.json</code>；<code>roleSetting</code> 即系统提示词核心。</li>
+<li><strong>系统提示词组装</strong>：<code>ui/QuroChatViewModel.kt:1889</code> <code>buildSystemPrompt()</code>，顺序为 <code>QuroPlatformManifest.SYSTEM</code>（能力环境基座）→ 语言指令 → 灵魂层 → 真实下发工具集同源生成的工具清单 → alwaysOn 技能段 → 经验库段。新工具注册后自动出现在清单中，无需手写。</li>
+<li><strong>本地模型分支</strong>：MNN/llama.cpp 走极简提示词（:1903-1943，仅人格核心 + 回复纪律），且只下发设备类小子集（<code>deviceToolNames</code>，:564-576）。PenAi 若主打端侧，写作纪律必须压缩进 persona 核心，且小说工具名需加入该子集。</li>
+</ul>
+<h3 id="section-3-5">2.5 数据与记忆层</h3>
+<p>基座 <strong>未使用 Room</strong>（全仓仅 <code>:cluster-storage</code> 用 Room + SQLCipher），持久化为自研 JSON 文件 + SharedPreferences + 少量原生 SQLite：</p>
+<table>
+<thead>
+<tr>
+<th>数据</th>
+<th>位置</th>
+<th>形式</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>会话/消息</td><td><code>core/QuroConversationPersistence.kt</code></td><td><code>filesDir/quro_conversations.json</code>（启动自愈去重）</td></tr>
+<tr><td>人格卡</td><td><code>core/QuroPersona.kt</code></td><td><code>filesDir/quro_personas.json</code></td></tr>
+<tr><td>记忆库</td><td><code>core/memory/QuroMemoryStore.kt</code></td><td><code>filesDir/quro_memory.json</code></td></tr>
+<tr><td>知识库 RAG</td><td><code>core/knowledge/QuroKnowledgeRag.kt</code></td><td>原生 SQLite <code>rag_chunks</code> 表 + 文件指纹增量同步</td></tr>
+<tr><td>模型配置</td><td><code>core/model/QuroModelConfigRepository.kt</code></td><td>SharedPreferences</td></tr>
+</tbody>
+</table>
+<p><strong>四类认知记忆</strong>（<code>core/memory/QuroMemoryKind.kt</code>）：语义 / 情节 / 程序 / 工作，各有 TTL 与检索权重策略（情节 30 天降权 0.4、工作 2 小时归零），按内容启发式自动分型。长篇写作场景映射直接：主角设定存语义、章节伏笔存情节、写作流程存程序、当前任务存工作。</p>
+<p><strong>知识库 RAG</strong> 双模式：有 Embedding Key 走远程向量余弦，否则降级为 CJK 二元分词 + 词频余弦（零依赖）。前文稿、设定集可灌入做一致性检索。</p>
+<h3 id="section-3-6">2.6 推理层</h3>
+<p>云端多 Provider（含上游拒答回执归一化、四家思考字段互斥编译、工具调用容错解析）与端侧 MNN / llama.cpp 共用 <code>onToken</code> 流式接口，离线/在线对上层透明。模型管理：<code>core/model/QuroLocalModelManager.kt</code> 扫描 <code>filesDir/local_models/</code>，<code>QuroHuggingFace.kt</code> 支持 HF/ModelScope 搜索 GGUF（hf-mirror 镜像 + 手机可跑量化过滤）。</p>
+<h3 id="section-3-7">2.7 许可证分析</h3>
+<p>ZorvAI 主体代码为 <strong>Apache-2.0</strong>，允许修改、商用与闭源分发，仅需保留 NOTICE 归属。GeckoView（MPL-2.0，file-level copyleft）为可选依赖且当前渲染实际走系统 WebView；端侧 CPython 为 PSF-2.0。<strong>PenAi 基于该基座改造无许可障碍</strong>，但须完整继承 NOTICE 第三方归属清单，并继续遵守签名红线。</p>
+<h2 id="section-4">&nbsp;&nbsp;3. 领域资产移植分析（novelIDE）</h2>
+<p>本章清点 novelIDE 的领域资产，按 P0/P1/P2 分级给出移植结论与映射方法，并明确不宜移植部分。</p>
+<h3 id="section-4-1">3.1 资产清点</h3>
+<p>novelIDE 为 Flutter 3.8+ / Dart 实现的网文写作 IDE（v2.1.0），业务核心集中于 <code>lib/data/services</code>（约 19000 行）。经代码级核查，其数据层对 Flutter 的依赖仅 3 处（<code>ai_service.dart</code> 尾部一个 Riverpod Provider、<code>notification_service.dart</code>、<code>voice_service.dart</code>），<strong><span class="data-emphasis">约 95% 业务逻辑与 UI 框架无关</span></strong>，具备整体平移条件。</p>
+<h3 id="section-4-2">3.2 可移植资产分级</h3>
+<table>
+<thead>
+<tr>
+<th>级别</th>
+<th>资产</th>
+<th>位置</th>
+<th>移植形态</th>
+</tr>
+</thead>
+<tbody>
+<tr><td class="priority-p0">P0</td><td>50 个工具定义 + 三段式中文描述文案</td><td><code>workspace_agent.dart:193-649</code>、<code>agent_tool_executors.dart</code></td><td>转 Kotlin <code>QuroTool</code> 实现；描述文案决定调度质量，原样保留</td></tr>
+<tr><td class="priority-p0">P0</td><td>25 个番茄流派预设</td><td><code>data/presets/tomato_presets_data.dart</code>（374 行纯数据）</td><td>转 Kotlin 常量 / JSON，零依赖</td></tr>
+<tr><td class="priority-p0">P0</td><td>6 个子 Agent 提示词 + 五级模糊匹配 + 3 轮迭代收敛</td><td><code>app_providers.dart:60-157</code>、<code>agent_tool_executors.dart:27-135</code></td><td>prompt 照搬；匹配逻辑转 Kotlin</td></tr>
+<tr><td class="priority-p0">P0</td><td>XML 降级调用（协议层 400/422 去 tools 重试 + 正则解析层 + 循环层回传）</td><td><code>chat/xml_tool_call_parser.dart</code>、<code>ai_service.dart:366-383</code></td><td>正则改 Kotlin Regex；端侧小模型刚需</td></tr>
+<tr><td>P1</td><td>爽点密度 / 水文检测 / 爆款标题 / 一键精修 8 维度 / 全文审查 4 类的规则与截断策略</td><td><code>ai_drawer.dart:156-227</code>、<code>polish_engine_page.dart:56</code>、<code>full_text_review_page.dart:96-102</code></td><td>prompt 抽为 Kotlin 常量；截断策略（20 章 × 2000 字、15000 字分析上限）照搬</td></tr>
+<tr><td>P1</td><td>8 类资料数据模型</td><td><code>material_models.dart</code>（605 行）</td><td>直译 Kotlin data class（剥离 PlotHook 的 Colors 依赖）</td></tr>
+<tr><td>P1</td><td>小说记忆双轨：10 节文本记忆（5 分钟 TTL 缓存）+ SQLite 记忆图谱（5 表 + RRF 混合检索，K=60）</td><td><code>novel_memory.dart</code>、<code>database_helper.dart:208-284</code>、<code>memory_repository.dart</code></td><td>文本轨逻辑直译；图谱轨可映射基座四类记忆或独立 JSON</td></tr>
+<tr><td>P1</td><td>AI 资料自动分析（6 类 JSON 提取 prompt + 名称去重合并）</td><td><code>ai_analysis_service.dart</code></td><td>prompt 照搬，「读一遍书自动建档」</td></tr>
+<tr><td>P2</td><td>纯 Dart 校对引擎（60+ 错别字词库 + 标点规则）</td><td><code>proofread_service.dart</code></td><td>词库转 Kotlin List，零 AI 依赖可离线运行</td></tr>
+<tr><td>—</td><td>EPUB / DOCX / novelpack 导出</td><td><code>epub_export_service.dart</code>、<code>docx_export_service.dart</code>、<code>local_file_datasource.dart:114-158</code></td><td><strong>不做</strong>（用户决策）：基座已绑定本地工作区，正文与资料以文件形式直接可访问、可转换格式，无需自建导入导出管线</td></tr>
+<tr><td>P2</td><td>记忆三阶段管线 + AI 知识图谱分析</td><td><code>memory/memory_pipeline.dart</code>、<code>memory_analyzer.dart</code></td><td>话题分类关键词表 + JSON 抽取 prompt 可搬</td></tr>
+<tr><td>P2</td><td>工作流引擎（4 个预置：章节检查 3 步 / 全文审查 5 步 / 大纲刷新 3 步 / 角色审查 2 步）</td><td><code>workflow_engine.dart</code></td><td>步骤=工具调用的编排模型可扩展</td></tr>
+<tr><td>P2</td><td>任务→模型路由</td><td><code>model_router.dart</code></td><td>策略简单，作参考</td></tr>
+</tbody>
+</table>
+<h3 id="section-4-3">3.3 移植映射方法</h3>
+<ol>
+<li><strong>Prompt 资产抽取</strong>：所有内嵌于 UI 文件与 Provider 的 prompt 统一抽取至 <code>core/novel/prompts/</code> 常量文件，消除「改文案要动 UI」的耦合；</li>
+<li><strong>数据结构映射</strong>：Dart 模型 → Kotlin data class + <code>org.json</code> 序列化（沿用基座 JSON 持久化风格），或评估 Room 化（见 6.4）；</li>
+<li><strong>调度逻辑映射</strong>：五级模糊匹配、3 轮收敛判定（两轮输出长度差 &lt; 5%）转 Kotlin 纯函数，配 JVM 单测；</li>
+<li><strong>网络层不移植</strong>：novelIDE 的 <code>ai_service.dart</code>（Dio）不搬，PenAi 直接用基座 <code>QuroLlmClient</code> 云端 + <code>QuroLocalEngineNative</code> 端侧双通道；仅借鉴其「多认证头兼容、双协议、条件采样参数」的请求组装策略；</li>
+<li><strong>UI 不移植</strong>：Flutter 页面全部不搬，仅参考信息架构（作品区/资料区/统计三类；树形目录按用户决策砍掉，改为扁平章节列表）；novelIDE 的 WebView 富文本编辑器资产不搬代码，但其交互范式作为 PenAi 独立编辑器模块的设计基线（见 6.7）；</li>
+</ol>
+<h3 id="section-4-4">3.4 不宜移植部分</h3>
+<ul>
+<li>Flutter Widget 树、Riverpod Provider、主题皮肤（8 套）、富文本 WebView 编辑器资产（不直接复用代码，其交互范式作为 PenAi 编辑器模块的设计基线，见 6.7）；</li>
+<li><code>humanize_text</code> 的「执行器只校验、AI 按工具描述改写」模式需保留其设计思想（规则即 prompt），但实现重写；</li>
+<li>语音通话、系统通知等系统能力绑定部分。</li>
+</ul>
+<h2 id="section-5">&nbsp;&nbsp;4. 前车之鉴：AIGC-NetNov 改造实践分析</h2>
+<p>本章剖析 AIGC-NetNov 同题改造实践的完整样本，提炼已验证有效的架构决策与必须规避的失败模式。</p>
+<h3 id="section-5-1">4.1 项目概况</h3>
+<p>AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 <code>com.ai.assistance.novelide</code>，版本 1.11.0+6，LGPLv3），目标同样是将通用 AI Agent 基座改造为网文写作 IDE。该仓库沉淀了一套 <span class="data-emphasis">20 篇</span>的改造规划文档与大量领域资产，是<strong>同题实践的完整样本</strong>。</p>
+<h3 id="section-5-2">4.2 已验证有效的架构决策</h3>
+<ol>
+<li><strong>插件包承载业务、宿主最小改造</strong>：网文业务以独立插件包（66 个 <code>novelide:</code> 前缀工具 + 7 个子 Agent）承载，原生层只加导航入口、数据表、桥接 API。该路线使上游可同步、裁剪可回滚，PenAi 应采用同构路线（ZorvAI 侧对应「工具域 + 技能套件」，而非插件 APK）；</li>
+<li><strong>三层数据流边界</strong>：UI 层无数据访问权，全部经桥接 → Repository → 存储。该安全边界正确，PenAi 照搬；</li>
+<li><strong>领域建模资产完整</strong>：20 张表（作品/卷/章节/8 类资料/番茄预设/技能/关系图/事件）、25 个番茄预设种子（含完整 systemPrompt）、7 个子 Agent 调度（3 轮推敲 + 相似度 &gt; 90% 收敛提前退出）、「章节状态机 unwritten→draft→polishing→completed→exported」——<strong>与基座无关，可直接平移</strong>；</li>
+<li><strong>上下文管理显式化</strong>：章节/角色/设定三类上下文选择器 + <span class="data-emphasis">4000-8000 字符</span>预算 + 结构化模板，是长篇连贯性保障，PenAi 第一天就要设计；</li>
+<li><strong>AI 辅助工程化配方</strong>：CI 构建日志回流给 AI、分阶段验收（每阶段带禁止事项）、commit 规范、多子代理分工（planner / reviewer / build-resolver）、预编译大资源走 Release Assets 不进 git。</li>
+</ol>
+<h3 id="section-5-3">4.3 失败模式分析（PenAi 必须规避）</h3>
+<table>
+<thead>
+<tr>
+<th>失败模式</th>
+<th>事实</th>
+<th>PenAi 对策</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>最后一公里未闭环</td><td>HTML 调 <code>window.NativeBridge.*</code> 而实际注入名为 <code>NovelNativeBridge</code>；<code>Tools.callNative</code> 的 novel 方法未注册，页面数据链路断裂，自称 95% 实为「代码写完」</td><td><strong>第一里程碑必须是端到端最小闭环</strong>（入口→页面→建作品→AI 写一章→保存），链路通了才算完成</td></tr>
+<tr><td>基座运行时被打桩</td><td>17 个上游文件被 stub 以通过 CI，ToolPkg 运行时残缺，插件能否加载无法验证</td><td>与基座运行时的兼容性验证先于功能开发；不为过编译而桩改基座</td></tr>
+<tr><td>双轨 UI 债务</td><td>同时维护 HTML 设计稿与原生 DSL 页面两套界面，且存在 <code>UI/</code> 与 <code>examples/novelide/</code> 两个同源工程</td><td>开跑前冻结唯一 UI 技术路线</td></tr>
+<tr><td>命名空间晚期更改</td><td><code>com.ai.assistance.operit</code>→<code>novelide</code> 的全仓 R 类污染</td><td>applicationId / namespace / App 名第一天定死（PenAi 已在 Stage 0 确定）</td></tr>
+<tr><td>规划反复翻烙饼</td><td>数据库版本 v21→v22→v20→v21、存储方案文件系统→Room、Screen order 三改</td><td>冻结唯一决策文档，所有分册引用，不允许分册自相矛盾</td></tr>
+<tr><td>半裁剪</td><td>gradle 摘了 NDK 模块但 web-chat 仍在构建；NavItem 写了没接线</td><td>裁剪决策落到构建脚本与注册处，可验证</td></tr>
+<tr><td>安全设计纸面化</td><td>WebView <code>allowFileAccess=true</code>、API Key 明文、无证书锁定</td><td>安全配置与功能同轴上线</td></tr>
+</tbody>
+</table>
+<h2 id="section-6">&nbsp;&nbsp;5. 总体改造方案</h2>
+<p>本章给出 PenAi 的改造原则、目标架构、功能矩阵与基座裁剪策略，构成后续详细设计的顶层约束。</p>
+<h3 id="section-6-1">5.1 改造原则</h3>
+<ol>
+<li><strong>基座最小侵入</strong>：所有领域能力以「新工具 + 新技能套件 + 新页面 + 新人格」挂载，不改 Agent 内核、不改工具引擎、不动签名体系；</li>
+<li><strong>端到端闭环先行</strong>：任何阶段以「用户可走完一条完整创作路径」为完成定义；</li>
+<li><strong>单一决策文档</strong>：存储方案、包名版本、UI 路线、工具命名在本文档冻结，实现期不允许分册自相矛盾；</li>
+<li><strong>软裁剪优先</strong>：通用功能裁剪以「不注册工具 + 移除设置入口」为主，模块级硬裁剪仅在有包体/合规确需时执行；</li>
+<li><strong>资产平移而非重造</strong>：novelIDE 与 AIGC-NetNov 已验证的 prompt、数据模型、规则集直接平移，PenAi 不重复造轮子。</li>
+</ol>
+<h3 id="section-6-2">5.2 目标架构</h3>
+<pre><code>┌────────────────────────────────────────────────────────┐
+│ PenAi 应用层（com.ai.assistance.quro，重命名/换皮后交付）  │
+│  ChatScreen（主对话，继承基座）                          │
+│    └─ NovelStudioScreen（小说工作台：章节/编辑器/资料库/   │
+│       关系图/统计，数据落工作区文件直管）                   │
+├────────────────────────────────────────────────────────┤
+│ 网文领域层（新增，core/novel/）                          │
+│  ├─ 工具域：novel_* 工具族（30 个，QuroTool 实现）         │
+│  ├─ 技能套件：novel-writing（写作规约）                    │
+│  │            + tomato-genre（25 流派预设，用户可改）      │
+│  ├─ 子 Agent：6 个（大纲/角色/爽点/水文/标题/去AI味）       │
+│  │   形态=callable 技能，经 novel_delegate_subagent 调度， │
+│  │   零写权限，写操作一律回流主 AI                        │
+│  └─ 人格与提示词：网文创作助手（一张默认人格）             │
+├────────────────────────────────────────────────────────┤
+│ 独立模块（可插拔，:novel-editor）                         │
+│  富文本编辑器（WebView + 桥接契约，可摘除降级纯文本）       │
+├────────────────────────────────────────────────────────┤
+│ 基座能力层（复用，零改动）                                │
+│  ReAct + 长程编排 + 交付闸门 │ 工具引擎 │ 记忆四型 │ RAG   │
+│  MNN/llama.cpp 端侧推理 │ 云端多 Provider │ 技能系统      │
+├────────────────────────────────────────────────────────┤
+│ 数据层（filesDir JSON + 工作区文件）                      │
+│  作品/卷/章节 │ 8 类资料 │ 伏笔 │ 关系图三表 │ 番茄预设     │
+└────────────────────────────────────────────────────────┘</code></pre>
+<h3 id="section-6-3">5.3 功能矩阵</h3>
+<table>
+<thead>
+<tr>
+<th>处置</th>
+<th>功能</th>
+</tr>
+</thead>
+<tbody>
+<tr><td><strong>保留（基座）</strong></td><td>Agent 内核、工具引擎、交付闸门、记忆四型、知识库 RAG（保留前先拆 2 个被污染索引）、MNN/llama.cpp 推理、云端多 Provider、技能系统、人格系统、AIP 文档排版、代码执行（文本处理可用）、联网检索、语音（章节朗读场景）、CodeCanvas（封面图）</td></tr>
+<tr><td><strong>新增（网文域）</strong></td><td>小说工具族（30 个）、novel-writing + tomato-genre 双技能套件、6 个写作子 Agent（callable 技能形态，主 AI 统一协调）、NovelStudioScreen、网文人格卡、番茄预设库（25 个）、资料自动建档、一致性审查、人物关系图系统、独立富文本编辑器模块</td></tr>
+<tr><td><strong>软裁剪（不注册）</strong></td><td>IM 机器人（core/bot/）、设备控制（core/shizuku、core/privilege、core/permissions、core/adb）、APK 插件框架、ACI 跨应用、CMS、浏览器工具、KaleidoBox/小程序、GenUI 子应用</td></tr>
+<tr><td><strong>硬裁剪（整模块/整链路移除）</strong></td><td>多角色集群（6 个 <code>:cluster-*</code> 模块 + 注册链路，见 5.4）、MCP 外部服务器（DroidMcp 内嵌于 <code>QuroTool.kt</code>，动手术式摘除，见 5.4）</td></tr>
+<tr><td><strong>移除设置入口</strong></td><td>上述子系统对应的设置页与导航项</td></tr>
+</tbody>
+</table>
+<h3 id="section-6-4">5.4 基座裁剪策略</h3>
+<p>裁剪按耦合度分级执行，全部可回滚：</p>
+<table>
+<thead>
+<tr>
+<th>子系统</th>
+<th>耦合度</th>
+<th>裁剪方式</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>IM 通道（飞书/QQ/微信）</td><td>极低（app 外引用仅 4 处）</td><td>删 <code>core/bot/</code> + 4 处引用 + 设置项</td></tr>
+<tr><td>多角色集群</td><td>中（6 个 Gradle 模块，注册链路深）</td><td><strong>必砍</strong>（用户决策，非软裁剪）：<code>settings.gradle</code> 摘 include + 删 <code>QuroBuiltInTools.kt:612</code> 注册行 + 摘 <code>QuroChatViewModel</code> 集群 VM 注册与页面路由；集群砍掉后子 Agent 降级为 callable 技能（见 6.6）</td></tr>
+<tr><td>ACI / 插件框架 / CMS / KaleidoBox</td><td>低（纯挂载）</td><td>不注册工具 + 摘设置入口</td></tr>
+<tr><td>设备控制（L1–L4）</td><td>低-中（权限网关与工具执行集成）</td><td>不注册工具 + 注释无障碍服务声明</td></tr>
+<tr><td>MCP 外部服务器</td><td>中（DroidMcp 客户端内嵌于 <code>QuroTool.kt:408-409</code>，非独立目录）</td><td>动手术：摘除内嵌客户端与工具注册 + 禁用设置入口；<strong>不得</strong>按「整目录删」处理</td></tr>
+<tr><td>终端 / Linux 沙箱</td><td>中（FTP jar 已致 packaging 冲突）</td><td>工具不注册；模块级摘除需验证 packaging</td></tr>
+<tr><td>语音</td><td>中</td><td>保留（朗读场景有用），TTS 供应商按需裁剪</td></tr>
+</tbody>
+</table>
+<p class="callout-info">&nbsp;&nbsp;RAG 保留前提：知识库索引需先拆分 2 个被污染索引（混入非目标语料），拆分校验后再灌入前文稿与设定集，避免检索召回被污染。</p>
+<h2 id="section-7">&nbsp;&nbsp;6. 详细设计</h2>
+<p>本章逐项展开网文工具域、技能包、人格与提示词、数据层、记忆与上下文、子 Agent 体系、界面、关系图与推理策略的详细设计。</p>
+<h3 id="section-7-1">6.1 网文工具域设计</h3>
+<p><strong>数据层</strong>：新建 <code>core/novel/</code>（数据模型 + JSON 持久化于 <code>filesDir/novel/</code>），不引入 Room（与基座风格一致，避免双持久化范式）。</p>
+<p><strong>工具族清单</strong>（共 30 个，全部纯本地、无危险权限，按七步法注册，coreNames/ALWAYS_ON 双写）：</p>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>工具</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>作品/结构</td><td>novel_list_works, novel_create_work, novel_update_work, novel_get_outline, novel_save_outline</td><td>作品 CRUD + 三级大纲（卷/章/节）</td></tr>
+<tr><td>章节</td><td>novel_get_chapter, novel_write_chapter, novel_delete_chapter, novel_chapter_stats, novel_chapter_status</td><td>正文读写删 + 字数统计 + 章节状态机（unwritten→draft→polishing→completed）</td></tr>
+<tr><td>资料（8 类）</td><td>novel_materials_get, novel_materials_add, novel_materials_update, novel_materials_delete</td><td>角色/设定/地点/势力/道具/伏笔/参考/待办统一入口，type 参数分流</td></tr>
+<tr><td>伏笔</td><td>novel_hooks_status</td><td>已埋/已回收/已废弃 + 闲置章数统计</td></tr>
+<tr><td>关系图</td><td>novel_relationships, novel_relationship_graph</td><td>人物关系 CRUD（类型/强度 1-5/自定义颜色）+ 关系图渲染数据生成</td></tr>
+<tr><td>分析</td><td>novel_consistency_check, novel_shuangdian_report, novel_water_report, novel_title_candidates</td><td>映射 novelIDE 四类审查规则</td></tr>
+<tr><td>精修</td><td>novel_polish</td><td>8 维度精修入口</td></tr>
+<tr><td>去AI味</td><td>novel_humanize</td><td>规则即 prompt 设计</td></tr>
+<tr><td>检索</td><td>novel_query_previous</td><td>前文检索（人物上次出场/道具/时间线），控制上下文成本</td></tr>
+<tr><td>上下文</td><td>novel_build_context</td><td>按预算（<span class="data-emphasis">4000-8000 字符</span>）组装作品上下文，复用 AIGC-NetNov context_builder 设计</td></tr>
+<tr><td>流派</td><td>novel_list_genres, novel_apply_genre</td><td>25 个番茄流派预设的查询与应用</td></tr>
+<tr><td>记忆</td><td>novel_memory_save, novel_memory_query</td><td>小说双轨记忆：文本轨（近期章节快照）+ 图谱轨（实体关系）</td></tr>
+<tr><td>调度</td><td>novel_delegate_subagent</td><td>6 个子 Agent 模糊匹配调度（五级匹配 + 3 轮收敛，见 6.6）</td></tr>
+</tbody>
+</table>
+<p><strong>工具描述规范</strong>：沿用 novelIDE 三段式（功能说明 + 何时用/触发词 + 返回内容），中文撰写；只读工具声明 <code>readOnly = true</code> 进入并发白名单。</p>
+<h3 id="section-7-2">6.2 技能包设计</h3>
+<p>新建两个技能套件，manifest.json 登记，种子播种复用基座 <code>seedBuiltinZorvSkills</code> 机制（<strong>增量播种需新开一次性守卫 key</strong>，基座既有坑）：</p>
+<table>
+<thead>
+<tr>
+<th>套件</th>
+<th>内容</th>
+<th>默认态</th>
+</tr>
+</thead>
+<tbody>
+<tr><td><code>novel-writing</code></td><td>写作规约：黄金三章结构、爽点节奏控制、伏笔管理规范、长篇一致性守则、去 AI 味文风规范</td><td><code>alwaysOn=false</code>，触发词命中注入，避免挤占提示词预算</td></tr>
+<tr><td><code>tomato-genre</code></td><td>25 个番茄流派预设各注册为一项技能（systemPrompt 全文平移），用户选用即注入</td><td>默认全部关闭，按作品选用</td></tr>
+</tbody>
+</table>
+<p><strong>用户可改性</strong>（载体结论）：技能以文本形式持久化（SharedPreferences JSON + assets 播种），用户在技能页可查看、修改、开关、导出全部提示词——流派预设与写作规约对用户完全透明可改，不锁定、不混淆。流派注入链路为用户显式动作（选流派 → 技能启用 → 注入系统提示词），不写死人格。</p>
+<h3 id="section-7-3">6.3 人格与系统提示词设计</h3>
+<ol>
+<li><code>QuroPersona.seed()</code> 默认人格改为「网文创作助手」，<code>roleSetting</code> 承载创作纪律（先细纲后正文、每章爽点下限、禁用词表）；</li>
+<li><code>QuroPlatformManifest.SYSTEM</code> 能力环境段补小说工作流说明；</li>
+<li>本地模型分支：将创作纪律压缩进 persona 核心（本地提示词预算极紧），小说工具名加入 <code>deviceToolNames</code> 子集；</li>
+<li>流派预设注入链路：用户选定流派 → 对应 <code>tomato-genre</code> 技能启用 → 预设 systemPrompt 作为会话级约束注入（不写死人格，全库仅一张默认人格）。</li>
+</ol>
+<h3 id="section-7-4">6.4 数据层设计</h3>
+<p><strong>Phase 1（JSON 文件 + 工作区）</strong>：<code>filesDir/novel/{works,chapters,materials,outline,memory}</code>，模型直译 novelIDE 的 8 类资料 + AIGC-NetNov 的实体设计（作品/卷/章节/8 类资料/番茄预设/技能），正文存 <code>.md</code> 文件、元数据存 JSON。<strong>人物关系图三表</strong>（平移 AIGC-NetNov 设计）：关系表（关系类型、强度 1-5、自定义颜色）、事件表（章节锚点）、参与者表（人物-事件多对多桥接）；novelIDE 侧 <code>character_relationship.dart</code> 的关系类型枚举一并直译。</p>
+<p><strong>Phase 2（评估 Room 化）</strong>：当资料规模与并发查询出现瓶颈时引入 Room（基座已声明 Room 2.8.4 依赖），迁移脚本按 AIGC-NetNov 的 Migration 模式（CREATE TABLE IF NOT EXISTS + 版本递进 + 禁止删用户数据）。</p>
+<p><strong>数据主权（导入导出不做，用户决策）</strong>：不自建 EPUB/DOCX/novelpack 导入导出管线——基座已绑定本地工作区，全部数据以文件形式落在用户可见目录，可直接编辑与格式转换；卸载重装不丢稿由工作区目录绑定保证，AIGC-NetNov NovelBackupManager 式的自建备份方案不再采用。</p>
+<h3 id="section-7-5">6.5 记忆与上下文管理设计</h3>
+<table>
+<thead>
+<tr>
+<th>记忆类型</th>
+<th>映射内容</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>语义</td><td>世界观铁律、主角核心设定</td><td>「主角不能死」「修炼体系上限」</td></tr>
+<tr><td>情节</td><td>章节事件、伏笔埋收</td><td>「第 87 章埋的刀第 210 章收」</td></tr>
+<tr><td>程序</td><td>写作流程规范</td><td>「先细纲后正文」</td></tr>
+<tr><td>工作</td><td>当前任务态</td><td>「正在写第三卷第十二章」</td></tr>
+</tbody>
+</table>
+<p>上下文组装（<code>novel_build_context</code>）：任务相关的前文章节（按检索相关性 top-N）× 2000 字截断 + 相关角色/设定卡一行摘要 + 未回收伏笔清单，总预算 <span class="data-emphasis">4000-8000 字符</span>，超预算按重要度降序淘汰。novelIDE 的 10 节文本记忆作为 AI 上下文快照的补充形态保留（TTL 缓存）。</p>
+<h3 id="section-7-6">6.6 子 Agent 体系设计</h3>
+<p>6 个子 Agent（大纲生成器 / 角色生成器 / 爽点检查 / 水文检测 / 爆款标题 / 去AI味），prompt 全文移植自 novelIDE（已经真实场景打磨）。多角色集群砍掉后，子 Agent 不再依赖基座 <code>spawn_subagent</code> 集群机制，<strong>降级为 callable 技能形态</strong>：每个子 Agent 的 systemPrompt 注册为一项技能，经 <code>novel_delegate_subagent</code> 工具统一调度，全部执行发生在主 AI 的 ReAct 循环内（无独立 subStore，天然规避 Issue #15 的上下文压缩缺陷）。</p>
+<p><strong>职责边界矩阵</strong>（硬约束：每个 Agent 只干一件事，越权与冲突一律上交主 AI）：</p>
+<table>
+<thead>
+<tr>
+<th>子 Agent</th>
+<th>负责（只读 + 产出建议）</th>
+<th>明确不做</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>大纲生成器</td><td>读大纲/章节摘要 → 产出黄金三章、分卷建议、章节概略</td><td>不写正文、不修改已有大纲文件</td></tr>
+<tr><td>角色生成器</td><td>读作品类型/主角设定 → 产出角色卡草稿</td><td>不直接写入资料库</td></tr>
+<tr><td>爽点检查</td><td>读单章正文 → 评分数 + 爽点列表 + 优化建议</td><td>不改正文、不评价文笔（属精修域）</td></tr>
+<tr><td>水文检测</td><td>读单章正文 → 水文率 + 冗余段落定位 + 精简建议</td><td>不改正文</td></tr>
+<tr><td>爆款标题</td><td>读章节摘要 → 10 个候选标题 + 点击理由</td><td>不修改作品名/章节名</td></tr>
+<tr><td>去AI味</td><td>读指定文本 → 人性化改写建议稿</td><td>不直接落盘，改写稿以建议形式返回</td></tr>
+</tbody>
+</table>
+<p><strong>冲突仲裁规则</strong>：</p>
+<ol>
+<li>爽点检查与水文检测都读正文、都出「建议」——两者只读不写、输出均为建议态，不构成冲突；用户同时要求时，主 AI 并行调度后汇总为一份报告；</li>
+<li>全部子 Agent <strong>零写权限</strong>：涉及落库、改稿、改状态的操作只能由主 AI 执行（经 <code>novel_*</code> 写工具），子 Agent 输出一律作为主 AI 的决策输入；</li>
+<li><strong>主 AI 是唯一编排者</strong>：负责派发（五级模糊匹配：精确 ID→中文名→互相包含→关键词映射→描述包含）、汇总（多 Agent 结果合并去重）、裁决（建议冲突时以用户明示要求优先）、落库；</li>
+<li>执行最多 3 轮迭代，第 2 轮起 prompt 要求「检查并优化上一轮结果」，两轮输出长度差 &lt; 5% 判定收敛提前退出；子 Agent 失败返回可用清单引导重试。</li>
+</ol>
+<h3 id="section-7-7">6.7 界面设计</h3>
+<p><strong>视觉风格：现代文学出版风</strong>（用户决策：去陶土色、去中式文艺范）：</p>
+<table>
+<thead>
+<tr>
+<th>令牌</th>
+<th>取值</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>底色</td><td>暖白纸 <code>#FAF8F3</code>（中性化，不偏黄陶土）</td><td>页面背景</td></tr>
+<tr><td>文字</td><td>墨黑 <code>#1F1E1C</code></td><td>正文</td></tr>
+<tr><td>标题</td><td>Noto Serif SC（衬线，非楷体）</td><td>各级标题</td></tr>
+<tr><td>强调色</td><td>低饱和深靛蓝 <code>#3E5C76</code></td><td>主按钮、选中态、链接</td></tr>
+<tr><td>分隔</td><td>1px 细线 <code>#E5E1D8</code></td><td>卡片边界、列表分隔</td></tr>
+<tr><td>留白</td><td>16/24/32dp 梯度大间距</td><td>阅读区呼吸感</td></tr>
+</tbody>
+</table>
+<p>整体气质参照现代文学出版社装帧：衬线标题 + 细线 + 大留白，安静、适合长时间阅读。</p>
+<p><strong>NovelStudioScreen</strong>（新建文件，最小侵入接线）：</p>
+<ul>
+<li>四个 Tab：<strong>章节</strong>（扁平列表，无树形目录——按用户决策砍掉大纲树/资料树，作品结构用卷章分组列表呈现）、<strong>资料库</strong>（8 类卡片）、<strong>关系图</strong>（见 6.8）、<strong>统计</strong>（字数/打卡/爽点密度趋势）；点击章节进入全屏富文本编辑器（独立模块，见下）；</li>
+<li>接线方式：ChatScreen 加 <code>showNovelStudio</code> 布尔开关 + 入口按钮（模式 A，仿 <code>QuroKnowledgeScreen</code> 521 行范式）；</li>
+<li>AI 可自开界面：<code>QuroToolsUiActions.kt</code> 的 <code>UI_ACTIONS</code> 增加 <code>ui_open_novel</code>（模式 B），用户点击与 AI 主动打开同路。</li>
+</ul>
+<p><strong>富文本编辑器模块（独立可插拔，用户决策保留）</strong>：</p>
+<ul>
+<li>形态：独立模块 <code>:novel-editor</code>（WebView 承载富文本编辑），对 NovelStudioScreen 暴露统一接口，可单独摘除；</li>
+<li>桥接契约（吸取 AIGC-NetNov <code>NativeBridge</code> 命名不匹配致最后一公里断裂的教训）：桥接对象名、方法名、参数 schema 在本文档冻结——<code>load(html)</code> / <code>getContent()</code> / <code>setContent(html)</code> / <code>insertText(text)</code> / <code>getSelection()</code> 五方法 + 内容变更回调；端到端验收标准：编辑器输入一个字，<code>novel_get_chapter</code> 能原样读回；</li>
+<li>降级：模块缺失或桥接未就绪时，编辑器 Tab 自动降级为纯文本/Markdown 编辑（与基座一致），功能不阻塞；</li>
+<li>交互范式参考 novelIDE WebView 编辑器资产（不移植代码）。</li>
+</ul>
+<h3 id="section-7-8">6.8 人物关系图系统</h3>
+<p><strong>数据</strong>：关系图三表（关系/事件/参与者，见 6.4），关系强度 1-5 级、支持自定义颜色；AI 经 <code>novel_relationships</code> 维护数据、<code>novel_relationship_graph</code> 取渲染数据，数据与视图分离。</p>
+<p><strong>渲染</strong>：自研 Compose Canvas + 弹簧斥力物理模拟（节点斥力 + 关联弹簧 + 阻尼，约 200-400 行），复用基座 DrawCommand 图元集与 VizIcon 手绘风；关系强度映射边宽、自定义颜色映射边色；支持节点拖拽、缩放、长按查看关系详情；物理模拟收敛判据与单测范式见第 9 章。</p>
+<p><strong>可行性结论</strong>：<span class="data-emphasis">5-7 人周</span>，中规模低风险——三仓库拼图齐全（novelIDE 交互范式 + AIGC-NetNov 数据表 + ZorvAI 绘图家底）。</p>
+<h3 id="section-7-9">6.9 模型配置与推理策略</h3>
+<ul>
+<li>云端：沿用基座多 Provider + 思考协议编译；<strong>扩展 <code>detectFamily</code> 兼容国产 Anthropic 兼容端点</strong>（见 7.6，#21）；</li>
+<li>端侧：MNN/llama.cpp GGUF，模型经 <code>QuroLocalModelManager</code> 导入；端侧提示词按 6.3 压缩；</li>
+<li>任务路由：按 novelIDE <code>model_router</code> 策略，重任务（全文审查）走云端、轻任务（润色/校对）可端侧；</li>
+<li>工具调用降级：移植 novelIDE XML 降级三层机制，保障不支持的 function calling 的模型可用。</li>
+</ul>
+<h2 id="section-8">&nbsp;&nbsp;7. 基座缺陷修复与优化</h2>
+<p>本章收录使用者向 ZorvAI 官方仓库反馈的全部 <span class="data-emphasis">7 项</span> issue（#15–#21，均处于 open 状态）。所有条目经对 v1.1.7 源码的代码级核实，按「必须修复 / 建议修复 / 复验后处置」分级。修复随 PenAi 分支同步进行，<strong>修复 Patch 同步向上游提交，履行开源回馈义务</strong>。</p>
+<h3 id="section-8-1">7.1 修复总览与优先级</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>问题</th>
+<th>核实结论</th>
+<th>优先级</th>
+<th>处置</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>15</td><td>子智能体上下文不参与主循环压缩</td><td>属实（<code>QuroAssistant.kt:1394</code> subStore 独立存储）</td><td class="priority-p0">P0</td><td>修复</td></tr>
+<tr><td>16</td><td>长耗时工具缺乏进度心跳</td><td>属实</td><td>P1</td><td>优化</td></tr>
+<tr><td>17</td><td>run_code 大文件挂死 + 文件读取缺口 + 技能库无 AI 接口</td><td>属实</td><td class="priority-p0">P0</td><td>修复</td></tr>
+<tr><td>18</td><td>技能列表无中文说明</td><td>属实</td><td>P1</td><td>优化</td></tr>
+<tr><td>19/20</td><td>甘特图卡片渲染崩溃</td><td>v1.1.7 第 82 行已空安全，疑似已修</td><td>P2</td><td>真机复验后处置</td></tr>
+<tr><td>21</td><td>深度思考开关对 Anthropic 兼容端点不生效</td><td>属实（<code>QuroReasoningControl.kt:173-196</code>）</td><td class="priority-p0">P0</td><td>修复</td></tr>
+</tbody>
+</table>
+<h3 id="section-8-2">7.2 Issue #15：子智能体上下文压缩缺失</h3>
+<p><strong>现象</strong>：<code>spawn_subagent</code> 执行「读多份资料 + 产出报告」任务时频繁返回「子智能体未在限定轮数内产出结果」或 90 秒超时；实测 4 次派发中 2 次超轮、1 次仅返回中间状态、1 次超时。</p>
+<p><strong>根因</strong>：子代理运行于独立 <code>subStore</code>（<code>QuroAssistant.kt:1394</code>），其工具结果不经主循环的 <code>toLlmMessages</code> 前压缩（compactToolResults / truncateToolResult / pruneOrphanToolMessages），上下文只增不减；叠加中英混排下 <code>estTokens = length/4</code> 粗估偏差，长任务必然超限。</p>
+<p><strong>修复方案</strong>：</p>
+<ol>
+<li>子代理每轮 <code>engine.execute</code> 前接入与主循环同款的压缩管线；</li>
+<li>为子代理设置显式 token 预算（复用 <code>SUBAGENT_CONTEXT_WINDOW_TOKENS</code>），临近预算触发自动压缩钩子；</li>
+<li>子代理失败返回附带上文占用估算，便于调用方定位；</li>
+<li>补 JVM 单测：构造超预算子代理会话，断言触发压缩而非超轮失败。</li>
+</ol>
+<p><strong>影响面</strong>：<code>core/QuroAssistant.kt</code> 子代理段（约 :1388-1500）。<strong>PenAi 相关性：高</strong>——「读前文稿 + 产出章节/报告」是写作 Agent 的核心调用形态。</p>
+<h3 id="section-8-3">7.3 Issue #16：长耗时任务进度不可观测</h3>
+<p><strong>现象</strong>：工具执行超数秒后对话框仅静态「正在执行: xxx…」；网络重试无提示；子代理中间状态曾被当作最终结果交付；用户反复催问造成重复调用。</p>
+<p><strong>修复方案</strong>：</p>
+<ol>
+<li>工具执行超阈值（10s）向会话回传进度行（「仍在执行，已耗时 Xs / 第 N 次重试」）；</li>
+<li>长任务支持分段结果流（run_code 增量输出、子代理中间状态透传，非最终结论不得交付）；</li>
+<li>网络类工具自动重试时展示重试过程；</li>
+<li>子代理返回非最终结论时打标记，调用方可见状态。</li>
+</ol>
+<p><strong>影响面</strong>：<code>QuroToolEngine</code> 执行回调 + 子代理结果判定。<strong>PenAi 相关性：高</strong>——章节生成属典型长任务。</p>
+<h3 id="section-8-4">7.4 Issue #17：文件读取链路与技能库工具缺口</h3>
+<p><strong>现象与根因</strong>：① <code>run_code</code> 读 736KB 本地文件无限挂起，声明的 15s 超时未触发（执行异常无明确错误返回）；② <code>file_read</code> 无 offset/maxBytes 却建议分段读取；<code>read_text_file</code> 有 maxBytes 无 offset 且两工具根路径语义不一致；③ 宿主技能库（81 个技能）无 AI 可列、可增删的接口，<code>cluster_skill_install</code> 安装后无法代启用。</p>
+<p><strong>修复方案</strong>：</p>
+<ol>
+<li><code>run_code</code> 执行体补超时强绑与异常兜底，大文件读取明确成功或明确拒绝；</li>
+<li><code>file_read</code> 增加 <code>offset</code>/<code>maxBytes</code>；<code>read_text_file</code> 支持绝对路径或在报错中说明可访问根；两者行为对齐；</li>
+<li>新增 <code>skill_list</code> / <code>skill_enable</code> / <code>skill_disable</code> 工具（七步法注册，注意 coreNames + ALWAYS_ON 双写），打通「安装→启用」链路。</li>
+</ol>
+<p><strong>影响面</strong>：<code>core/tools/</code> 文件读取族 + 技能系统。<strong>PenAi 相关性：高</strong>——长篇小说章节文件常在数百 KB 级，网文技能包的启用依赖第 3 项。</p>
+<h3 id="section-8-5">7.5 Issue #18：技能列表中文化</h3>
+<p><strong>现象</strong>：81 个技能中开源来源的技能仅英文 name/description，中文用户无法判断该启用哪个；开关不可逆（81 选 6），选错成本高。</p>
+<p><strong>修复方案</strong>：</p>
+<ol>
+<li>技能模型增加 <code>description_zh</code> 字段；开源技能安装时生成中文一句话摘要（安装环节一次性处理）；</li>
+<li>技能选择界面优先显示中文，无则降级英文；支持中文关键词搜索（复用 <code>ToolCapabilityDirectory.matchToolsByIntent</code> 分词）；</li>
+<li>与 7.4 第 3 项联动：AI 用中文给出启用裁决清单，用户确认后经 <code>skill_enable</code> 代启用。</li>
+</ol>
+<p><strong>影响面</strong>：技能模型 + 技能页 UI。<strong>PenAi 相关性：高</strong>——novel-writing 套件面向中文作者，此为实现易用性的前置。</p>
+<h3 id="section-8-6">7.6 Issue #19 / #20：甘特图卡片渲染崩溃（复验项）</h3>
+<p><strong>现象</strong>：渲染 gantt 卡片时主线程 <code>NoSuchElementException</code>（<code>QuroChatCardsEx2.kt:82</code>，Compose 重组路径）。</p>
+<p><strong>核实结论</strong>：v1.1.7 源码该行已为 <code>val total = (card.total.takeIf { it &gt; 0 } ?: card.tasks.maxOfOrNull { it.start + it.duration } ?: 1).coerceAtLeast(1)</code>，且存在 <code>if (card.tasks.isEmpty())</code> 空数据分支与相应注释，<strong>疑似已在某版本修复</strong>。</p>
+<p><strong>处置</strong>：PenAi 分支基于 v1.1.7 构建后，按 issue 复现路径（对话框渲染 gantt 卡片）真机复验。若仍现，执行原修复建议（空安全 + 空数据降级为 note 卡 + 三类单测：空数组/缺字段/畸形 JSON）；若已修，补回归单测防回潮，issue 标注关闭。</p>
+<h3 id="section-8-7">7.7 Issue #21：深度思考开关对 Anthropic 兼容端点不生效</h3>
+<p><strong>现象</strong>：开启「深度思考」后选 Agnes 3.0 Flash（Anthropic 兼容 Messages API），输出与关闭时逐字节相同。</p>
+<p><strong>根因</strong>：<code>QuroReasoningControl.kt</code> 的 <code>detectFamily</code>（:173-196）仅按 baseUrl 关键词判定家族（<code>anthropic.com</code> / <code>api.openai.com</code> / <code>dashscope</code>），其他一律 <code>Family.NONE</code>；<code>apihub.agnes-ai.com</code> 不匹配任何关键词，NONE 家族返回空 plan，请求体不含任何 thinking 字段。</p>
+<p><strong>修复方案</strong>：</p>
+<ol>
+<li><code>detectFamily</code> 增加兼容端点识别：baseUrl 含 <code>agnes-ai</code> 或 model 名含 <code>agnes</code> → 归入 ANTHROPIC 家族（或新增子家族）；</li>
+<li>注意参数名差异：Agnes 用 <code>enable_thinking</code>，Anthropic 用 <code>budget_tokens</code>，请求体组装需分支处理；</li>
+<li>通用化：对「协议特征探测」（如端点响应 <code>anthropic-version</code> 头）增加兜底识别，避免逐厂商打补丁；</li>
+<li>补 <code>QuroReasoningControlTest</code> 用例：Agnes 端点 + 开关两态断言请求体差异。</li>
+</ol>
+<p><strong>影响面</strong>：<code>core/network/QuroReasoningControl.kt</code>。<strong>PenAi 相关性：高</strong>——国产 Anthropic 兼容端点是中文网文作者的常用模型来源。</p>
+<h2 id="section-9">&nbsp;&nbsp;8. 实施路线图</h2>
+<p>本章将改造工作划分为十个阶段，明确各阶段目标、出口验收标准与禁止事项，并约定环境准备与工程协作规范。</p>
+<h3 id="section-9-1">8.1 阶段划分</h3>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>目标</th>
+<th>出口验收</th>
+<th>禁止事项</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>Phase 0 环境与基线</td><td>仓库改名（applicationId/namespace/App 名 PenAi）、签名配置、跑通基座干净构建、锁工具链、建 feature/penai 分支、冻结决策文档</td><td><code>assembleFullRelease</code> 产出可安装包</td><td>未跑通构建不动业务代码</td></tr>
+<tr><td>Phase 1 端到端最小闭环</td><td>NovelStudioScreen 空壳 + 入口 + <code>ui_open_novel</code> + 作品/章节 JSON 存取 + 手动写一章</td><td>用户可：打开工作台→建作品→写一章→保存→重进仍在</td><td>不接 AI、不做资料库</td></tr>
+<tr><td>Phase 2 AI 闭环</td><td>人格替换 + 3 个核心工具（novel_write_chapter / novel_get_chapter / novel_build_context）+ 云端续写通</td><td>对话框说「续写第三章」→正文落盘→页面可见</td><td>不上子 Agent</td></tr>
+<tr><td>Phase 3 工具域全量</td><td>30 个工具族 + 8 类资料 + 伏笔跟踪 + 前文检索 + 关系图三表数据层</td><td>AI 可完成「读资料→写章节→更新角色卡」全链路</td><td>不忘 coreNames/ALWAYS_ON 双写</td></tr>
+<tr><td>Phase 4 技能与流派</td><td>novel-writing + tomato-genre 双套件 + 25 预设注入链路 + 技能页中文化（7.5）</td><td>用户选流派→AI 输出符合流派规约，用户可改提示词</td><td>不挤爆本地提示词预算</td></tr>
+<tr><td>Phase 5 子 Agent</td><td>6 个子 Agent 技能化 + 模糊匹配 + 3 轮收敛 + 职责边界矩阵落地</td><td>爽点/水文/标题/去AI味报告可产出，写操作全部经主 AI</td><td>子 Agent 不得绕过主 AI 直写数据</td></tr>
+<tr><td>Phase 6 基座修复</td><td>7.4 / 7.7 修复 + 7.6 复验 + 7.3 / 7.5 优化（7.2 随集群移除在 PenAi 分支失去触发路径，仅向上游提交 Patch）</td><td>各 issue 复现路径通过 + 单测</td><td>不桩改基座代码</td></tr>
+<tr><td>Phase 7 关系图与编辑器</td><td>关系图三表 + Canvas 物理渲染 + 独立富文本编辑器模块（桥接契约冻结）</td><td>关系图可交互渲染；编辑器端到端读写通；模块摘除后功能降级不阻塞</td><td>桥接对象名/schema 未冻结不动工</td></tr>
+<tr><td>Phase 8 审查与精修</td><td>一致性审查 + 精修 + 工作区绑定验证（卸载重装不丢稿）</td><td>审查报告可产出；重装恢复验证通过</td><td>安全配置不同轴不上线</td></tr>
+<tr><td>Phase 9 裁剪与发布</td><td>硬裁剪集群 + 软裁剪 IM/设备控制等 + MCP 动手术 + 包体优化 + R8 keep 规则 + 签名发布</td><td>发布包体积较基座下降且功能回归通过</td><td>裁剪不落地可验证不算完成</td></tr>
+</tbody>
+</table>
+<h3 id="section-9-2">8.2 环境准备</h3>
+<p>JDK 17+、Android SDK（compileSdk 36 / NDK r27）、阿里云 Maven 镜像配置保留、签名走 <code>scripts/sign.sh</code>、回归仅依赖 JVM 单测（<code>app/src/test/</code>）+ 构建（无 adb 真机流水线时）。大型二进制资源（模型文件）走 Release Assets，不进 git。</p>
+<h3 id="section-9-3">8.3 工程协作规范</h3>
+<ol>
+<li>Commit 规范：<code>[Phase N] 模块: 描述</code>；</li>
+<li>阻塞处理：编译失败先修编译；API 不确定先读源码不猜测；数据迁移失败回退版本号而非删用户数据；</li>
+<li>禁止兜底代码（继承 AIGC-NetNov AGENTS.md 规范）；</li>
+<li>CI 构建日志回流驱动修复循环；每阶段验收标准写入 PR 模板。</li>
+</ol>
+<h2 id="section-10">&nbsp;&nbsp;9. 测试方案</h2>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>内容</th>
+<th>来源范式</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>单元</td><td>工具参数校验、模糊匹配五级、收敛判定、上下文预算淘汰、流派预设完整性、detectFamily 新用例、关系图物理模拟收敛、编辑器桥接契约五方法、子 Agent 零写权限（职责矩阵）</td><td>基座 <code>app/src/test/</code> 范式</td></tr>
+<tr><td>数据</td><td>作品级联删除、10 万字章节读写性能（&lt; 2s）、关系图三表迁移版本递进/重复升级/降级抛错</td><td>AIGC-NetNov 70 用例集</td></tr>
+<tr><td>端到端</td><td>建作品→写章节→AI 续写→资料建档→审查→关系图渲染→编辑器回读→卸载重装恢复</td><td>AIGC-NetNov E2E-001~008</td></tr>
+<tr><td>模块化</td><td>编辑器模块摘除后全功能降级可用；集群模块移除后构建与回归通过</td><td>裁剪可验证范式</td></tr>
+<tr><td>回归</td><td>基座功能不受影响（对话/记忆/知识库/技能/离线推理）</td><td>每阶段门禁</td></tr>
+<tr><td>安全</td><td>WebView 接口白名单、禁文件跨域、API Key Keystore 加密、HTTPS 强制</td><td>与功能同轴上线</td></tr>
+</tbody>
+</table>
+<h2 id="section-11">&nbsp;&nbsp;10. 风险登记与对策</h2>
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>等级</th>
+<th>对策</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>工具未入 coreNames/ALWAYS_ON 导致模型不可见</td><td class="priority-p0">高</td><td>注册 checklist 化 + 集成测试断言工具可见性</td></tr>
+<tr><td>ChatScreen（9807 行）/ QuroChatViewModel（3058 行）巨石改动冲突</td><td class="priority-p0">高</td><td>新功能一律新文件，仅做最小接线</td></tr>
+<tr><td>本地模型提示词预算不足</td><td>中</td><td>创作纪律压缩进 persona 核心；端侧轻任务优先</td></tr>
+<tr><td>构建环境（NDK/镜像/签名）受阻</td><td>中</td><td>Phase 0 先跑通；CI 复用同一配置</td></tr>
+<tr><td>领域资产平移后调度质量不达预期</td><td>中</td><td>工具描述文案保留中文三段式；ToolCapabilityDirectory 补 ToolInfo</td></tr>
+<tr><td>端到端闭环再次失守</td><td class="priority-p0">高</td><td>每阶段出口验收以「用户可走完路径」定义，禁止以层完成冒充</td></tr>
+<tr><td>富文本编辑器桥接断裂（AIGC-NetNov 最后一公里教训）</td><td class="priority-p0">高</td><td>桥接契约文档冻结 + 端到端验收（编辑器输入→工具读回）+ 降级纯文本不阻塞</td></tr>
+<tr><td>子 Agent 职责冲突或越权写数据</td><td>中</td><td>职责边界矩阵 + 子 Agent 零写权限 + 集成测试断言写工具只能经主 AI</td></tr>
+<tr><td>裁剪引发回归</td><td>中</td><td>软裁剪可回滚；集群硬裁剪与 MCP 动手术逐项验证构建与功能</td></tr>
+</tbody>
+</table>
+<h2 id="section-12">&nbsp;&nbsp;11. 预期产出</h2>
+<ol>
+<li>PenAi 安卓应用（可安装发布包，中文网文创作定位）；</li>
+<li>网文工具域（30 工具）+ 双技能套件 + 6 子 Agent 的完整领域层代码；</li>
+<li>25 流派预设库与全套 prompt 资产（中文，用户可改）；</li>
+<li>基座修复 Patch（回馈上游）；</li>
+<li>单测与端到端测试套件；</li>
+<li>本文档及配套决策记录。</li>
+</ol>
+<h2 id="section-13">&nbsp;&nbsp;12. 附录</h2>
+<p>本附录提供基座关键文件、领域资产来源与基座缺陷 Issue 的三类检索索引，供实施期快速定位。</p>
+<h3 id="section-13-1">12.1 关键文件索引（基座）</h3>
+<table>
+<thead>
+<tr>
+<th>内容</th>
+<th>路径</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>工具接口与注册表</td><td><code>app/src/main/java/com/ai/assistance/quro/core/tools/QuroTool.kt</code></td></tr>
+<tr><td>内置工具注册</td><td><code>core/tools/QuroBuiltInTools.kt</code>（<code>buildQuroRegistry</code> :183）</td></tr>
+<tr><td>渐进式路由</td><td><code>core/tools/QuroToolRouter.kt</code>（ALWAYS_ON :59）</td></tr>
+<tr><td>UI 动作工具</td><td><code>core/tools/QuroToolsUiActions.kt</code>（UI_ACTIONS :53-90）</td></tr>
+<tr><td>Agent 主循环</td><td><code>core/QuroAssistant.kt</code></td></tr>
+<tr><td>任务编排</td><td><code>core/agent/orchestration/LongHorizonOrchestrator.kt</code></td></tr>
+<tr><td>技能播种</td><td><code>core/skill/QuroSkill.kt</code>（<code>seedBuiltinZorvSkills</code> :357）</td></tr>
+<tr><td>人格卡</td><td><code>core/QuroPersona.kt</code>（seed :163-193）</td></tr>
+<tr><td>提示词组装</td><td><code>ui/QuroChatViewModel.kt</code>（buildSystemPrompt :1889）</td></tr>
+<tr><td>平台清单</td><td><code>core/QuroPlatformManifest.kt</code></td></tr>
+<tr><td>记忆分型</td><td><code>core/memory/QuroMemoryKind.kt</code></td></tr>
+<tr><td>知识库 RAG</td><td><code>core/knowledge/QuroKnowledgeRag.kt</code></td></tr>
+<tr><td>推理控制</td><td><code>core/network/QuroReasoningControl.kt</code></td></tr>
+<tr><td>主界面</td><td><code>ui/ChatScreen.kt</code>（9807 行）</td></tr>
+</tbody>
+</table>
+<h3 id="section-13-2">12.2 领域资产来源索引</h3>
+<table>
+<thead>
+<tr>
+<th>资产</th>
+<th>来源路径</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>50 工具定义</td><td>novelIDE <code>lib/data/services/workspace_agent.dart:193-649</code></td></tr>
+<tr><td>50 工具执行器</td><td>novelIDE <code>lib/data/services/agent_tool_executors.dart</code></td></tr>
+<tr><td>6 子 Agent prompt</td><td>novelIDE <code>lib/presentation/state/app_providers.dart:60-157</code></td></tr>
+<tr><td>25 番茄预设</td><td>novelIDE <code>lib/data/presets/tomato_presets_data.dart</code></td></tr>
+<tr><td>XML 降级解析</td><td>novelIDE <code>lib/data/services/chat/xml_tool_call_parser.dart</code></td></tr>
+<tr><td>审查规则</td><td>novelIDE <code>ai_drawer.dart:156-227</code>、<code>polish_engine_page.dart:56</code>、<code>full_text_review_page.dart:96-102</code></td></tr>
+<tr><td>记忆图谱</td><td>novelIDE <code>database_helper.dart:208-284</code>、<code>memory_repository.dart</code></td></tr>
+<tr><td>文本记忆</td><td>novelIDE <code>novel_memory.dart</code></td></tr>
+<tr><td>资料模型</td><td>novelIDE <code>material_models.dart</code></td></tr>
+<tr><td>校对引擎</td><td>novelIDE <code>proofread_service.dart</code></td></tr>
+<tr><td>关系图数据模型</td><td>novelIDE <code>character_relationship.dart</code>；AIGC-NetNov <code>软件改造计划/04_数据模型.md:259-292</code>（关系/事件/参与者三表，强度 1-5 + 自定义颜色）</td></tr>
+<tr><td>编辑器设计参考</td><td>novelIDE WebView 富文本编辑器资产（交互范式参考，不移植代码）</td></tr>
+<tr><td>20 实体设计</td><td>AIGC-NetNov <code>app/src/main/java/com/ai/assistance/novelide/data/model/novel/</code></td></tr>
+<tr><td>107 桥接方法</td><td>AIGC-NetNov <code>novelide/bridge/NovelNativeBridge.kt</code></td></tr>
+<tr><td>66 工具 ToolPkg</td><td>AIGC-NetNov <code>examples/novelide/src/packages/</code></td></tr>
+<tr><td>预设种子</td><td>AIGC-NetNov <code>data/migration/TomatoPresetSeeder.kt</code></td></tr>
+<tr><td>改造规划全档</td><td>AIGC-NetNov <code>软件改造计划/</code>（<span class="data-emphasis">20 篇</span>）</td></tr>
+</tbody>
+</table>
+<h3 id="section-13-3">12.3 基座缺陷 Issue 索引</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>标题</th>
+<th>链接</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>15</td><td>子智能体上下文不参与主循环压缩</td><td>https://github.com/Quor-a/ZorvAI/issues/15</td></tr>
+<tr><td>16</td><td>长耗时工具缺乏进度心跳</td><td>https://github.com/Quor-a/ZorvAI/issues/16</td></tr>
+<tr><td>17</td><td>run_code 大文件挂死 + 读取缺口 + 技能库无接口</td><td>https://github.com/Quor-a/ZorvAI/issues/17</td></tr>
+<tr><td>18</td><td>技能列表无中文说明</td><td>https://github.com/Quor-a/ZorvAI/issues/18</td></tr>
+<tr><td>19</td><td>甘特图卡片渲染崩溃</td><td>https://github.com/Quor-a/ZorvAI/issues/19</td></tr>
+<tr><td>20</td><td>甘特图卡片渲染崩溃（重复提交）</td><td>https://github.com/Quor-a/ZorvAI/issues/20</td></tr>
+<tr><td>21</td><td>深度思考开关对 Anthropic 兼容端点不生效</td><td>https://github.com/Quor-a/ZorvAI/issues/21</td></tr>
+</tbody>
+</table>
+<p class="src-note">&nbsp;&nbsp;本文档基于 ZorvAI v1.1.7、novelIDE v2.1.0、AIGC-NetNov v1.11.0+6 三仓库的代码级调查结论编制；所有源码断言均经本地克隆核实。改造实施期间如基座升级，需重新评估受影响章节。</p>
+
+</section>
+
+</body>
+</html>

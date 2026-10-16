@@ -1,0 +1,68 @@
+schema_version: 1
+request_id: ceb31b98-c365-4eed-9c74-8ff9fe66870f
+created_at: 2026-10-16T03:41:16Z
+updated_at: 2026-10-16T16:40:00Z
+
+entry_type: full_pipeline
+stage_chain: [1, 2, 3]
+
+output_docx_path: /workspace/output/ceb31b98-c365-4eed-9c74-8ff9fe66870f/stage3/PenAi软件改造计划书.docx
+output_docx_user_specified: false
+
+current_stage: 3
+
+stages:
+  stage_0:
+    status: completed
+    completed_at: 2026-10-16T03:41:16Z
+    decision: full_pipeline
+
+  stage_1:
+    status: completed
+    started_at: 2026-10-16T03:42:00Z
+    completed_at: 2026-10-16T03:52:00Z
+    output_path: stage1/final_draft.md
+    genre: general
+    expert_used: general-writer
+    route_tag: general_writing
+    revision: V1.1（纳入用户评审 7 项决策：25 流派技能包+主 AI 统一协调、UI 不移植、编辑器插件化、工作树裁剪、关系图三表、30 工具清单等）
+
+  stage_2:
+    status: completed
+    started_at: 2026-10-16T03:55:00Z
+    completed_at: 2026-10-16T16:30:00Z
+    route: html
+    html_sub: template
+    output_path: stage2/formatted-penai-software-renovation-plan.html
+    output_format: html
+    skills_invoked: [design-token, doc-typeset, html-review]
+    design_tokens_path: stage2/design_tokens.json
+    design_theme: literary-publishing（暖白纸/墨黑/衬线标题/深靛蓝强调/哑砖红）
+    fallback: false
+    fallback_reason: null
+    postprocess:
+      - "V1.1 重排版：regen_stage2.py 重生成 HTML（12 章/57 目录链接/执行摘要/修订说明）；六维检测 PASS（318/318 文本块零缺失）"
+      - "修复 data-emphasis span 的 class 引号异常（「」→\"\"，15 处），强调样式在 HTML 端恢复渲染"
+
+  stage_3:
+    status: completed
+    started_at: 2026-10-16T04:06:00Z
+    completed_at: 2026-10-16T16:40:00Z
+    executor: doc-converter
+    input_format: html
+    output_path: stage3/PenAi软件改造计划书.docx
+    skill_used: [html-to-doc]
+    present_files_opened: true
+    fallback: false
+    fallback_reason: null
+    postprocess:
+      - "引擎转换（convert_doc.py --no-preflight --no-verify 快通道）"
+      - "XML 级一站式修复 fix_docx_round3.py：3712 处 CSS 字体字面量→Times New Roman/宋体（零残留）；重建 styles.xml（Normal/Heading1/Heading2/TOC1/TOC2，outlineLvl 与直接格式匹配）；56 标题绑 pStyle+粗体+色字号；3 分节（封面垂直居中无页码/前置罗马页码/正文'第 PAGE 页'decimal start=1）；自建 footer1/footer2；目录 57 条去 numPr 双重编号；正文 2em 首行缩进+1.5 倍行距、9 处章首导语 muted、81 列表行距；2 个代码块重建（run 级 <w:br/> 恢复 32 行换行+Consolas+暖纸底纹+细框）；3 个 callout（靛蓝/砖红色条+底纹+小字号）；尾注 src-note 形态；15 处 data-emphasis span 锚定拆 run（粗体+哑砖红）；21 表边框改 E5E1D8 细线、60 表头单元格 F5F2EA 底纹+粗体、摘要卡 3E5C76 3pt 左边线；fontTable 补宋体/Consolas；core.xml 补标题"
+      - "独立校验：python-docx 解析通过（279 段/21 表/3 节/页脚罗马+阿拉伯正确分节）；全部 13 部件 XML 良构"
+      - "官方校验 verify_output.py 通过：内容 525/525 零缺失、标题绑定 56/56"
+      - "已知能力缺口：引擎不生成 TOC 域，目录为静态文本（不可点击跳转、无页码引用）；data-emphasis 转换不丢失 span 边界但丢失样式，已由 round3 按 span 锚定恢复"
+consistency_check:
+  output_files_exist: true
+  stage_chain_complete: true
+  last_checked_at: 2026-10-16T16:40:00Z
+  errors: []
