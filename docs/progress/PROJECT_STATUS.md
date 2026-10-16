@@ -21,6 +21,17 @@
 |---|---|
 | 16 日下午 | 用户裁定：**不在本地生成安装包**；全部代码写好上传仓库，GitHub 云端构建。本地 Android SDK 已卸载 |
 | 同日 | 子代理规模从 2 个扩至 10 个并行（4 个默认模型 + 7 个 lite 模型，其中默认模型批次因配额 429 有 7 个改走 lite 重派） |
+| 同日晚 | **8 个阶段分支已全部推送远程**（rebase 到最新 main 之上，克隆即可 checkout 续开发）；远端分支：main + phase/1~5、4a、4b |
+
+## 2.1 云端 CI 排障记录（build.yml，共 5 修）
+
+| 轮次 | 现象 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | Set up job 6 秒失败 | action 名 `android-actions/setup-android-sdk` 不存在 | 改 `setup-android@v3` |
+| 2 | `sdkmanager --licenses` 退出 1 | cmdline-tools 16.0 许可证交互流程变化 | 弃用该 action，用 runner 预装 sdkmanager 直装组件 |
+| 3 | `ClassNotFoundException: GradleWrapperMain` | 上游 .gitignore 滤掉了 gradle-wrapper.jar | 本地生成 jar 强制入库 |
+| 4/重跑 | KSP 2.3.9 "not found in any sources" | 构件**实际存在**（Maven Central POM/JAR 均 200）；首轮网络抖动被 Gradle 缓存为"缺失"并随 Actions 缓存扩散 | gradlew 加 `--refresh-dependencies` |
+| 进行中 | 第 5 轮构建 | — | 结果见 [Actions](https://github.com/qq1375828505/PenAi/actions) |
 
 ## 3. 阶段状态总表
 
