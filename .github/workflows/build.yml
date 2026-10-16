@@ -59,7 +59,7 @@ jobs:
       #   cmdline-tools;latest 提供 sdkmanager/licence；NDK 必装——full 风味与
       #   :mnn / :llama / :terminal-core 均含 native 构建，缺 NDK 直接配置失败。
       - name: 安装 Android SDK 组件
-        uses: android-actions/setup-android-sdk@v3
+        uses: android-actions/setup-android@v3
         with:
           packages: |
             cmdline-tools;latest
