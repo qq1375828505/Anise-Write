@@ -1,0 +1,481 @@
+package com.ai.assistance.quro.core.tools
+import com.ai.assistance.quro.R
+import com.ai.assistance.quro.util.qstr
+
+import android.content.Context
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiColor
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiDslParser
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiIcons
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiNode
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiParseResult
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * 动态 UI 配套工具（参照 Kai 的 `kai-ui` 能力重写）。
+ *
+ * 为什么需要工具而不只是「让 AI 自己写代码块」：
+ *  - [UiDslSpecTool] 让模型**按需**拉取完整 DSL 规范，避免把冗长 schema 常驻系统提示词白白烧 token；
+ *  - [UiValidateTool] 让模型在输出前自检，把「渲染失败」从事后崩溃变成事前修正。
+ *
+ * UI 的主渲染路径是：模型在回复里写 ```quro-ui 代码块 → 消息层检测 → [QuroUiRenderer] 原生渲染。
+ * 工具只负责「教会模型」与「让模型自检」两件事。
+ */
+
+/** 拉取动态 UI 的 DSL 规范（节点类型、字段、动作、示例）。 */
+class UiDslSpecTool : QuroTool {
+    override val name = "ui_dsl_spec"
+    override val description =
+        qstr(R.string.qk_03606) +
+            "当你需要生成一个可交互的原生界面（表单、卡片、设置面板、数据展示等）时，" +
+            "先调用本工具了解规范，然后在回复中输出 ```quro-ui 代码块即可渲染成真实原生控件。"
+
+    override val parametersJson: String = JSONObject().apply {
+        put("type", "object")
+        put("properties", JSONObject().apply {
+            put("section", JSONObject().apply {
+                put("type", "string")
+                put("description", "要查看的章节：nodes(节点) / actions(动作) / example(示例) / icons(可用图标名)。留空返回全部。")
+                put("enum", JSONArray().apply {
+                    put("nodes"); put("actions"); put("example"); put("icons")
+                })
+            })
+        })
+        put("required", JSONArray())
+    }.toString()
+
+    override fun run(context: Context, arguments: String): String {
+        val section = runCatching { JSONObject(arguments) }.getOrElse { JSONObject() }
+            .optString("section", "").trim().lowercase()
+
+        return when (section) {
+            "nodes" -> NODE_SPEC
+            "actions" -> ACTION_SPEC
+            "example" -> EXAMPLE
+            "icons" -> "可用图标名（部分，未列出的名字会回落为 info 图标，不会报错）：\n" +
+                QuroUiIcons.availableNames().joinToString(", ")
+            else -> "===== 动态 UI DSL 规范 =====\n\n" +
+                "用法：在回复中直接输出 ```quro-ui 围栏代码块，内容为 JSON 节点树，\n" +
+                "系统会自动渲染为原生可交互控件（不是 HTML，不需要 WebView）。\n\n" +
+                NODE_SPEC + "\n" + ACTION_SPEC + "\n" + EXAMPLE
+        }
+    }
+
+
+    private companion object {
+        val NODE_SPEC = """
+【节点类型】每个节点必须有 "type" 字段。下面列出的是「常用组件速查表」，用于告诉你有哪些现成能力可用——
+**它绝不是穷举，也不是白名单**。你可以写任意 type：写清单里的 → 走对应原生渲染器；写清单外的新名字
+（如 kpi_grid / metric_card / gantt / calendar / drawer / navbar / orgchart …）→ 系统用「融合解释器」原样收下
+你给的全部字段和子节点，画成结构化富卡，绝不报错、绝不丢字段（详见文末【节点类型自由书写】）。
+所有节点都可带 "id"（交互节点必填，用于收集用户输入），
+且**任何节点都能挂一个通用 "style" 对象**描述视觉样式（背景/边框/圆角/阴影/边距/尺寸/对齐/显隐），
+让你像写 Compose 一样自由描述任意元素的样子——见文末【通用样式 style（v1.0.83）】。
+
+■ 布局
+- column：纵向排列。children[], spacing, padding, align(start|center|end), scrollable
+- row：横向排列。children[], spacing, padding, align(top|center|bottom), scrollable
+- box：层叠。children[], padding
+- card：卡片容器。children[], title, padding, corner_radius, on_click(动作)
+- pane：多 pane 布局容器（宽屏并排 / 窄屏竖排，WindowSizeClass 风格）。children[], direction(auto|row|column，默认 auto 跟随容器宽度),
+  spacing, padding。direction=auto 时容器宽度≥840dp 的格并排、否则竖排；row 强制横排、column 强制竖排。
+  每个子区块内部按 360dp 设计稿独立等比缩放并贴满所占那一格，并排时每格更窄但内容不会溢出。
+  子区块若自身带 weight（column/row/box/card 支持，如 1 与 2）则按权重分配并排宽度，实现「侧栏 1 : 主区 2」非等比双栏。
+  用于「主从双栏」「表单+预览」这类需要随宽度自适应并排/竖排的场景。
+
+■ 内容
+- text：文本。value, style(title|headline|body|caption|label), bold, italic, color, size, align, max_lines
+- image：图片。url(支持 http(s) 与 data:image/png;base64,...), alt, height, corner_radius
+- icon：图标。name(见 ui_dsl_spec section=icons), size, tint
+- badge：胶囊标签。text, color, background
+- progress：进度条。progress(0.0~1.0，省略则显示不确定动画), label
+- divider：分隔线。thickness
+- spacer：空白。height / width
+
+■ 交互（必须有 id）
+- button：按钮。label, action(动作), variant(filled|outlined|text), icon
+- text_input：输入框。label, placeholder, value, multiline, lines, input_type(text|number|password|email|phone)
+- checkbox：复选框。label, checked
+- switch：开关。label, checked
+- select：下拉选择。label, options[], selected
+- slider：滑块。label, value, min, max, step
+- list：列表。items[]（每项可为普通字符串或 JSON 对象字符串）, item(模板节点，可用 {{item}}、{{item.field}}、{{index}} 占位), max_height
+- tabs：标签页。tabs[{title, node}]
+- game_board：游戏棋盘/网格。rows, cols, cells[]（每格显示文本）
+- genui：在动态 UI 面板里直接渲染一段 GenUI DSL（原生 530+ 组件，**与全屏 GenUI Agent 共享同一套组件与 ActionHost**）。content（必填，GenUI DSL JSON 字符串）, theme（light/dark，默认 light）。这就是把 GenUI Agent 的「任意组件类型」搬到对话框里用：按钮/表单/弹窗/导航/媒体/图表/列表等所有组件类型都受支持，交互（navigate、showDialog、openScreen、playMedia、emit、sendMessage 等）经 ActionHost 桥接回主聊天 AI，与全屏 Agent 行为完全一致。是否是全屏只是宿主差异，渲染与能力无关——同一段 DSL 既能跑在全屏 Agent，也能嵌进对话框。例：生成一个带「提交」按钮和输入框的表单卡片，点按钮即把内容回传给你继续对话。
+
+■ 富媒体 / 文档（v1.0.81 新增，原生渲染，非 HTML/WebView）
+- markdown：原生 Markdown 富文本排版（不是 HTML）。value（也接受 value/content/text）；
+  支持 #/##/### 标题、有序/无序列表、引用、加粗/斜体、行内代码、链接（点击在应用内打开）、围栏代码块。
+  适合「文档排版」「说明文字」「条款/协议」这类纯文本格式化场景。
+- video：内嵌视频播放（原生播放器）。url(支持 http(s)/本地路径/content://)，title
+- audio：内嵌音频/音乐播放（原生播放器，带播放/暂停与进度条）。url, title
+- image：图片（见上「内容」段，已原生支持）。url, alt, height, corner_radius
+- browser：内嵌完整功能浏览器（WebView，支持 JS / DOM 存储 / 缩放 / 前进后退）。
+  url, height(可选 dp 高度，默认 320)。底部自带「在浏览器打开」「刷新」按钮。
+- html：自写 HTML（v1.0.84 新增）。AI 完全自写 HTML/CSS/JS，直接内联渲染到对话气泡。
+  html(完整 HTML 源码，也接受 content/value), height(可选 dp，默认 400，上限 600)。
+  这是「自写 UI」核心节点——当 DSL 白名单节点不够用时（复杂表单、图表、动画、小工具），
+  直接写一个 html 节点放任意 HTML 即可，无需 WebView 跳转。长度上限 100KB。
+- code：代码块（展示 ZorvAI 支持的所有语言，语法高亮）。code(也接受 code/content/value), lang,
+  title, runnable(为 true 时显示「运行」按钮，将经 run_code 真正执行并把结果回传给你)。
+
+■ 数据可视化 / 业务卡（v1.0.88，原生渲染，可呈现依赖/框架/引擎/语言/代码库/外部依赖等各类技术信息）
+这些节点都「原生可渲染」——只要写了对应 type 就不会再降级为普通容器；内部结构（列表/事件/轴/单元格…）
+一律用 JSON 字符串数组承载，例如 {"name":"Kai","value":12}。技术类内容（依赖清单、版本对比、架构图、
+指标看板）优先用下面这些节点，比纯文字或 markdown 更易读。
+- stat：统计数字。label, value, unit(单位), delta(同比/环比文字), trend(up|down|flat 决定涨跌色)
+- table：表格。headers[]（表头）, rows[][]（每行是字符串数组）, caption(可选标题)
+- alert：提醒条。severity(info|success|warning|error 决定配色), title, text
+- rating：评分。value(0~max 可半星), max(默认5), label
+- gauge：仪表盘。progress(0~1), label, color
+- countdown：倒计时。label, target_epoch_ms(目标时间，自动每秒刷新剩余)
+- steps：步骤进度。steps[](每步说明), current(当前步，0 起)
+- timeline：时间线。events[]，每项 JSON {"time":"...","title":"...","body":"..."}
+- todo：待办。items[]，每项 JSON {"text":"...","done":false}
+- expandable：折叠面板。title, body, expanded(默认是否展开)
+- pie：饼图。segments[]，每项 JSON {"name":"...","value":N,"color":"#hex"}；自动画环形图+图例
+- compare：对比。items[]，每项 JSON {"name":"...","value":"...","highlight":true|false}
+- radar：雷达图。axes[]，每项 JSON {"name":"...","value":0~100,"max":100}
+- heatmap：热力图。cells[]，每项 JSON {"label":"...","intensity":0~1}；columns 控制每行列数(默认8)
+- kanban：看板。columns[]，每项 JSON {"name":"...","items":[{"text":"..."}]}
+- carousel：轮播。slides[]，每项 JSON {"title":"...","body":"..."}；左右切换+圆点
+- timer：计时器/秒表(纯展示)。label, seconds
+- tagcloud：标签云。tags[]，每项可为字符串或 JSON {"text":"...","weight":1~5}
+- avatargroup：头像组。avatars[]，每项 JSON {"name":"...","initial":"X","color":"#hex"}
+- counter：数字计数(带滚动动画)。label, value, target(目标值，可选), unit
+- breadcrumb：面包屑。crumbs[]
+- color：颜色卡。color(HEX 或 JSON {"color":"#hex","name":"X"}), name
+- media：媒体卡。url, media_type(image|video|audio), title, height
+- form：表单(schema 驱动)。title, fields[]，每项 JSON {"id":"...","label":"...","type":"text|number|switch|select","options":[...],"value":"..."}
+
+■ 第三方跳转
+- 任意 button 的 action 用 {"type":"open_app","package_name":"com.example"} 或
+  {"type":"open_app","app_name":"微信"} 即可把用户带去第三方 App（精确包名或应用名模糊匹配）。
+  想让用户在一个动态 UI 里「先选功能 → 点按钮跳去别的软件」直接这么写即可。
+
+【颜色】支持 #RGB / #RRGGBB / #AARRGGBB，或语义名：
+red green blue yellow orange purple pink teal indigo gray primary secondary error warning success info muted
+越界或非法颜色会被忽略，回落到主题默认色，不会导致渲染失败。
+
+【通用样式 style（v1.0.83）】任意节点都能挂一个 "style" 对象，让 AI 自由写任意样式。
+两种等价写法（解析器都会收进同一个通用样式对象）：
+  ① 嵌套对象：{"type":"box","style":{"backgroundColor":"#fff","borderRadius":12,"padding":8},"children":[...]}
+  ② 顶层平铺（style 的字段直接放节点上）：{"type":"box","backgroundColor":"#fff","borderRadius":12,"padding":8,"children":[...]}
+字段一览（全部可选，非法值回落默认）：
+  - backgroundColor / background：背景色（"#fff"），或 {"color":"#fff"}。也支持 gradient：
+      {"gradient":{"colors":["#ff9a9e","#fad0c4"],"direction":"vertical"}}  // direction: vertical|horizontal|radial|diagonal
+  - borderColor / borderWidth：边框颜色与宽度(dp)
+  - borderRadius：圆角(dp)
+  - shadowElevation / shadowColor：阴影高度(dp)与颜色
+  - padding / margin：内/外边距。数字=四边同值；对象可单边 {top,bottom,start,end,horizontal,vertical,all}
+  - width / height：尺寸。"fill"=撑满父容器；"auto"=自适应内容；数字或 {"fixed":N}=固定 N dp；{"weight":N}=按比例分配
+  - maxWidth / maxHeight：最大宽高(dp)
+  - opacity：透明度 0~1（也接受 0~100，会自动 ÷100）
+  - align：父容器内对齐。column 里用 start|center|end（控水平）；row 里用 top|center|bottom（控垂直）
+  - visible：false 则该节点整体不渲染（数据驱动显隐，不惊动模型）
+  - direction：容器方向。row/column 里已由类型决定；box/flow 里写 "horizontal" 或 "vertical"
+  - spacing：容器内**子元素之间**的间距(dp)，与 padding 不同（padding 是容器自己的内边距）
+
+【排版契约 —— 写之前必读，违反会被引擎收敛，界面会明显走样】
+
+① 尺寸单位是 **dp 不是 px**。手机屏宽约 360dp。
+   "width": 1080 会被钳到 720；"fontSize": 96 会被钳到 48 —— 都是排版事故。
+   要撑满父容器写 "width": "fill"；要按比例写 {"weight": 0.5}。
+
+② 间距只用 8pt 网格的档位：**2 / 4 / 8 / 12 / 16 / 24 / 32**。
+   ⚠️ 别写 10 / 14 / 18 / 20 —— 这些不在网格上，同屏卡片间距一高一低，
+   肉眼说不出哪里怪但就是觉得「不齐」。这是最常见的「看起来不整齐」原因。
+
+③ 卡片与卡片的间隔用两种写法，**不要混**：
+   · 父容器的 spacing 控制「子元素之间」的间距（推荐，连锁生效）；
+   · 自己的 margin 控制「我与外部的留白」。
+   margin 引擎已支持，缺省会默认 8，所以**不写 margin 不会贴死**，但也别全省。
+
+④ 对齐语义（引擎已统一，此前两套实现行为不一致）：
+   · column 的 align 控**水平**：start（默认，左）/ center / end；
+   · row 的 align 控**垂直**：top（默认，上）/ center / bottom；
+   · box/grid 默认一律**左上角开始**，不是居中 —— 不写 align 就是 top-left。
+   ⚠️ `stretch` 现在是「撑满」的语义（不是居中），需要铺满时用 "align": "stretch"。
+
+⑤ 方向别名已容错：`horizontal` / `Horizontal` / `row` / `h` / `x` 都能识别为横向，
+   `vertical` / `column` / `v` / `y` 都能识别为纵向。但**同一套布局里不要混用别名**。
+
+⑥ 文字层级只用这几个档位（Material 3 Type Scale），别随手 13 / 15 / 17：
+   11 角标、12 辅助说明、**14 正文**、16 卡片标题、22 区块标题、24 页面主标题、36 数字展示。
+   同级内容字号必须相同 —— 一个卡片里标题 22、副标题 12、正文 14 才叫层级清晰。
+
+⑦ 圆角只用 4 / 8 / 12 / 16 / 28，卡片默认 12。别在同一屏混用 6 和 14。
+
+⑧ 一屏内对比度要够：正文与背景的明暗差要明显，弱化文字用 muted 语义名而不是手写浅灰。
+
+⑨ 长文本必须约束：表格/列表单元格写 maxLines + overflow，否则超长文本会把整个布局撑破。
+注意：模型输出永远是「数据」不是「代码」——再自由的样式也只是声明，端上忠实渲染成原生控件，
+且任意字段非法都会回落默认值，绝不会导致渲染失败。
+
+【节点类型自由书写】你可以写任意 type，不限于上面清单——这是「AI 自由书写、不被白名单限制」的设计。
+- 写了上面清单里的 type → 走对应原生渲染器（stat/table/pie/... 都已原生渲染，不再降级为普通容器）。
+- 写了清单之外的新 type → 系统用「融合解释器」原样收下你给的全部字段与子节点，**绝不丢字段、绝不报「未识别」**，
+  画成结构化富卡：
+    · 若字段里有 source/code → 当代码块渲染；html → 当 HTML 渲染；markdown/md → 当 Markdown 渲染；
+    · 若字段里有 items/rows/segments/events/tags/crumbs/axes/columns/avatars/slides/fields/steps → 当列表/表格渲染；
+    · 其余字段按「键: 值」逐行展示；children 递归渲染。
+  所以你不必担心「写了没见过的节点就坏掉」，任何结构都会被合理呈现。
+- **任意节点都能挂动作**：不论清单内还是清单外的节点，只要写 "action"（或 "on_click"）就会变成可点击的，
+  例如 {"type":"kpi_card","title":"今日活跃","value":"1280","action":{"type":"callback","event":"open_dashboard"}}，
+  用户点这张卡就会触发事件回发给你。常用可直写的组件名（清单之外也完全允许）：
+  kpi_grid / metric_card / metric_grid / gantt / calendar / orgchart / drawer / navbar / sidebar /
+  link_preview / tooltip / snackbar / callout / segmented_control / searchbar / timeline_marker /
+  profile_card / stat_grid / feature_list / hero / showcase —— 这些都是「自由书写」示例，并非唯一选项。
+- 若某个 type 你希望以后变成「专属原生渲染」（更精致），告诉我，我再加一个渲染器即可；在此之前它已能正常显示。
+
+  【必读：让组件真的能用（写组件前先看这条）】
+  很多「写了但点了没反应 / 不显示」都因下面没做对——照做即可 100% 可用：
+  1) 往返铁律：用户点控件 → 你收到【事件名】+ key:value 用户消息 → 你必须在同一条回复里重新输出一整块新 ```quro-ui（带更新状态）。只回文字面板会像「死」的。
+  2) 围栏语言必须是 quro-ui（或 zorv-ui / quro_ui）；JSON 合法、无注释、键与字符串双引号；action 必须是对象 {"type":"callback",...}，写字符串不触发。
+  3) text_input/select/checkbox/switch/slider 必须给唯一 id（collect_from 才能收到）；button 用 action + 唯一 event（如 ttt_move / ttt_reset）。
+  4) game_board：cells 长度 = rows×cols；cellAction 写 callback 且 clickable=true 才有反应；点格自动回发 row/col/index/value。
+  5) genui：content 必须是合法 GenUI DSL（与全屏 Agent 同写法）；子树内交互用 GenUI 自己的事件机制，别用 quro-ui 的 button action 跨进子树。
+  6) 其它节点 / 任意新 type 随便写，非法字段回落默认、绝不整体崩。
+
+""".trimIndent()
+
+        val ACTION_SPEC = """
+【动作】写在 button 的 "action" 或 card 的 "on_click" 上。
+
+- {"type":"callback","event":"事件名","collect_from":["控件id"],"data":{"键":"值"}}
+  → 把收集到的表单值作为用户消息回发给你（AI），你据此继续处理。最常用。
+- {"type":"tool_call","tool":"工具名","arguments":{"键":"值"},"collect_from":["控件id"]}
+  → 客户端直连 ZorvAI 真实执行该内置工具（如 get_battery / run_code / http_request / launch_app /
+    set_clipboard 等全部内部功能），不是只回发文本。工具返回的结果会回传给你继续组织回复。
+  · run_code 支持 ZorvAI 所有已接入语言：python, node/javascript, shell/bash, html, json, css,
+    xml, svg, c, cpp, java, kotlin, dart, go, rust, php, ruby, swift 等。配合 code 节点的
+    runnable 按钮可直接把代码交给 run_code 真正跑起来。
+- {"type":"skill","skill":"技能名","input":"输入","collect_from":["控件id"]}
+  → 客户端直连激活已安装技能（技能指令回灌给你），不是只回发文本。
+- {"type":"open_url","url":"https://..."} → 客户端真实在应用内浏览器打开网页。
+- {"type":"copy","text":"要复制的文本","label":"提示"} → 客户端真实写入系统剪贴板（即时可粘贴）。
+- {"type":"open_app","package_name":"com.example"} → 客户端真实启动应用（支持精确包名或应用名模糊匹配）。
+  也支持 {"type":"open_app","app_name":"微信"} 用应用名模糊匹配；这是「动态 UI 弹转第三方软件」的标准做法。
+- {"type":"toggle","target_id":"节点id"} → 切换目标节点的显示/隐藏（纯本地，不打扰你）。
+
+■ 多层渲染 / 深链导航（v1.0.81 新增，让按钮直接打开 ZorvAI 内部界面或渲染内容到气泡）
+- {"type":"open_screen","target":"terminal"} → 客户端直接打开内置界面（深链）。target 取值：
+  editor(代码编辑器) / terminal(终端) / toolbox(工具箱) / knowledge(知识库) / cms(内容管理) /
+  aci(受控端) / about(关于) / appearance(外观) / soul(人格) / memory(记忆) / permission(权限) /
+  model_config(模型配置) / voice(语音) / settings(设置) / tool_center(工具中心)，
+  以及工具中心子能力 vispro(可视化编程) / node_editor(流程图) / miniapp(Web 应用)。
+  例：点「打开终端」按钮 → 直接进入终端界面，无需你再解析指令。
+- {"type":"render_html","html":"<h1>你好</h1>"} → 把 HTML 直接渲染进对话气泡（第一层渲染，复用 Web 应用运行时），
+  不是弹出新页面，用户就在聊天里看到渲染结果。也可写 "type":"miniapp"。
+- {"type":"render_vispro","source":"graph TD;A-->B"} → 把 mermaid 源码直接渲染成可视化图进对话气泡（第一层渲染），
+  也可写 "type":"mermaid"。
+- {"type":"visual_popup","title":"提示","content":"这是一段说明文字"} → 在对话上方弹出可视化信息框（纯展示）。
+- {"type":"visual_ask","prompt":"请选择操作","options":["方案A","方案B","取消"]} → 弹出选项让用户点选，
+  选中项会作为用户消息回发给你继续对话（轻量版「询问」，比 callback 表单更简单）。
+- {"type":"zx_web_card","component":"zx_compare","title":"方案对比","dsl":{...该组件的JSON数据...}} →
+  弹出 zxwidget 动态交互界面：用 WebView 渲染 zx 组件族（477 个：对比/表格/图表/
+  表单/时间线/看板/审批流/终端/仪表盘…）。用户在卡片上的每次交互（点了哪一行、改了哪个字段、提交了什么）
+  都会整理成结构化描述回发给你，比纯文本罗列更适合让用户当场操作。dsl 必须是该组件的数据契约 JSON，
+  可写成嵌套对象（"dsl":{...}）或字符串。**组件名与字段先用 `zx_catalog` 查**（传 component=X 可拿到该组件的
+  字段契约与示例 DSL）——名册外的名字会落到通用渲染，效果差。
+  ⚠ 只在用户明确要「可交互卡片 / zxwidget 动态界面」时用；纯展示用 visual_popup，简单二选一用 visual_ask。
+
+【多层渲染说明】动态 UI 组件既能渲染在第一层（如上面 render_html / render_vispro 直接进气泡），
+也能作为导航中枢：按钮点进去可进终端、模型配置、可视化编程、 Web 应用等任意内置界面（open_screen），
+或弹可视化弹窗 / 询问（visual_popup / visual_ask），或弹 Web UI 交互卡片（zx_web_card）。
+所有动作均在客户端真调用，无需你二次解析。
+
+【重要】以上动作在客户端即「真调用」，无需你再二次解析文本去执行——点一下按钮就落地（复制/打开应用/
+打开网页/跑工具/激活技能/进内置界面/渲染内容/弹窗询问）。tool_call 与 skill 的执行结果会回传给你，便于你接着对话。
+【收集表单值】collect_from 填交互控件的 id 数组；留空则收集整个表单的全部值。
+用户点击后，值会以「键=值」的形式回发，你就能拿到用户输入继续干活。
+""".trimIndent()
+
+        val EXAMPLE = """
+【示例】一个「日报生成」表单：
+
+```quro-ui
+{"type":"card","title":"生成日报","children":[
+  {"type":"text","value":"选择范围并补充要点","style":"caption","color":"muted"},
+  {"type":"select","id":"range","label":"时间范围","options":["今天","本周","本月"],"selected":"今天"},
+  {"type":"text_input","id":"highlights","label":"本阶段要点","placeholder":"用一句话概括","multiline":true,"lines":3},
+  {"type":"row","children":[
+    {"type":"checkbox","id":"include_todo","label":"包含待办","checked":true},
+    {"type":"switch","id":"notify","label":"生成后提醒我","checked":false}
+  ]},
+  {"type":"divider"},
+  {"type":"row","children":[
+    {"type":"button","label":"生成","variant":"filled",
+     "action":{"type":"callback","event":"generate_report","collect_from":["range","highlights","include_todo","notify"]}},
+    {"type":"button","label":"取消","variant":"text","action":{"type":"toggle","target_id":"form"}}
+  ]}
+]}
+```
+
+输出时注意：
+1. 代码块语言标识必须写 quro-ui；
+2. 内容只放 JSON，不要写注释、不要加解释文字；
+3. 每个交互控件都要有唯一 id，否则无法收集用户输入；
+4. 不确定语法是否正确时，可先用 ui_validate 工具自检。
+
+【富媒体 / 文档 示例】一个「产品介绍」动态 UI：
+
+```quro-ui
+{"type":"card","title":"ZorvAI 介绍","children":[
+  {"type":"markdown","value":"# ZorvAI\\n这是一款**原生 AI 助手**应用。\\n- 支持文档排版\\n- 支持音视频播放"},
+  {"type":"image","url":"https://example.com/cover.png","height":160,"corner_radius":12},
+  {"type":"video","url":"https://example.com/demo.mp4","title":"功能演示"},
+  {"type":"audio","url":"https://example.com/speech.mp3","title":"语音解说"},
+  {"type":"code","lang":"python","runnable":true,"code":"print('hello ZorvAI')"},
+  {"type":"browser","url":"https://zorvai.example.com","height":360},
+  {"type":"button","label":"打开第三方 App","variant":"filled",
+   "action":{"type":"open_app","app_name":"微信"}},
+  {"type":"button","label":"在应用内打开官网","variant":"outlined",
+   "action":{"type":"open_url","url":"https://zorvai.example.com"}}
+]}
+```
+
+【多 pane 布局 示例】一个「编辑 + 预览」双栏（宽屏并排 / 窄屏竖排，自动切换）：
+
+```quro-ui
+{"type":"card","title":"个人资料","children":[
+  {"type":"pane","direction":"auto","spacing":12,"children":[
+    {"type":"column","children":[
+      {"type":"text","value":"左侧：编辑区","style":"label","color":"muted"},
+      {"type":"text_input","id":"name","label":"昵称","placeholder":"输入昵称"},
+      {"type":"switch","id":"public","label":"公开资料","checked":true}
+    ]},
+    {"type":"column","children":[
+      {"type":"text","value":"右侧：预览区","style":"label","color":"muted"},
+      {"type":"badge","text":"预览","background":"primary"},
+      {"type":"markdown","value":"昵称会实时显示在这里。"}
+    ]}
+  ]}
+]}
+```
+说明：pane 的 direction=auto 时容器宽 ≥840dp 自动并排、否则竖排；每个子区块内部都按 360dp 设计稿等比缩放，并排时每格更窄但内容不溢出。
+也可写 direction:"row" 强制横排、direction:"column" 强制竖排。嵌套结构（如 list 的 itemTemplate 为 pane、pane 内再套 pane）也都支持，动态更新同样下钻生效。
+
+【语言支持】code / run_code 支持 python, node/javascript, shell/bash, html, json, css, xml,
+svg, c, cpp, java, kotlin, dart, go, rust, php, ruby, swift 等 ZorvAI 已接入的全部语言；
+选择在 code 节点的 lang 字段标注即可。
+""".trimIndent()
+    }
+}
+
+/**
+ * 校验 AI 写的 UI DSL 能否被正确解析。
+ * 让模型在正式输出前把 JSON 拿来跑一遍，解析失败会给出修复建议。
+ */
+class UiValidateTool : QuroTool {
+    override val name = "ui_validate"
+    override val description =
+        qstr(R.string.qk_03665) +
+            "返回解析结果、修复后的 JSON（若语法有误）以及节点统计。"
+
+    override val parametersJson: String = JSONObject().apply {
+        put("type", "object")
+        put("properties", JSONObject().apply {
+            put("dsl", JSONObject().apply {
+                put("type", "string")
+                put("description", "待校验的 UI DSL JSON（节点树，不要带 ``` 围栏）")
+            })
+        })
+        put("required", JSONArray().apply { put("dsl") })
+    }.toString()
+
+    override fun run(context: Context, arguments: String): String {
+        val dsl = runCatching { JSONObject(arguments) }.getOrElse { JSONObject() }
+            .optString("dsl", "").trim()
+        if (dsl.isBlank()) return "未提供 dsl 参数"
+
+        return when (val result = QuroUiDslParser.parseBlock(dsl)) {
+            is QuroUiParseResult.Success -> {
+                val stats = countNodes(result.root)
+                val ids = collectIds(result.root)
+                buildString {
+                    appendLine("✅ 解析成功")
+                    appendLine("节点总数：$stats")
+                    if (ids.isNotEmpty()) appendLine("交互控件 id：${ids.joinToString(", ")}")
+                    else appendLine("提示：未发现任何带 id 的交互控件，将无法收集用户输入。")
+                    val dupIds = ids.groupBy { it }.filter { it.value.size > 1 }.keys
+                    if (dupIds.isNotEmpty()) {
+                        appendLine("⚠️ 存在重复 id：${dupIds.joinToString(", ")}，会导致取值互相覆盖，请改为唯一。")
+                    }
+                    val unresolved = collectIconNames(result.root).filter { name ->
+                        // 无法直接比对 ImageVector，用「是否命中别名表」近似判断
+                        !ICON_NAMES.contains(name)
+                    }
+                    if (unresolved.isNotEmpty()) {
+                        appendLine("⚠️ 以下图标名未收录，将回落为 info 图标：${unresolved.joinToString(", ")}")
+                    }
+                }.trim()
+            }
+            is QuroUiParseResult.Failure -> buildString {
+                appendLine("❌ 解析失败：${result.reason}")
+                appendLine("系统已尝试自动修复，修复后的 JSON：")
+                appendLine(result.rawJson.take(2000))
+                appendLine("请修正后重新输出，或改用更简单的结构。")
+            }.trim()
+        }
+    }
+
+    /** 递归统计节点数。 */
+    private fun countNodes(node: com.ai.assistance.quro.core.ui.dynamicui.QuroUiNode): Int {
+        val children = childrenOf(node)
+        return 1 + children.sumOf { countNodes(it) }
+    }
+
+    /** 收集所有交互节点 id。 */
+    private fun collectIds(node: com.ai.assistance.quro.core.ui.dynamicui.QuroUiNode): List<String> {
+        val self = when (node) {
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroTextInputNode -> listOf(node.id)
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroCheckboxNode -> listOf(node.id)
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroSwitchNode -> listOf(node.id)
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroSelectNode -> listOf(node.id)
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroSliderNode -> listOf(node.id)
+            else -> emptyList()
+        }
+        return self + childrenOf(node).flatMap { collectIds(it) }
+    }
+
+    private fun collectIconNames(node: com.ai.assistance.quro.core.ui.dynamicui.QuroUiNode): List<String> {
+        val self = when (node) {
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroIconNode -> listOf(node.name.lowercase())
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroButtonNode ->
+                node.icon?.let { listOf(it.lowercase()) } ?: emptyList()
+            else -> emptyList()
+        }
+        val badColors = checkColors(node)
+        return self + badColors + childrenOf(node).flatMap { collectIconNames(it) }
+    }
+
+    /** 颜色非法时把原值回传，用于提示模型修正。 */
+    private fun checkColors(node: com.ai.assistance.quro.core.ui.dynamicui.QuroUiNode): List<String> {
+        val raw = when (node) {
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroTextNode -> node.color
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroIconNode -> node.tint
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroBadgeNode -> node.color
+            else -> null
+        }
+        return if (raw != null && QuroUiColor.parse(raw) == null) listOf(raw) else emptyList()
+    }
+
+    /** 取任意节点的子节点列表（含 card/column/row/box/list 模板/tabs 内容）。 */
+    private fun childrenOf(node: com.ai.assistance.quro.core.ui.dynamicui.QuroUiNode):
+        List<com.ai.assistance.quro.core.ui.dynamicui.QuroUiNode> {
+        return when (node) {
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroColumnNode -> node.children
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroRowNode -> node.children
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroBoxNode -> node.children
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroCardNode -> node.children
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroListNode ->
+                node.itemTemplate?.let { listOf(it) } ?: emptyList()
+            is com.ai.assistance.quro.core.ui.dynamicui.QuroTabsNode -> node.tabs.mapNotNull { it.node }
+            else -> emptyList()
+        }
+    }
+
+    private val ICON_NAMES: Set<String> by lazy { QuroUiIcons.availableNames().toSet() }
+}

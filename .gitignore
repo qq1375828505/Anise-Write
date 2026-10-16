@@ -1,0 +1,184 @@
+# Built application files
+*.apk
+# NOTE: 保留端侧 APK 构建器的模板 APK（位于 assets 内，是构建引擎注入 DEX 的底座，非构建产物）
+!app/src/main/assets/libs/common/base.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+# NOTE: 保留端侧 APK 构建器源码包（包名 com.ai.assistance.quro.build，目录名恰为 build，
+# 与 Gradle 构建输出 build/ 同名，必须显式解除忽略，否则源码不会被提交）
+!app/src/main/java/com/ai/assistance/quro/build/
+release/
+
+# Gradle files
+.gradle/
+gradle/wrapper/gradle-wrapper.jar
+
+# Local configuration (SDK path, etc.)
+local.properties
+gradle.properties.local
+
+# Log/Output files
+*.log
+build_*.log
+
+# IDE / Editor
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.project
+.classpath
+.settings/
+.DS_Store
+Thumbs.db
+
+# Kotlin / Compose
+.kotlin/
+buildTmp/
+
+# Native / NDK
+.externalNativeBuild/
+.cxx/
+*.so.tmp
+
+# OS / misc
+nul
+*.tmp
+
+# Dev scratch / temp
+_novaterm_temp/
+measure_sysprompt.py
+
+# Local gradle cache mirror (never commit)
+gradle_cache/
+
+# Keystore / signing files (never commit)
+*.jks
+*.keystore
+*.p12
+*.bks
+*keystore*
+# 注意：keystore.properties 包含密码，不应提交到 git
+# 但在本地开发时需要保留此文件
+keystore.properties
+
+# Backup / outputs (large files, never commit)
+.backup/
+outputs/
+*.backup
+*.bak*
+*.bak2
+*.orig
+*.swp
+*.swo
+*~
+.git-rewrite/
+
+# Large model files
+*.onnx
+*.tar.gz
+*.tar.xz
+
+# Dev test / scratch files
+test_*.py
+test_*.html
+repro_roundtrip.py
+audit_tools.py
+release-apk-*.md
+measure_sysprompt.py
+
+# Internal deliverables / debug docs
+deliverables/
+
+# Test certificates
+*.pem
+*.pk8
+
+# Keystore variants
+zorvai_release.jks
+debug-for-release.keystore
+
+# ===== ZorvAI 签名安全加固（scripts/sign.sh 配套）=====
+# 上游已有 *.jks / *.keystore / keystore.properties，此处补齐边界情况
+
+# 私钥与凭证（任何形态）
+*.keystore.*
+keystore.properties.*
+.env
+.env.*
+env.sh
+secrets/
+.secrets/
+
+# 签名产物（绝不入库）
+*-signed.apk
+*-unsigned.apk
+*-aligned.apk
+build/outputs/apk/
+
+# 本地签名环境（若有人误把密钥位放到项目内）
+.zorvai-signing/
+signing/
+
+# 例外：签名工具脚本本身不含私钥，必须可入库
+# （否则会被上面的 *keystore* 通配规则误伤）
+!scripts/setup-keystore.sh
+!scripts/lib/common.sh
+
+# ⚠️ app/src/main/assets/keystore/ 下的内置宿主密钥**不入库**（2026-09-17 用户明确要求：
+# 「推送代码…注意别推送签名」）。它只打进 APK，不进仓库。
+# 因此下面这条目录解禁与文件解禁**必须保持关闭**，否则 pre-push 的第 1 层扫描会拦下推送。
+# 文件本身留在本机磁盘上，构建照常能打进 APK；新 clone 缺这两个文件也不影响编译，
+# 只是内置补签不可用（sign() 会明确报「内置密钥缺失」）。
+#!app/src/main/assets/keystore/
+#!app/src/main/assets/keystore/zorvai_release.bks
+#!app/src/main/assets/keystore/zorvai_release.p12
+
+# ===== 发版清理：排除本地 scratch / 大体积参考目录（2026-09-17）=====
+# 参考项目目录体积大（~830MB），非核心源码，禁止入库
+reference-projects/
+# 本地验证/调试产物
+.verify/
+# 项目记忆与本地配置（不入库）
+.workbuddy/
+ZorvAI-Documentation.zip
+zorvai_homepage_miniapp.html
+
+# 一次性发版 / 上传脚本与中间日志（非项目源码，禁止入库）
+build_*.txt
+build_release_*.txt
+build_compile_*.txt
+build_fix*.txt
+release_*.json
+upload_*.py
+upload_*.json
+upload_resp_*.json
+upload_v*.json
+create_v*.py
+refresh_release_asset.py
+port_genui.py
+check_16kb_apk.py
+err_*.txt
+out_*.txt
+genui_errors.txt
+overview_*.md
+browser_act_test_prompt.md
+*_resp.json
+
+# Python 字节码缓存（4fd0c78 误提交过一批）
+__pycache__/
+*.pyc

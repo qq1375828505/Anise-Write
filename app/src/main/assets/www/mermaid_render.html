@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  #diagram { width: 100%; padding: 4px; box-sizing: border-box; }
+  #diagram svg { width: 100%; height: auto; max-width: 100%; display: block; }
+  .err {
+    color: #e5484d;
+    font-size: 13px;
+    white-space: pre-wrap;
+    padding: 8px 4px;
+    font-family: monospace;
+    line-height: 1.4;
+  }
+  .debug-info {
+    color: #888;
+    font-size: 11px;
+    white-space: pre-wrap;
+    padding: 4px;
+    font-family: monospace;
+  }
+</style>
+<script src="mermaid.min.js"></script>
+</head>
+<body>
+<div id="diagram" class="mermaid"></div>
+<script>
+  var _renderAttempts = 0;
+  var _lastSvg = '';
+
+  function report() {
+    var el = document.getElementById('diagram');
+    var h = el ? (el.scrollHeight || el.offsetHeight || 0) : 0;
+    if (!h || h < 40) h = document.body.scrollHeight || 120;
+    try {
+      if (window.AndroidBridge && AndroidBridge.onHeight) {
+        AndroidBridge.onHeight(Math.ceil(h));
+      }
+    } catch(e) {}
+  }
+
+  function showError(msg) {
+    var el = document.getElementById('diagram');
+    el.innerHTML = '<div class="err">流程图渲染失败：\n' + msg + '</div>';
+    report();
+    try {
+      if (window.AndroidBridge && AndroidBridge.onError) {
+        AndroidBridge.onError(msg);
+      }
+    } catch(e) {}
+  }
+
+  // mermaid v10+ 异步 API：mermaid.render(id, definition) 返回 Promise<{svg}>
+  // mermaid v9 同步 API：mermaid.mermaidAPI.render(id, definition, cb)
+  function detectMermaidVersion() {
+    if (typeof mermaid === 'undefined') return 'none';
+    if (mermaid.render && typeof mermaid.render === 'function') return 'v10';
+    if (mermaid.mermaidAPI && mermaid.mermaidAPI.render) return 'v9';
+    return 'unknown';
+  }
+
+  function doRender(src, theme) {
+    _renderAttempts++;
+    var el = document.getElementById('diagram');
+
+    if (!src || !src.trim()) {
+      el.innerHTML = '<div class="debug-info">（空图表）</div>';
+      report();
+      return;
+    }
+
+    var ver = detectMermaidVersion();
+    if (ver === 'none') {
+      showError('mermaid.min.js 加载失败');
+      return;
+    }
+
+    try {
+      var cfg = {
+        startOnLoad: false,
+        theme: (theme || 'default'),
+        securityLevel: 'loose',
+        logLevel: 'error',
+        flowchart: { htmlLabels: true, curve: 'basis', useMaxWidth: true },
+        sequence: { useMaxWidth: true, diagramMarginX: 8, diagramMarginY: 8 },
+        mindmap: { useMaxWidth: true },
+        gantt: { useMaxWidth: true },
+        class: { useMaxWidth: true },
+        state: { useMaxWidth: true },
+        pie: { useMaxWidth: true }
+      };
+
+      if (ver === 'v10') {
+        // mermaid v10+ API
+        mermaid.initialize(cfg);
+        var id = 'm' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+
+        mermaid.render(id, src).then(function(res) {
+          var svg = (res && res.svg) ? res.svg : ('' + res);
+          if (svg && svg.indexOf('<svg') >= 0) {
+            el.innerHTML = '';
+            el.innerHTML = svg;
+            _lastSvg = svg;
+            try {
+              if (window.AndroidBridge && AndroidBridge.onSvg) {
+                AndroidBridge.onSvg(svg);
+              }
+            } catch(e) {}
+            report();
+            setTimeout(report, 200);
+            setTimeout(report, 500);
+          } else {
+            showError('渲染结果为空（SVG 未生成）');
+          }
+        }).catch(function(e) {
+          var msg = (e && e.message) ? e.message : ('' + e);
+          // 有些 mermaid 版本在 renderer 前加了前缀，去掉
+          msg = msg.replace(/Syntax error in text[\s\S]*?near '/, '语法错误 near \'');
+          showError(msg);
+        });
+      } else {
+        // mermaid v9 legacy API
+        mermaid.mermaidAPI.initialize(cfg);
+        var id = 'm' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+        mermaid.mermaidAPI.render(id, src, function(svgCode) {
+          if (svgCode && svgCode.indexOf('<svg') >= 0) {
+            el.innerHTML = '';
+            el.innerHTML = svgCode;
+            _lastSvg = svgCode;
+            try {
+              if (window.AndroidBridge && AndroidBridge.onSvg) {
+                AndroidBridge.onSvg(svgCode);
+              }
+            } catch(e) {}
+            report();
+            setTimeout(report, 200);
+            setTimeout(report, 500);
+          } else {
+            showError('渲染结果为空');
+          }
+        });
+      }
+    } catch(e) {
+      showError((e && e.message) ? e.message : ('' + e));
+    }
+  }
+
+  // 全局渲染入口
+  window.__render = function(src, theme) {
+    doRender(src, theme);
+  };
+
+  // 重试入口
+  window.__retry = function(src, theme) {
+    doRender(src, theme);
+  };
+
+  // 获取上次渲染的 SVG
+  window.__getSvg = function() {
+    return _lastSvg;
+  };
+
+  // 尺寸变化时重新测量
+  if (window.ResizeObserver) {
+    try {
+      var ro = new ResizeObserver(function() { report(); });
+      ro.observe(document.getElementById('diagram'));
+    } catch(e) {}
+  }
+
+  // 通知 Kotlin 侧已就绪
+  try {
+    if (window.AndroidBridge && AndroidBridge.onReady) {
+      AndroidBridge.onReady();
+    }
+  } catch(e) {}
+</script>
+</body>
+</html>

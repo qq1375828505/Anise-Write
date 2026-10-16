@@ -1,0 +1,408 @@
+package com.ai.assistance.quro.ui
+import androidx.compose.ui.res.stringResource
+import com.ai.assistance.quro.R
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import com.ai.assistance.quro.core.tools.VisualQuestionQueue
+import com.ai.assistance.quro.core.tools.VisualActionQueue
+import com.ai.assistance.quro.core.tools.VisualPendingQuestion
+import com.ai.assistance.quro.core.tools.VisualPendingAction
+
+/**
+ * 可视化问答弹窗 - 显示AI的问题，用户可以选择预设选项或输入自定义答案
+ */
+@Composable
+fun VisualQuestionDialog() {
+    val cs = MaterialTheme.colorScheme
+    var currentQuestion by remember { mutableStateOf<Pair<Int, VisualPendingQuestion>?>(null) }
+    var customAnswer by remember { mutableStateOf("") }
+    var showCustomInput by remember { mutableStateOf(false) }
+
+    // 修复：原 while(true) delay(500) 浪费 CPU，与 VisualPopupQueue 事件驱动模式不一致。
+    // 改为 eventFlow 触发：QuestionAdded 时拉取新问题，QuestionRemoved 时关闭弹窗。
+    LaunchedEffect(Unit) {
+        VisualQuestionQueue.eventFlow.collect { event ->
+            when (event) {
+                is VisualQuestionQueue.QuestionEvent.QuestionAdded -> {
+                    if (currentQuestion == null) {
+                        currentQuestion = VisualQuestionQueue.getCurrentQuestion()
+                        showCustomInput = false
+                        customAnswer = ""
+                    }
+                }
+                is VisualQuestionQueue.QuestionEvent.QuestionRemoved -> {
+                    if (currentQuestion != null) {
+                        currentQuestion = null
+                    }
+                }
+            }
+        }
+    }
+
+    // 系统级悬浮窗已经接管了询问（任何界面可见）→ 这里让位，别弹两遍。
+    // （eventFlow 是 Channel，两边同时 collect 会互相抢事件，导致一方永远收不到）
+    if (com.ai.assistance.quro.service.VisualQuestionOverlayService.isRunning) return
+
+    currentQuestion?.let { (index, pending) ->
+        Dialog(
+            // 用户不想作答时可关闭（=跳过）：点返回/点外部即视为跳过，不再强制等待 120 秒。
+            onDismissRequest = {
+                VisualQuestionQueue.submitAnswer(index, "")
+                currentQuestion = null
+            },
+            properties = DialogProperties(
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true
+            )
+        ) {
+            VisualQuestionCard(
+                index = index,
+                pending = pending,
+                onAnswered = { currentQuestion = null },
+            )
+        }
+    }
+}
+
+/**
+ * 可视化问答卡片（纯内容，不含 Dialog 外壳）。
+ *
+ * 抽出来是为了让「Activity 内弹窗」与「系统级悬浮窗」共用同一份 UI：
+ * 悬浮窗要能在任何界面（甚至 App 外）显示，就不能依赖某个 Activity 的 Dialog。
+ */
+@Composable
+fun VisualQuestionCard(
+    index: Int,
+    pending: VisualPendingQuestion,
+    onAnswered: () -> Unit,
+) {
+    val cs = MaterialTheme.colorScheme
+    var customAnswer by remember { mutableStateOf("") }
+    var showCustomInput by remember { mutableStateOf(false) }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = cs.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+                    // 标题
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.HelpOutline,
+                            contentDescription = null,
+                            tint = cs.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = pending.title,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = cs.onSurface
+                        )
+                    }
+
+                    // 问题内容
+                    Text(
+                        text = pending.question,
+                        fontSize = 16.sp,
+                        color = cs.onSurface,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    // 选项列表
+                    if (pending.options.isNotEmpty()) {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 300.dp)
+                        ) {
+                            // 修复：原代码 itemsIndexed 用 position 作 key，options 提交后
+                            // 索引变化会导致不必要的重组。改用 option 自身作 key（更稳定）。
+                            items(pending.options, key = { it }) { option ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp)
+                                        .clickable {
+                                            VisualQuestionQueue.submitAnswer(index, option)
+                                            onAnswered()
+                                        },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = cs.surfaceVariant
+                                    ),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = option,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                                        fontSize = 15.sp,
+                                        color = cs.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 跳过按钮：用户不想作答时关闭弹窗；空白答案不回流，不触发新一轮。
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = {
+                            VisualQuestionQueue.submitAnswer(index, "")
+                            onAnswered()
+                        }) {
+                            Text(stringResource(R.string.qk_00011))
+                        }
+                    }
+
+                    // 自定义输入
+                    if (pending.allowCustom) {
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (!showCustomInput) {
+                            OutlinedButton(
+                                onClick = { showCustomInput = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.qk_03120))
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = customAnswer,
+                                onValueChange = { customAnswer = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text(stringResource(R.string.qk_03121)) },
+                                placeholder = { Text(stringResource(R.string.qk_03122)) },
+                                minLines = 2,
+                                maxLines = 4
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        showCustomInput = false
+                                        customAnswer = ""
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.qk_00011))
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        if (customAnswer.isNotBlank()) {
+                                            VisualQuestionQueue.submitAnswer(index, customAnswer)
+                                            onAnswered()
+                                        }
+                                    },
+                                    enabled = customAnswer.isNotBlank()
+                                ) {
+                                    Text(stringResource(R.string.qk_00951))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+/**
+ * 可视化操作弹窗 - 显示AI创建的操作按钮，用户点击执行对应操作
+ */
+@Composable
+fun VisualActionDialog() {
+    val cs = MaterialTheme.colorScheme
+    var currentAction by remember { mutableStateOf<Pair<Int, VisualPendingAction>?>(null) }
+
+    // 修复：与 VisualQuestionDialog 对齐，改为 eventFlow 驱动
+    LaunchedEffect(Unit) {
+        VisualActionQueue.eventFlow.collect { event ->
+            when (event) {
+                is VisualActionQueue.ActionEvent.ActionAdded -> {
+                    if (currentAction == null) {
+                        currentAction = VisualActionQueue.getCurrentAction()
+                    }
+                }
+                is VisualActionQueue.ActionEvent.ActionRemoved -> {
+                    if (currentAction != null) {
+                        currentAction = null
+                    }
+                }
+            }
+        }
+    }
+
+    // 同上：悬浮窗接管时让位
+    if (com.ai.assistance.quro.service.VisualQuestionOverlayService.isRunning) return
+
+    currentAction?.let { (index, pending) ->
+        Dialog(
+            // 用户不想操作时可关闭（=跳过）：点返回/点外部即视为跳过，不再强制等待。
+            onDismissRequest = {
+                VisualActionQueue.submitAction(index, "")
+                currentAction = null
+            },
+            properties = DialogProperties(
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true
+            )
+        ) {
+            VisualActionCard(index = index, pending = pending, onDone = { currentAction = null })
+        }
+    }
+}
+
+/**
+ * 可视化操作卡片（纯内容，不含 Dialog 外壳），与 [VisualQuestionCard] 同理：
+ * 供 Activity 内弹窗与系统级悬浮窗共用。
+ */
+@Composable
+fun VisualActionCard(
+    index: Int,
+    pending: VisualPendingAction,
+    onDone: () -> Unit,
+) {
+    val cs = MaterialTheme.colorScheme
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = cs.surface
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    // 标题
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.TouchApp,
+                            contentDescription = null,
+                            tint = cs.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = pending.title,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = cs.onSurface
+                        )
+                    }
+
+                    // 说明文字
+                    Text(
+                        text = pending.message,
+                        fontSize = 16.sp,
+                        color = cs.onSurface,
+                        modifier = Modifier.padding(bottom = 20.dp)
+                    )
+
+                    // 跳过按钮：用户不想操作时关闭弹窗；空白值不回流，不触发新一轮。
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = {
+                            VisualActionQueue.submitAction(index, "")
+                            onDone()
+                        }) {
+                            Text(stringResource(R.string.qk_00011))
+                        }
+                    }
+
+                    // 按钮列表
+                    pending.buttons.forEach { button ->
+                        val buttonColor = when (button.style) {
+                            "danger" -> cs.error
+                            "secondary" -> cs.secondary
+                            else -> cs.primary
+                        }
+                        val textColor = when (button.style) {
+                            "danger" -> cs.onError
+                            "secondary" -> cs.onSecondary
+                            else -> cs.onPrimary
+                        }
+
+                        Button(
+                            onClick = {
+                                VisualActionQueue.submitAction(index, button.value)
+                                onDone()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = buttonColor
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = button.text,
+                                fontSize = 15.sp,
+                                color = textColor
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+/**
+ * 可视化弹窗容器 - 同时管理问答弹窗和操作弹窗
+ */
+@Composable
+fun VisualDialogs() {
+    VisualQuestionDialog()
+    VisualActionDialog()
+}

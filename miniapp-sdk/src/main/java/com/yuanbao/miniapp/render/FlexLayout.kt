@@ -1,0 +1,631 @@
+package com.yuanbao.miniapp.render
+
+import kotlin.math.max
+import kotlin.math.min
+
+/**
+ * Self-developed flexbox layout engine (a practical subset of CSS flexbox).
+ *
+ * Supports: row/column direction with reverse, wrap, justify-content,
+ * align-items, flex-grow / flex-shrink / flex-basis, margin, padding,
+ * absolute positioning, min/max constraints and intrinsic content size
+ * (text measured by TextLayout, images by their intrinsic size).
+ */
+class FlexLayout(private val viewportWidth: Float, private val viewportHeight: Float) {
+
+    /** px per rpx unit. */
+    var rpxRatio: Float = viewportWidth / 750f
+
+    /** Callback used to measure text nodes: (text, fontSizePx, bold, maxWidth) -> measured result. */
+    var textMeasurer: ((text: String, fontSize: Float, bold: Boolean, maxWidth: Float) -> TextMeasurer.Result)? = null
+
+    fun layout(root: RenderNode, availableWidth: Float = viewportWidth, availableHeight: Float = viewportHeight) {
+        rpxRatio = viewportWidth / 750f
+        root.x = 0f
+        root.y = 0f
+        measure(root, availableWidth, availableHeight)
+        root.width = availableWidth
+        root.height = availableHeight
+        root.absX = 0f
+        root.absY = 0f
+        layoutChildren(root, availableWidth, availableHeight)
+    }
+
+    // ---------------------------------------------------------------- measure
+    private fun measure(node: RenderNode, availW: Float, availH: Float,
+                        widthDefinite: Boolean = true, heightDefinite: Boolean = true) {
+        val st = node.style
+        if (st.display == Display.NONE) {
+            node.width = 0f; node.height = 0f
+            return
+        }
+        resolveFontStyle(st)
+        // CSS 规范：显式 display:flex 的容器 flex-direction 初始值是 row；
+        // 块级容器（未写 display，微信 view 默认）纵向堆叠（v0.26.7：修全屏横排 bug）
+        if (!st.flexDirectionSet) {
+            st.flexDirection = if (st.display == Display.FLEX) FlexDirection.ROW
+                               else FlexDirection.COLUMN
+        }
+        // CSS 规定 padding 百分比一律相对「包含块宽度」解析（与 margin 一致），不是高度。
+        // 旧实现把 top/bottom 当高度解析 -> padding-bottom:25% 正方形技巧被算成 25% x 容器高，
+        // 单元格被纵向拉成数百 px（截图 game2048/memory-match 单元格过高、控件叠网格的根因）。
+        val padH = resolve(st.padding.left, availW) + resolve(st.padding.right, availW)
+        val padV = resolve(st.padding.top, availW) + resolve(st.padding.bottom, availW)
+
+        // CSS 规范：父尺寸未定义（auto/内容撑开）时，子元素的百分比尺寸退化为 auto。
+        // 修复：AI 给卡片写 height:100%（配 flex 居中），父高是内容撑开时被解析成
+        // "父的可用高"（整屏）——卡片瞬间变成几千像素高的白条。
+        val specifiedW = if (st.width.unit == Length.Unit.PERCENT && !widthDefinite) null
+                         else resolveOrNull(st.width, availW)
+        val specifiedH = if (st.height.unit == Length.Unit.PERCENT && !heightDefinite) null
+                         else resolveOrNull(st.height, availH)
+
+        // box-sizing：默认 BORDER_BOX（与历史行为一致）；CONTENT 时 width 不含 padding。
+        val isBorderBox = st.boxSizing != BoxSizing.CONTENT
+        val contentW = when {
+            specifiedW != null -> if (isBorderBox) max(0f, specifiedW - padH) else specifiedW
+            else -> null
+        }
+
+        when (node.type) {
+            NodeType.TEXT -> {
+                val fs = st.fontSize
+                val lh = if (st.lineHeight.isNaN()) fs * 1.25f else st.lineHeight
+                val maxW = contentW ?: max(0f, availW - padH)
+                val res = textMeasurer?.invoke(node.text, fs, st.fontWeight == FontWeight.BOLD, maxW)
+                node.lines = res?.lines ?: fallbackLines(node.text, fs, maxW)
+                node.lineHeightPx = lh
+                val intrinsicW = res?.width ?: fallbackWidth(node.text, fs)
+                node.width = specifiedW ?: min(availW, intrinsicW + padH)
+                node.height = specifiedH ?: (node.lineHeightPx * node.lines.size + padV)
+            }
+            NodeType.IMAGE -> {
+                val w = node.attributes["__intrinsicWidth"]?.toFloatOrNull()
+                val h = node.attributes["__intrinsicHeight"]?.toFloatOrNull()
+                node.width = specifiedW ?: (w ?: 0f)
+                node.height = specifiedH ?: (h ?: 0f)
+            }
+            NodeType.INPUT, NodeType.BUTTON -> {
+                val fs = st.fontSize
+                val lh = if (st.lineHeight.isNaN()) fs * 1.4f else st.lineHeight
+                node.lineHeightPx = lh
+                val txt = node.text.ifEmpty { node.attributes["placeholder"] ?: "" }
+                val maxW = contentW ?: max(0f, availW - padH)
+                val res = textMeasurer?.invoke(txt, fs, st.fontWeight == FontWeight.BOLD, maxW)
+                node.lines = res?.lines ?: listOf(txt)
+                node.width = specifiedW ?: min(availW, (res?.width ?: fallbackWidth(txt, fs)) + padH)
+                node.height = specifiedH ?: (lh + padV)
+            }
+            else -> {
+                // container: children measured first for intrinsic size
+                val innerW = contentW ?: max(0f, availW - padH)
+                val innerH = max(0f, availH - padV)
+                if (st.display == Display.GRID && node.children.isNotEmpty()) {
+                    measureGridContainer(node, availW, availH, innerW, innerH, specifiedW, specifiedH, padH, padV)
+                } else {
+                val row = isRow(st)
+                // 页面根（ROOT）尺寸就是视口，对子元素而言是"已确定尺寸"的父级。
+                // 否则 `.page{height:100%}` 被判成 auto（父高未知，百分比退化），
+                // 页面背景只包住内容高度 → 表现为"背景被围栏框住、不满屏"，flex:1 的页脚也失效。
+                val rootNode = node.type == NodeType.ROOT
+                // 块级/弹性容器（display:block/flex）在自动宽度下会填满可用宽度，
+                // 其内容的百分比尺寸应相对该可用宽度解析，而不是退化为 auto。
+                // 否则「flex 容器 + width:25%/50% 子项」会塌成一根竖条（截图 game2048 病态）。
+                val childWDefinite = specifiedW != null || rootNode || st.display == Display.BLOCK || st.display == Display.FLEX
+                val childHDefinite = specifiedH != null || rootNode
+                val measured = ArrayList<RenderNode>(node.children.size)
+                for (c in node.children) {
+                    measure(c, innerW, availH, childWDefinite, childHDefinite)
+                    // 注意：绝对定位子元素仍参与父级内在尺寸计算。
+                    // 严格 CSS 里它不该参与，但端上大量 AI 生成页面用「父容器不写高度 +
+                    // 绝对定位子元素」撑开布局；一旦排除，父高变 0，而 painter 对
+                    // height<=0 的节点直接跳过 → 整棵子树不绘制（表现为整块空白）。
+                    // display:none 的子项不参与内在尺寸（与 layout 阶段一致）。
+                    if (c.style.display != Display.NONE) measured.add(c)
+                }
+                var intrinsicW = 0f
+                var intrinsicH = 0f
+                if (st.flexWrap == FlexWrap.WRAP && measured.isNotEmpty()) {
+                    // 换行容器的内在尺寸必须按「行」累加交叉轴，不能把所有子项当成一行。
+                    // 旧实现（row 分支 intrinsicH = max(子高)）把 4x4 网格的容器高算成「一行」，
+                    // 于是后继兄弟（「重新开始」按钮 / 2048 方向盘）被排在网格第 1 行之后，
+                    // 直接压在网格第 2~4 行上（截图 memory-match / game2048 的错位叠加）。
+                    // row 旧实现还把 intrinsicW 累加成所有子项之和（4 列 = 400% 容器宽），
+                    // 靠 min(availW, ...) 才没爆；这里改成「最宽一行」，语义与 CSS 一致。
+                    val mainSize = if (row) innerW else innerH
+                    val crossGap = if (row) (resolveOrNull(st.gapRow, innerH) ?: 0f)
+                                   else (resolveOrNull(st.gapColumn, innerW) ?: 0f)
+                    val lineMains = ArrayList<Float>()
+                    val lineCrosses = ArrayList<Float>()
+                    var lineMain = 0f
+                    var lineCross = 0f
+                    var open = false
+                    for (c in measured) {
+                        val cm = marginOf(c, innerW, availH)
+                        val cmain = if (row) c.width + cm.left + cm.right else c.height + cm.top + cm.bottom
+                        val ccross = if (row) c.height + cm.top + cm.bottom else c.width + cm.left + cm.right
+                        // +1f 容差与 layout 阶段的分行阈值保持一致（精确百分比浮点差不应多分一行）
+                        if (open && lineMain + cmain > mainSize + 1f) {
+                            lineMains.add(lineMain)
+                            lineCrosses.add(lineCross)
+                            lineMain = 0f
+                            lineCross = 0f
+                            open = false
+                        }
+                        lineMain += cmain
+                        lineCross = max(lineCross, ccross)
+                        open = true
+                    }
+                    if (open) {
+                        lineMains.add(lineMain)
+                        lineCrosses.add(lineCross)
+                    }
+                    val lineCount = lineMains.size
+                    val mainTotal = lineMains.maxOrNull() ?: 0f
+                    var crossTotal = 0f
+                    for (lc in lineCrosses) crossTotal += lc
+                    if (lineCount > 1) crossTotal += (lineCount - 1) * crossGap
+                    if (row) {
+                        intrinsicW = mainTotal
+                        intrinsicH = crossTotal
+                    } else {
+                        intrinsicH = mainTotal
+                        intrinsicW = crossTotal
+                    }
+                } else {
+                    for (c in measured) {
+                        val cm = marginOf(c, innerW, availH)
+                        val cw = c.width + cm.left + cm.right
+                        val ch = c.height + cm.top + cm.bottom
+                        if (row) {
+                            intrinsicW += cw
+                            intrinsicH = max(intrinsicH, ch)
+                        } else {
+                            intrinsicW = max(intrinsicW, cw)
+                            intrinsicH += ch
+                        }
+                    }
+                }
+                node.width = when { specifiedW != null -> if (isBorderBox) specifiedW else specifiedW + padH; else -> min(availW, intrinsicW + padH) }
+                node.height = specifiedH ?: (intrinsicH + padV)
+                }
+            }
+        }
+
+        // 宽高比：仅当一边显式设定、另一边未设定时按比值推导另一边（AI 写正方形格子关键）。
+        if (st.aspectRatioSet && !st.aspectRatio.isNaN()) {
+            if (st.widthSet && !st.heightSet) node.height = node.width / st.aspectRatio
+            else if (st.heightSet && !st.widthSet) node.width = node.height * st.aspectRatio
+        }
+
+        // min / max constraints
+        val minW = resolveOrNull(st.minWidth, availW)
+        val maxW = resolveOrNull(st.maxWidth, availW)
+        val minH = resolveOrNull(st.minHeight, availH)
+        val maxH = resolveOrNull(st.maxHeight, availH)
+        if (minW != null) node.width = max(node.width, minW)
+        if (maxW != null) node.width = min(node.width, maxW)
+        if (minH != null) node.height = max(node.height, minH)
+        if (maxH != null) node.height = min(node.height, maxH)
+    }
+
+    /**
+     * 在 layout 阶段把 rpx 单位的字号/行高换算成 px（仅当解析时标记过 rpx）。
+     * 就地改写 st.fontSize/st.lineHeight，使 measure 与 CanvasPainter/GLRenderer 都看到同一份 px。
+     * 改写后置标记 false，保证节点只被换算一次（measure 每节点只跑一次，双保险）。
+     */
+    private fun resolveFontStyle(st: Style) {
+        if (st.fontSizeIsRpx) { st.fontSize *= rpxRatio; st.fontSizeIsRpx = false }
+        if (st.lineHeightIsRpx) { st.lineHeight *= rpxRatio; st.lineHeightIsRpx = false }
+    }
+
+    // ---------------------------------------------------------------- layout
+    private fun layoutChildren(node: RenderNode, availW: Float, availH: Float) {
+        val st = node.style
+        // 同 measure：padding 百分比相对包含块宽度解析。
+        val padL = resolve(st.padding.left, availW)
+        val padT = resolve(st.padding.top, availW)
+        val padR = resolve(st.padding.right, availW)
+        val padB = resolve(st.padding.bottom, availW)
+
+        val contentX = node.absX + padL
+        val contentY = node.absY + padT
+        val contentW = max(0f, node.width - padL - padR)
+        val contentH = max(0f, node.height - padT - padB)
+
+        // 网格布局：自己定位子元素后直接返回（不走下方 flex 流程）。
+        if (st.display == Display.GRID && node.children.isNotEmpty()) {
+            layoutGrid(node, availW, availH, contentX, contentY, contentW, contentH)
+            return
+        }
+
+        val flow = ArrayList<RenderNode>()
+        for (c in node.children) {
+            if (c.style.display == Display.NONE) continue
+            if (c.style.position == PositionType.ABSOLUTE) {
+                placeAbsolute(c, contentX, contentY, contentW, contentH)
+            } else {
+                flow.add(c)
+            }
+        }
+        // 关键：flow 为空（父容器只含绝对定位子元素 / 子元素全 display:none）时**不能直接 return**。
+        // 旧实现提前返回 → 下方的子层递归布局与 overflow 内容尺寸计算整段被跳过，
+        // 绝对定位子树的 absX/absY 保持 0，整棵子树叠在页面左上角（多层卡片糊成一坨）。
+        val row = isRow(st)
+        val reversed = st.flexDirection == FlexDirection.ROW_REVERSE || st.flexDirection == FlexDirection.COLUMN_REVERSE
+
+        if (flow.isEmpty()) {
+            // 无流内子元素：跳过主轴排布，直接走下方递归
+        } else if (st.flexWrap == FlexWrap.NOWRAP) {
+            // ---- single line (nowrap) ----
+            val mainSize = if (row) contentW else contentH
+            applyFlex(node, flow, mainSize, row, contentW, contentH)
+            positionLine(node, flow, contentX, contentY, contentW, contentH, row, reversed, true)
+        } else {
+            // ---- wrap: split into lines ----
+            // 换行主轴尺寸要扣除行间 gap
+            val crossGapWrap = if (row)
+                (resolveOrNull(st.gapRow, contentH) ?: 0f)
+            else (resolveOrNull(st.gapColumn, contentW) ?: 0f)
+            val lines = ArrayList<ArrayList<RenderNode>>()
+            var current = ArrayList<RenderNode>()
+            var used = 0f
+            for (c in flow) {
+                val m = marginOf(c, contentW, contentH)
+                val main = (if (row) c.width + m.left + m.right else c.height + m.top + m.bottom)
+                // +1f 容差：25%/50% 等精确百分比在浮点下可能与容器宽差 1px，
+                // 不应因此换行（否则 4 格 2048 棋盘会多包一行变成 3+1）。
+                if (current.isNotEmpty() && used + main > mainSizeOf(contentW, contentH, row) + 1f) {
+                    lines.add(current)
+                    current = ArrayList()
+                    used = 0f
+                }
+                current.add(c)
+                used += main
+            }
+            if (current.isNotEmpty()) lines.add(current)
+
+            var crossOffset = 0f
+            for (line in lines) {
+                applyFlex(node, line, mainSizeOf(contentW, contentH, row), row, contentW, contentH)
+                val lineCross = line.maxOf { c ->
+                    val m = marginOf(c, contentW, contentH)
+                    if (row) c.height + m.top + m.bottom else c.width + m.left + m.right
+                }
+                val startX = if (row) contentX else contentX + crossOffset
+                val startY = if (row) contentY + crossOffset else contentY
+                val lineW = if (row) contentW else lineCross
+                val lineH = if (row) lineCross else contentH
+                positionLine(node, line, startX, startY, lineW, lineH, row, reversed, true)
+                crossOffset += lineCross + crossGapWrap
+            }
+        }
+
+        // 递归布局所有子层（流内 + 绝对定位一视同仁）：
+        // 绝对定位子元素自己的坐标已由 placeAbsolute 定好，其子孙必须继续往下布局，
+        // 否则嵌套结构（卡片 > 角标 > 文字）会停在旧坐标。
+        for (c in node.children) {
+            if (c.style.display == Display.NONE) continue
+            layoutChildren(c, contentW, contentH)
+        }
+        if (st.overflow == Overflow.SCROLL) {
+            // 真实内容尺寸 = 子元素包围盒 + 内边距。
+            // 旧实现直接把容器自身内高写进 contentHeight → 滚动上限恒为 0（contentHeight - height ≈ -padding），
+            // 表现为 scroll-view 完全不能滚、列表只能显示第一屏 = 功能不可用。
+            var maxX = 0f
+            var maxY = 0f
+            for (c in node.children) {
+                if (c.style.display == Display.NONE) continue
+                val m = marginOf(c, contentW, contentH)
+                maxX = max(maxX, (c.absX - contentX) + c.width + m.right)
+                maxY = max(maxY, (c.absY - contentY) + c.height + m.bottom)
+            }
+            node.contentWidth = padL + maxX + padR
+            node.contentHeight = padT + maxY + padB
+        }
+    }
+
+    private fun mainSizeOf(contentW: Float, contentH: Float, row: Boolean) = if (row) contentW else contentH
+
+    /** Applies grow / shrink along the main axis. */
+    private fun applyFlex(
+        node: RenderNode,
+        line: List<RenderNode>,
+        mainSize: Float,
+        row: Boolean,
+        contentW: Float,
+        contentH: Float
+    ) {
+        var used = 0f
+        var totalGrow = 0f
+        var totalShrink = 0f
+        var shrinkable = 0f
+        for (c in line) {
+            val m = marginOf(c, contentW, contentH)
+            val main = (if (row) c.width else c.height) + (if (row) m.left + m.right else m.top + m.bottom)
+            used += main
+            totalGrow += c.style.flexGrow
+            totalShrink += c.style.flexShrink
+            shrinkable += if (row) c.width else c.height
+        }
+        val free = mainSize - used
+        if (free > 0 && totalGrow > 0) {
+            for (c in line) {
+                val g = c.style.flexGrow / totalGrow * free
+                if (row) c.width += g else c.height += g
+            }
+        } else if (free < 0 && totalShrink > 0) {
+            val deficit = -free
+            for (c in line) {
+                val base = (if (row) c.width else c.height)
+                val share = if (shrinkable > 0) base / shrinkable else 0f
+                val reduce = min(base, deficit * share)
+                if (row) c.width -= reduce else c.height -= reduce
+            }
+        }
+    }
+
+    private fun positionLine(
+        node: RenderNode,
+        line: List<RenderNode>,
+        startX: Float,
+        startY: Float,
+        contentW: Float,
+        contentH: Float,
+        row: Boolean,
+        reversed: Boolean,
+        isRootLine: Boolean
+    ) {
+        val st = node.style
+        val ordered = if (reversed) line.reversed() else line
+
+        var totalMain = 0f
+        for (c in ordered) {
+            val m = marginOf(c, contentW, contentH)
+            totalMain += (if (row) c.width + m.left + m.right else c.height + m.top + m.bottom)
+        }
+        val mainSize = if (row) contentW else contentH
+        val free = max(0f, mainSize - totalMain)
+
+        // gap：主轴方向相邻子项的固定间距（row 方向=column-gap，column 方向=row-gap）。
+        val mainGapRaw = if (row) st.gapColumn else st.gapRow
+        val mainGap = if (st.gapSet) (resolveOrNull(mainGapRaw, mainSize) ?: 0f) else 0f
+        val nItems = ordered.size
+        val freeWithGap = max(0f, free - mainGap * max(0, nItems - 1))
+        val (gapStart, gapBetween) = when (st.justifyContent) {
+            JustifyContent.FLEX_START -> 0f to mainGap
+            JustifyContent.FLEX_END -> freeWithGap to mainGap
+            JustifyContent.CENTER -> freeWithGap / 2f to mainGap
+            JustifyContent.SPACE_BETWEEN -> 0f to (if (nItems > 1) mainGap + freeWithGap / (nItems - 1) else mainGap)
+            JustifyContent.SPACE_AROUND -> {
+                val g = if (nItems > 0) freeWithGap / nItems else 0f
+                (g / 2f) to (mainGap + g)
+            }
+        }
+
+        var cursor = if (row) startX + gapStart else startY + gapStart
+        for (c in ordered) {
+            val m = marginOf(c, contentW, contentH)
+            val crossSize = if (row) contentH else contentW
+            val childCross = if (row) c.height + m.top + m.bottom else c.width + m.left + m.right
+
+            val crossPos = when (st.alignItems) {
+                AlignItems.FLEX_START -> 0f
+                AlignItems.FLEX_END -> crossSize - childCross
+                AlignItems.CENTER -> (crossSize - childCross) / 2f
+                AlignItems.STRETCH -> {
+                    if (row) {
+                        if (!c.style.heightSet) c.height = max(0f, crossSize - m.top - m.bottom)
+                        0f
+                    } else {
+                        if (!c.style.widthSet) c.width = max(0f, crossSize - m.left - m.right)
+                        0f
+                    }
+                }
+            }
+
+            if (row) {
+                c.x = cursor + m.left
+                c.y = crossPos + m.top
+                c.absX = startX + (c.x - startX)
+                c.absY = startY + crossPos + m.top
+                cursor += c.width + m.left + m.right + gapBetween
+            } else {
+                c.x = crossPos + m.left
+                c.y = cursor + m.top
+                c.absX = startX + crossPos + m.left
+                c.absY = startY + (c.y - startY)
+                cursor += c.height + m.top + m.bottom + gapBetween
+            }
+        }
+    }
+
+    private fun placeAbsolute(child: RenderNode, contentX: Float, contentY: Float, contentW: Float, contentH: Float) {
+        val st = child.style
+        val l = resolveOrNull(st.left, contentW)
+        val t = resolveOrNull(st.top, contentH)
+        val r = resolveOrNull(st.right, contentW)
+        val b = resolveOrNull(st.bottom, contentH)
+        val x = when {
+            l != null -> contentX + l
+            r != null -> contentX + contentW - child.width - r
+            else -> contentX
+        }
+        val y = when {
+            t != null -> contentY + t
+            b != null -> contentY + contentH - child.height - b
+            else -> contentY
+        }
+        // transform: translate 偏移（% 相对自身尺寸——支持 AI 常写的 left:50% + translateX(-50%) 居中）
+        val tx = resolveOrNull(st.translateX, child.width) ?: 0f
+        val ty = resolveOrNull(st.translateY, child.height) ?: 0f
+        child.x = x - contentX + tx
+        child.y = y - contentY + ty
+        child.absX = x + tx
+        child.absY = y + ty
+    }
+
+    // ---------------------------------------------------------------- utils
+    private fun isRow(st: Style) =
+        st.flexDirection == FlexDirection.ROW || st.flexDirection == FlexDirection.ROW_REVERSE
+
+    fun resolve(len: Length, parent: Float): Float = len.resolve(parent, viewportWidth, rpxRatio, viewportHeight) ?: 0f
+
+    private fun resolveOrNull(len: Length, parent: Float): Float? =
+        if (len.unit == Length.Unit.RPX) len.value * rpxRatio
+        else len.resolve(parent, viewportWidth, rpxRatio, viewportHeight)
+
+    private fun marginOf(node: RenderNode, contentW: Float, contentH: Float): Margins {
+        val m = node.style.margin
+        // 同 padding：margin 百分比相对包含块宽度解析（CSS 规范）。
+        return Margins(
+            resolve(m.left, contentW), resolve(m.top, contentW),
+            resolve(m.right, contentW), resolve(m.bottom, contentW)
+        )
+    }
+
+    data class Margins(val left: Float, val top: Float, val right: Float, val bottom: Float)
+
+    private fun fallbackLines(text: String, fontSize: Float, maxWidth: Float): List<String> {
+        if (text.isEmpty()) return emptyList()
+        val perLine = max(1, (maxWidth / (fontSize * 0.6f)).toInt())
+        return text.chunked(perLine)
+    }
+
+    private fun fallbackWidth(text: String, fontSize: Float): Float = text.length * fontSize * 0.6f
+
+    // ---------------------------------------------------------------- grid
+    /** 解析一组网格轨道尺寸（fr 占剩余、percent/px 固定、auto 近似 fr=1）。 */
+    private fun gridTrackSizes(tracks: List<GridTrack>, basis: Float): List<Float> {
+        if (tracks.isEmpty()) return listOf(basis)
+        val sizes = ArrayList<Float>(tracks.size)
+        var fixed = 0f
+        val frWeights = ArrayList<Float>()
+        for (t in tracks) {
+            when (t.type) {
+                TrackType.PX -> { sizes.add(t.value); fixed += t.value }
+                TrackType.PERCENT -> { val v = basis * t.value / 100f; sizes.add(v); fixed += v }
+                TrackType.FR -> { sizes.add(0f); frWeights.add(t.value) }
+                TrackType.AUTO -> { sizes.add(0f); frWeights.add(1f) }
+            }
+        }
+        val frTotal = frWeights.sum()
+        val leftover = basis - fixed
+        if (frTotal > 0f && leftover > 0f) {
+            var k = 0
+            for (i in tracks.indices) {
+                if (tracks[i].type == TrackType.FR || tracks[i].type == TrackType.AUTO) {
+                    sizes[i] = leftover * (frWeights[k] / frTotal); k++
+                }
+            }
+        }
+        return sizes
+    }
+
+    /** 网格容器在 measure 阶段的尺寸计算：按列宽测量子项、累加行高。 */
+    private fun measureGridContainer(node: RenderNode, availW: Float, availH: Float, innerW: Float, innerH: Float,
+                                    specifiedW: Float?, specifiedH: Float?, padH: Float, padV: Float) {
+        val st = node.style
+        val items = node.children.filter { it.style.display != Display.NONE }
+        val cols = if (st.gridColumns.isNotEmpty()) st.gridColumns.size else 1
+        val isBB = st.boxSizing != BoxSizing.CONTENT
+        val basisW = if (specifiedW != null) (if (isBB) specifiedW - padH else specifiedW) else innerW
+        val colWidths = gridTrackSizes(st.gridColumns, basisW)
+        val colGap = if (st.gapSet) (resolveOrNull(st.gapColumn, basisW) ?: 0f) else 0f
+        val basisH = if (specifiedH != null) (if (isBB) specifiedH - padV else specifiedH) else innerH
+        val rowGap = if (st.gapSet) (resolveOrNull(st.gapRow, basisH) ?: 0f) else 0f
+        val rowHeights = ArrayList<Float>()
+        for ((i, c) in items.withIndex()) {
+            val col = i % cols
+            val cw = colWidths[col]
+            measure(c, cw, availH, true, st.gridRows.isNotEmpty())
+            val cm = marginOf(c, cw, availH)
+            // 网格项默认拉伸填满列宽；若显式设定则保持。
+            val finalW = if (!c.style.widthSet) maxOf(0f, cw - cm.left - cm.right) else c.width
+            // 宽高比：仅一边未设定时按比值推导另一边（否则保持已设定的尺寸）。
+            val applyAspect = c.style.aspectRatioSet && !c.style.aspectRatio.isNaN()
+            val finalH = when {
+                c.style.heightSet -> c.height
+                applyAspect && c.style.widthSet -> c.width / c.style.aspectRatio
+                applyAspect && !c.style.widthSet -> finalW / c.style.aspectRatio
+                else -> c.height
+            }
+            c.width = finalW
+            c.height = finalH
+            val h = c.height + cm.top + cm.bottom
+            val row = i / cols
+            while (rowHeights.size <= row) rowHeights.add(0f)
+            rowHeights[row] = maxOf(rowHeights[row], h)
+        }
+        val rows = if (st.gridRows.isNotEmpty()) st.gridRows.size else rowHeights.size
+        val usedRows = if (st.gridRows.isNotEmpty()) gridTrackSizes(st.gridRows, basisH) else rowHeights
+        var contentWGrid = 0f; for (x in colWidths) contentWGrid += x
+        contentWGrid += (cols - 1) * colGap
+        var contentHGrid = 0f; for (x in usedRows) contentHGrid += x
+        contentHGrid += (rows - 1) * rowGap
+        node.width = when { specifiedW != null -> if (isBB) specifiedW else specifiedW + padH; else -> minOf(availW, contentWGrid + padH) }
+        node.height = when { specifiedH != null -> if (isBB) specifiedH else specifiedH + padV; else -> contentHGrid + padV }
+    }
+
+    /** 网格容器在 layout 阶段的子元素定位 + 递归子树布局。 */
+    private fun layoutGrid(node: RenderNode, availW: Float, availH: Float, contentX: Float, contentY: Float, contentW: Float, contentH: Float) {
+        val st = node.style
+        val items = node.children.filter { it.style.display != Display.NONE }
+        // 绝对定位子元素照常放置
+        for (c in node.children) {
+            if (c.style.display == Display.NONE) continue
+            if (c.style.position == PositionType.ABSOLUTE) placeAbsolute(c, contentX, contentY, contentW, contentH)
+        }
+        if (items.isEmpty()) return
+        val cols = if (st.gridColumns.isNotEmpty()) st.gridColumns.size else 1
+        val colWidths = gridTrackSizes(st.gridColumns, contentW)
+        val colGap = if (st.gapSet) (resolveOrNull(st.gapColumn, contentW) ?: 0f) else 0f
+        val rowGap = if (st.gapSet) (resolveOrNull(st.gapRow, contentH) ?: 0f) else 0f
+        val autoRowHeights = ArrayList<Float>()
+        for ((i, c) in items.withIndex()) {
+            val col = i % cols
+            val cw = colWidths[col]
+            val cm = marginOf(c, cw, contentH)
+            val h = c.height + cm.top + cm.bottom
+            val row = i / cols
+            while (autoRowHeights.size <= row) autoRowHeights.add(0f)
+            autoRowHeights[row] = maxOf(autoRowHeights[row], h)
+        }
+        val rowHeights = if (st.gridRows.isNotEmpty()) gridTrackSizes(st.gridRows, contentH) else autoRowHeights
+        for ((i, c) in items.withIndex()) {
+            val col = i % cols
+            val row = i / cols
+            var cx = contentX
+            for (k in 0 until col) cx += colWidths[k] + colGap
+            var cy = contentY
+            for (k in 0 until row) cy += rowHeights[k] + rowGap
+            val cw = colWidths[col]
+            val rh = rowHeights[row]
+            val cm = marginOf(c, cw, contentH)
+            // 与 measureGridContainer 一致：未显式设定则拉伸填满格；aspect-ratio 优先于拉伸。
+            val finalW = if (!c.style.widthSet) maxOf(0f, cw - cm.left - cm.right) else c.width
+            val applyAspect = c.style.aspectRatioSet && !c.style.aspectRatio.isNaN()
+            val finalH = when {
+                c.style.heightSet -> c.height
+                applyAspect && c.style.widthSet -> c.width / c.style.aspectRatio
+                applyAspect && !c.style.widthSet -> finalW / c.style.aspectRatio
+                else -> maxOf(0f, rh - cm.top - cm.bottom)
+            }
+            c.width = finalW
+            c.height = finalH
+            c.x = (cx - contentX) + cm.left
+            c.y = (cy - contentY) + cm.top
+            c.absX = cx + cm.left
+            c.absY = cy + cm.top
+        }
+        for ((i, c) in items.withIndex()) {
+            val cw = colWidths[i % cols]
+            val rh = rowHeights[i / cols]
+            layoutChildren(c, cw, rh)
+        }
+        for (c in node.children) {
+            if (c.style.display == Display.NONE) continue
+            if (c.style.position == PositionType.ABSOLUTE) layoutChildren(c, contentW, contentH)
+        }
+    }
+}

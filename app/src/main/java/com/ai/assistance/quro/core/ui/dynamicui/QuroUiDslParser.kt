@@ -1,0 +1,1707 @@
+package com.ai.assistance.quro.core.ui.dynamicui
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * ZorvAI 动态 UI DSL 解析器（参照 Kai `KaiUiParser` 的三级流水线重写）。
+ *
+ * 流水线：
+ *  1. **代码块提取** —— 从模型回复中定位 ```quro-ui 围栏，取出原始 body；
+ *  2. **语法修复** —— 修正 LLM 常见 JSON 错误（`"key=[` 漏冒号、多余闭合括号、截断未闭合），
+ *     使严格 JSON 解析器能成功读入；
+ *  3. **逐字段构建** —— 递归走 JSONObject 树构造节点，每个字段独立容错，
+ *     缺失或类型错乱一律回落默认值，保证「单个节点坏掉不影响整棵树」。
+ *
+ * 只有第 2 步的严格解析会产出 [QuroUiParseResult.Failure]，
+ * 其后所有读取都是 best-effort，**不会**再抛异常中断整棵树。
+ */
+object QuroUiDslParser {
+
+    /** UI 代码块的围栏语言标识。同时兼容历史写法 zorv-ui。 */
+    private val FENCE_LANGS = setOf("quro-ui", "zorv-ui", "quro_ui")
+
+    // =========================================================================================
+    // 1. 代码块提取
+    // =========================================================================================
+
+    /**
+     * 从 markdown 文本中提取所有 UI 代码块的原始内容（不含围栏行）。
+     * 支持 ```lang ... ``` 与 ~~~lang ... ~~~ 两种围栏。
+     */
+    fun extractUiBlocks(markdown: String): List<String> {
+        if (markdown.isBlank()) return emptyList()
+        val blocks = mutableListOf<String>()
+        val lines = markdown.lines()
+        var i = 0
+        while (i < lines.size) {
+            val open = lines[i].trimStart()
+            val fenceChar = when {
+                open.startsWith("```") -> "```"
+                open.startsWith("~~~") -> "~~~"
+                else -> { i++; continue }
+            }
+            val lang = open.removePrefix(fenceChar).trim()
+                .takeWhile { !it.isWhitespace() }.lowercase()
+            if (lang !in FENCE_LANGS) { i++; continue }
+
+            // 收集围栏体，直到匹配闭合围栏
+            val body = StringBuilder()
+            var j = i + 1
+            var closed = false
+            while (j < lines.size) {
+                val l = lines[j]
+                if (l.trimStart().startsWith(fenceChar)) { closed = true; break }
+                body.append(l).append('\n')
+                j++
+            }
+            // 未闭合也照收（模型流式输出常被截断），交给语法修复阶段补齐
+            if (body.isNotBlank()) blocks.add(body.toString())
+            i = if (closed) j + 1 else j
+        }
+        return blocks
+    }
+
+    /** 判断文本中是否含有 UI 代码块。 */
+    fun hasUiBlock(markdown: String): Boolean = extractUiBlocks(markdown).isNotEmpty()
+
+    // =========================================================================================
+    // 2. 语法修复
+    // =========================================================================================
+
+    /** LLM 常把 `"children":[` 写成 `"children=[`，补回冒号。 */
+    private val brokenKeySyntax = Regex(""""(\w+)=([{\[])""")
+
+    /** 去除行尾多余逗号（JSON 不合法但 LLM 高频产出）。 */
+    private val trailingComma = Regex(""",(\s*[}\]])""")
+
+    /**
+     * 用栈匹配修复括号不平衡：
+     *  - 多余的闭合符号直接跳过；
+     *  - 未闭合的结构逆向补齐（} 或 ]）。
+     * 全程跟踪字符串与转义状态，避免把字符串内容里的括号当结构符号。
+     */
+    fun sanitizeJson(raw: String): String {
+        if (raw.isBlank()) return raw
+        val first = raw.trim().firstOrNull()
+        if (first != '{' && first != '[') return raw
+
+        val stack = mutableListOf<Char>()
+        val out = StringBuilder()
+        var inString = false
+        var escaped = false
+        // 最近一个非空白结构字符，用于识别「对象数组里忘记闭合每个对象」：
+        // 形如 [{a:1,{b:2}] —— 在数组上下文里遇到 ,{ 说明上一个对象缺 }
+        var lastSig = ' '
+
+        for (c in raw) {
+            if (escaped) {
+                escaped = false
+                out.append(c)
+                continue
+            }
+            if (inString && c == '\\') {
+                escaped = true
+                out.append(c)
+                continue
+            }
+            if (c == '"') {
+                inString = !inString
+                out.append(c)
+                lastSig = c
+                continue
+            }
+            if (inString) {
+                out.append(c)
+                continue
+            }
+            if (c.isWhitespace()) {
+                out.append(c)
+                continue
+            }
+
+            when (c) {
+                '{', '[' -> {
+                    // 数组内的对象忘了闭合：在 ,{ / ,[ 前补一个 }
+                    if (c == '{' && lastSig == ',' &&
+                        stack.lastOrNull() == '{' &&
+                        stack.getOrNull(stack.size - 2) == '['
+                    ) {
+                        out.append('}')
+                        stack.removeAt(stack.lastIndex)
+                    }
+                    stack.add(c)
+                    out.append(c)
+                    lastSig = c
+                }
+                '}', ']' -> {
+                    val open = if (c == '}') '{' else '['
+                    if (stack.lastOrNull() == open) {
+                        stack.removeAt(stack.lastIndex)
+                        out.append(c)
+                        lastSig = c
+                    } else if (stack.contains(open)) {
+                        // 闭合顺序错乱（如 ] 出现在 } 之前，或 } 出现在 [ 之前）：
+                        // 自动补上中间层级所有未闭合括号，再消费当前闭合符，
+                        // 避免兄弟键被错误地吞进错误的数组/对象层级。
+                        // 例：{"a":[1,2},"b":3} —— 遇到 } 时栈顶是 [，但更深处有 {，
+                        // 此时依次弹出并补 ] 与 }，让 "b" 成为同级兄弟而不是被吞进数组。
+                        while (stack.isNotEmpty() && stack.lastOrNull() != open) {
+                            val inner = stack.removeAt(stack.lastIndex)
+                            out.append(if (inner == '{') '}' else ']')
+                        }
+                        if (stack.lastOrNull() == open) {
+                            stack.removeAt(stack.lastIndex)
+                            out.append(c)
+                        }
+                        lastSig = c
+                    } else {
+                        // 多余闭合符：直接丢弃
+                        lastSig = c
+                    }
+                }
+                else -> {
+                    out.append(c)
+                    lastSig = c
+                }
+            }
+        }
+
+        // 逆向补齐未闭合结构
+        while (stack.isNotEmpty()) {
+            val open = stack.removeAt(stack.lastIndex)
+            out.append(if (open == '{') '}' else ']')
+        }
+        return out.toString()
+    }
+
+    /**
+     * 组合修复：截前后垃圾 → 去 BOM → 单引号归一 → 补冒号 → 去尾逗号 → 括号栈平衡。
+     *
+     * 目标：让 LLM 常见的「不标准 JSON」也能被 [org.json] 读入。模型偶尔会：
+     *  - 在 JSON 前后夹说明文字（「这是卡片：{...}」）；
+     *  - 用单引号代替双引号（{'a':'b'}）；
+     *  - 残留 UTF-8 BOM。
+     * 这些都让严格 JSON 解析器直接抛异常，必须先在修复阶段兜底。
+     */
+    fun repair(raw: String): String {
+        var s = raw.trim()
+        // 去掉 UTF-8 BOM（部分模型输出会带上）
+        s = s.removePrefix("\uFEFF")
+        // 截掉首个 { / [ 之前的非 JSON 前缀（如「这是卡片：」）
+        val first = s.indexOfFirst { it == '{' || it == '[' }
+        if (first > 0) s = s.substring(first)
+        // 🔴🔴🔴 截尾部的正确口径（#181「内容明明在屏幕上却只显示空数组」的真凶）。
+        //
+        // 旧实现：`val last = s.indexOfLast { it == '}' || it == ']' }` 然后截到last+1。
+        // 它**按字符位置**找闭合符，既不看结构配对、也不看字符串态，于是：
+        //
+        //   输入： [\n,\n,\n,\n]\n• 选项 A\n• 选项 B
+        //   旧输出：[\n,\n,\n\n]          ←「选项 A / B」被整段砍掉
+        //
+        // 真机截图里正是这样：失败框显示一个空数组，而「• 选项 A」「• 选项 B」
+        // 出现在它**下面**（那是另一段内容）。于是 JSONArray 解析出空壳 → 报红字。
+        //
+        // 现在改成：从起点做**结构配对扫描**（跳过双引号字符串内部），
+        // 找到与起点配对的闭合符：
+        //  - 配对成功 → JSON 本体 = [起点..配对位]，**尾部残留另行保留**（不丢内容）
+        //  - 配对失败（流式截断）→ 退回 indexOfLast 的老行为，由sanitizeJson 补齐
+        val open = s.firstOrNull { it == '{' || it == '[' }
+        if (open != null) {
+            val close = if (open == '{') '}' else ']'
+            val matched = findMatchingClose(s, 0, open, close)
+            when {
+                //配对成功：尾部有残留时，把它**保留下来**（追加换行，避免与 JSON 粘连）
+                matched != null && matched < s.length - 1 -> {
+                    val tail = s.substring(matched + 1).trim()
+                    val body = s.substring(0, matched + 1)
+                    s = if (tail.isEmpty()) body else body + "\n" + tail
+                }
+                matched != null -> s = s.substring(0, matched + 1)
+                // 配对失败 → 流式未闭合，交给 sanitizeJson 的栈算法补齐（老行为）
+                else -> {
+                    val last = s.indexOfLast { it == '}' || it == ']' }
+                    if (last in 0 until s.length - 1) s = s.substring(0, last + 1)
+                }
+            }
+        }
+        // 单引号归一为双引号（仅在成对作为字符串定界符、且不在双引号串内时）
+        s = normalizeQuotes(s)
+        // 修复：原 brokenKeySyntax/trailingComma 正则在字符串内容里也生效，
+        // 如 "a=[x" 或内容里 ",}" 被误改写。改为状态机逐字符处理，跳过字符串内部。
+        s = fixOutsideStrings(s)
+        // 括号栈平衡
+        s = sanitizeJson(s)
+        return s
+    }
+
+    /**
+     * 状态机版「补冒号 + 去尾逗号」：只在字符串外处理，字符串内容原样保留。
+     *  - "key"=[ / "key"={ → "key":[ / "key":{（漏冒号）
+     *  - ,} / ,] → } / ]（尾逗号）
+     */
+    private fun fixOutsideStrings(s: String): String {
+        val out = StringBuilder(s.length)
+        var inStr = false
+        var escaped = false
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (inStr) {
+                out.append(c)
+                if (escaped) escaped = false
+                else if (c == '\\') escaped = true
+                else if (c == '"') inStr = false
+                i++
+                continue
+            }
+            when {
+                c == '"' -> { inStr = true; out.append(c); i++ }
+                // "key"=[ / "key"={ 漏冒号：上一个非空白字符是 '"' 且当前是 '='，下一个是 { 或 [
+                c == '=' && out.lastOrNull() == '"' &&
+                    i + 1 < s.length && (s[i + 1] == '{' || s[i + 1] == '[') -> {
+                    out.append(':'); i++ // 跳过 '='，直接写 ':'
+                }
+                // 尾逗号：当前是 ','，往后跳过空白后是 } 或 ]
+                c == ',' -> {
+                    var j = i + 1
+                    while (j < s.length && s[j].isWhitespace()) j++
+                    if (j < s.length && (s[j] == '}' || s[j] == ']')) {
+                        i++ // 丢弃这个逗号
+                    } else {
+                        out.append(c); i++
+                    }
+                }
+                else -> { out.append(c); i++ }
+            }
+        }
+        return out.toString()
+    }
+
+    /**
+     * 拆出「JSON 本体」与「尾部正文」（#181）。
+     *
+     * 真机截图的形态是**一个空壳数组 + 后面跟正文**：
+     * ```
+     * [
+     * ,
+     * ,
+     * ]
+     * • 选项 A
+     * • 选项 B
+     * ```
+     * 直接 `JSONArray(整串)` 要么抛异常、要么只看到那个空壳，
+     * 于是用户看到「⚠️ 解析失败 + 空数组」，而真正的内容一个都没渲染出来。
+     *
+     * @return Pair(本体, 尾部正文)。配对失败时整体作为本体、尾部为空
+     *   （流式截断场景交给 [sanitizeJson] 补齐，不要在这里丢内容）。
+     */
+    private fun splitBodyAndTail(s: String): Pair<String, String> {
+        val open = s.firstOrNull { it == '{' || it == '[' } ?: return s to ""
+        val close = if (open == '{') '}' else ']'
+        val matched = findMatchingClose(s, 0, open, close) ?: return s to ""
+        if (matched >= s.length - 1) return s to ""
+        return s.substring(0, matched + 1) to s.substring(matched + 1)
+    }
+
+    /**
+     * 从 [from] 起（该位置必须是 [open]）做结构配对扫描，返回匹配闭合符下标；找不到返回 null。
+     *
+     * 🔴 必须跳过双引号字符串内部：字符串内容里的 `{` `}` `[` `]` 不参与结构配对，
+     * 否则 `{"text":"用 } 表示"}` 会被算成提前闭合。
+     *
+     * 栈算法：open 入栈；遇到与栈顶匹配的闭合符则出栈，栈空时返回该下标。
+     */
+    private fun findMatchingClose(s: String, from: Int, open: Char, close: Char): Int? {
+        val stack = ArrayDeque<Char>()
+        var inStr = false
+        var escaped = false
+        for (i in from until s.length) {
+            val c = s[i]
+            if (escaped) { escaped = false; continue }
+            if (inStr && c == '\\') { escaped = true; continue }
+            if (c == '"') { inStr = !inStr; continue }
+            if (inStr) continue
+            when (c) {
+                '{' -> stack.addLast('{')
+                '[' -> stack.addLast('[')
+                '}', ']' -> {
+                    val want = if (c == '}') '{' else '['
+                    if (stack.lastOrNull() == want) {
+                        stack.removeLast()
+                        if (stack.isEmpty()) return i
+                    } else {
+                        // 闭合顺序错乱：弹到匹配为止；弹空说明结构已乱，返回 null 走兜底
+                        while (stack.isNotEmpty() && stack.last() != want) stack.removeLast()
+                        if (stack.isNotEmpty()) stack.removeLast()
+                        if (stack.isEmpty()) return i
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * 把成对单引号当作字符串定界符归一为双引号（JSON 只允许双引号）。
+     * 仅转换「不在双引号字符串内」的单引号，避免误伤双引号串里的撇号。
+     * best-effort：覆盖 `{'a':'b'}` 这类最常见的 LLM 写法。
+     *
+     * 修复：原实现不跟踪单引号字符串态，`{'a':'don't'}` 的撇号也被转成 `"`，
+     * 产出 `{"a":"don"t"}` JSON 损坏。改为：单引号后跟 `,` `:` `}` `]` 或空白
+     * 才视为定界符转换，其余（如 don't 的撇号）原样保留。
+     */
+    private fun normalizeQuotes(s: String): String {
+        val out = StringBuilder(s.length)
+        var inDbl = false
+        var inSgl = false
+        var escaped = false
+        for (i in s.indices) {
+            val c = s[i]
+            when {
+                escaped -> { out.append(c); escaped = false }
+                c == '\\' && (inDbl || inSgl) -> { out.append(c); escaped = true }
+                inDbl -> {
+                    out.append(c)
+                    if (c == '"') inDbl = false
+                }
+                inSgl -> {
+                    // 单引号串内：只有「后面跟 , : } ] 空白 或结尾」的 ' 才是闭合符
+                    if (c == '\'') {
+                        val next = s.getOrNull(i + 1)
+                        if (next == null || next == ',' || next == ':' || next == '}' || next == ']' || next.isWhitespace()) {
+                            out.append('"')
+                            inSgl = false
+                        } else {
+                            out.append(c) // don't 的撇号，原样保留
+                        }
+                    } else {
+                        out.append(c)
+                    }
+                }
+                c == '"' -> { inDbl = true; out.append(c) }
+                c == '\'' -> {
+                    // 串外单引号：前面是 { [ , : 或空白 → 视为字符串起始定界符
+                    val prev = out.lastOrNull()
+                    if (prev == null || prev == '{' || prev == '[' || prev == ',' || prev == ':' || prev.isWhitespace()) {
+                        out.append('"')
+                        inSgl = true
+                    } else {
+                        out.append(c)
+                    }
+                }
+                else -> out.append(c)
+            }
+        }
+        return out.toString()
+    }
+
+    // =========================================================================================
+    // 3. 解析入口
+    // =========================================================================================
+
+    /**
+     * 解析一个 UI 代码块 body。
+     * 支持两种形态：
+     *  - 单个 JSON 对象：{"type":"column", ...}
+     *  - NDJSON（每行一个对象）：自动包进 [QuroColumnNode]
+     *  - JSON 数组：自动包进 [QuroColumnNode]
+     */
+    fun parseBlock(rawBlock: String): QuroUiParseResult {
+        val repaired = repair(rawBlock)
+        if (repaired.isBlank()) {
+            return QuroUiParseResult.Failure(repaired, "空内容")
+        }
+
+        // NDJSON：多行且每行都是独立对象
+        val lines = repaired.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.size > 1 && lines.all { it.startsWith("{") }) {
+            val children = lines.mapNotNull { runCatching { buildNode(JSONObject(it)) }.getOrNull() }
+            if (children.isNotEmpty()) {
+                return QuroUiParseResult.Success(QuroColumnNode(children = children), repaired)
+            }
+        }
+
+        return try {
+            when (repaired.first()) {
+                '[' -> {
+                    // 🔴 先把「JSON 本体」与「尾部正文」拆开。
+                    //
+                    // `JSONArray(整串)` 在本体后面还有文字时会抛异常（真机截图就是这个形态：
+                    // 一个空壳数组 + 下面跟着「• 选项 A / • 选项 B」）。
+                    // 这里只喂本体给 JSONArray，尾部文字单独兜住，保证**零内容丢失**。
+                    val (jsonBody, tailText) = splitBodyAndTail(repaired)
+                    val arr = JSONArray(jsonBody)
+                    // 🔴🔴 三形态兜底，**与 [extractSlotContent] 完全同源**。
+                    //
+                    // 旧实现只认`arr.optJSONObject(idx)`：数组元素一旦不是 JSON 对象
+                    // （纯字符串行、嵌套数组、数字/布尔）就全部被 mapNotNull 丢掉，
+                    // children 必为空 → 报「数组为空」→ UI 回退显示原始 JSON。
+                    // 用户实测拿到的正是「⚠️动态 UI 解析失败：数组为空」+ 一堆 `[ , , , , , ]`。
+                    //
+                    // 为什么这与 #175 的原则冲突就必须修：#175 定了「纯文字也必须看得见」，
+                    // 动态 UI **内部**的 extractSlotContent 早就实现了三形态，
+                    // 而顶层数组分支漏了 —— 同一个洞，只是换了个入口。
+                    // toMutableList：#181 要在数组元素之后追加「尾部正文」节点，
+                    // mapNotNull 产出的是不可变 List，不能 add。
+                    val children = (0 until arr.length()).mapNotNull { idx ->
+                        when (val e = arr.opt(idx)) {
+                            null, JSONObject.NULL -> null
+                            is JSONObject -> buildNode(e)
+                            // 嵌套数组 → 递归成竖排容器（内层元素同样走三形态）
+                            is JSONArray -> {
+                                val kids = (0 until e.length()).mapNotNull { i ->
+                                    when (val k = e.opt(i)) {
+                                        null, JSONObject.NULL -> null
+                                        is JSONObject -> buildNode(k)
+                                        else -> k.toString()
+                                            .takeIf { it.isNotBlank() && it != "null" }
+                                            ?.let { QuroMarkdownNode(value = it) }
+                                    }
+                                }
+                                if (kids.isEmpty()) null else QuroColumnNode(children = kids)
+                            }
+                            // 标量（含 String）：纯文字也要看得见，绝不当成「没内容」
+                            else -> e.toString()
+                                .takeIf { it.isNotBlank() && it != "null" }
+                                ?.let { QuroMarkdownNode(value = it) }
+                        }
+                    }
+                    .toMutableList()
+                    // 🔴 把尾部正文接在组件之后（#181 真机：选项 A/B 就在空壳数组下面）
+                    val tail = tailText.trim()
+                    if (tail.isNotEmpty()) {
+                        children.add(QuroMarkdownNode(value = tail))
+                    }
+                    if (children.isEmpty()) {
+                        // 🔴🔴🔴 绝不返回 Failure（#181 真机截图里的「⚠️ 动态 UI 解析失败」）。
+                        //
+                        // 现象：`[` + 若干换行/逗号 + `]`，元素全空 —— 用户只看到一句红字
+                        // 和一个空数组，既看不到内容、也不知道该改什么。
+                        //
+                        // 已核实 [repair] 的三个子步骤与 [extractUiBlocks] 都无法产出这种空壳
+                        // （用 Python 等价移植跑 8 组输入逐一验证），所以**不要**在这里
+                        // 继续猜「是哪个正则删了内容」——那条路已经走死。
+                        //
+                        // 正确口径：**读不出来 ≠ 没有**。
+                        //  - 有肉眼可读的正文（换行/文字/非标点残片）→ 当 Markdown 文本显示，
+                        //    用户至少看得见 AI 到底写了什么，而不是一个空数组。
+                        //  - 真的什么都没有 → 才降级为「已折叠的原文预览」，同样**不报错**。
+                        //
+                        // 两种情况都不抛Failure，因为失败分支在 UI 上渲染成
+                        // 红字 + 原始 JSON（[ChatScreen] 的 DynamicUiBlock Failure 分支），
+                        // 那正是用户截图里最刺眼的东西。
+                        fallbackForEmptyArray(repaired)
+                    } else {
+                        QuroUiParseResult.Success(QuroColumnNode(children = children), repaired)
+                    }
+                }
+                '{' -> {
+                    val node = buildNode(JSONObject(repaired))
+                    // 正常流程里 buildNode 已对未知类型降级为「带样式容器」、不会返回 null；
+                    // 此处 node==null 仅当 buildNode 抛异常（极个别结构崩溃），按失败处理。
+                    if (node == null) QuroUiParseResult.Failure(repaired, "节点构建异常")
+                    else QuroUiParseResult.Success(node, repaired)
+                }
+                else -> QuroUiParseResult.Failure(repaired, "内容不是 JSON 对象或数组")
+            }
+        } catch (e: Exception) {
+            QuroUiParseResult.Failure(repaired, e.message ?: "JSON 解析失败")
+        }
+    }
+
+    /**
+     * 顶层数组一个元素都读不出来时的降级（#181）。
+     *
+     * **绝不返回 Failure** —— 见调用处注释：失败分支会被渲染成红字+ 原始 JSON，
+     * 那正是用户报的问题本身。
+     *
+     * 判定「有可读内容」的口径：剥掉 JSON 的结构字符（`[ ] { } , :` 与空白）
+     * 后若还剩下字符，就说明原文里确实有内容（多半是被结构字符包起来的文字/组件），
+     * 直接当 Markdown 显示；否则退成一句「已收到但无法渲染」的说明 + 原文。
+     */
+    private fun fallbackForEmptyArray(repaired: String): QuroUiParseResult {
+        val meaningful = repaired.filterNot { it.isWhitespace() || it in "[],{}\"" }.trim()
+        return if (meaningful.isNotEmpty()) {
+            // 有内容 → 当文本渲染，绝不让用户面对一个空数组
+            QuroUiParseResult.Success(
+                QuroColumnNode(children = listOf(QuroMarkdownNode(value = meaningful))),
+                repaired,
+            )
+        } else {
+            // 连结构字符都没剩下（典型就是 `[ , , , , , ]`）：这确实是个空数组。
+            //
+            // 🔴 #206 改口径：这里**不再**注入「（这一段内容是空的，没有可显示的组件）」
+            // 之类的解析器元信息。用户截图里那句裸文本本身就是投诉对象 ——
+            // 它是解析器在跟用户自言自语，不是 AI 想表达的内容。
+            //
+            // 改成「不产出任何可见节点」是安全的：`Column` 没有子节点时高度为 0
+            // （`Arrangement.spacedBy` 只在相邻子节点之间生效），不会留下空白间隙。
+            // AI 真正想说的文字照常在 UI 块之外的 Markdown 里渲染。
+            //
+            // 仍然**不报 Failure** —— 红字 + 原始 JSON 才是 #181 要消灭的东西。
+            QuroUiParseResult.Success(QuroColumnNode(children = emptyList()), repaired)
+        }
+    }
+
+    /** 解析 markdown 中的第一个 UI 代码块（无则返回 null）。 */
+    fun parseFirst(markdown: String): QuroUiParseResult? {
+        val block = extractUiBlocks(markdown).firstOrNull() ?: return null
+        return parseBlock(block)
+    }
+
+    // =========================================================================================
+    // 节点构建
+    // =========================================================================================
+
+    /**
+     * 由 JSONObject 构建节点。type 缺失时按结构推断（有 children → column）。
+     * 任何字段读取失败都回落默认值，绝不抛异常。
+     */
+    fun buildNode(json: JSONObject): QuroUiNode? {
+        val type = json.optString("type", json.optString("kind", ""))
+            .trim().lowercase().ifBlank { if (json.has("children")) "column" else "text" }
+
+        return try {
+            when (type) {
+                "column", "vbox", "vertical" -> buildColumn(json)
+                "row", "hbox", "horizontal" -> buildRow(json)
+                "box", "stack" -> QuroBoxNode(
+                    id = json.optStringOrNull("id"),
+                    // 通用样式：背景/圆角/边框/阴影/边距/尺寸/透明度等均收进 style，
+                    // 不再用已废弃的 backgroundColor/borderRadius 平铺字段。
+                    style = buildStyle(json),
+                    children = buildChildren(json),
+                    weight = json.optDoubleOrNull("weight")?.toFloat(),
+                )
+                "pane", "panes", "multi_pane", "multipane" -> QuroPaneNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    children = buildChildren(json),
+                    direction = json.optStringOrNull("direction")
+                        ?: json.optStringOrNull("orient")
+                        ?: json.optStringOrNull("layout"),
+                    spacing = json.optIntOrNull("spacing"),
+                    padding = json.optIntOrNull("padding"),
+                )
+                "card" -> QuroCardNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    children = buildChildren(json),
+                    title = json.optStringOrNull("title"),
+                    padding = json.optIntOrNull("padding"),
+                    cornerRadius = json.optIntOrNull("corner_radius")
+                        ?: json.optIntOrNull("cornerRadius"),
+                    onClick = json.optJSONObject("on_click")?.let { buildAction(it) },
+                    weight = json.optDoubleOrNull("weight")?.toFloat(),
+                )
+                "text", "label" -> buildText(json)
+                "image", "img" -> QuroImageNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    url = json.optStringOrNull("url") ?: json.optStringOrNull("src") ?: "",
+                    alt = json.optStringOrNull("alt"),
+                    height = json.optIntOrNull("height"),
+                    aspectRatio = json.optDoubleOrNull("aspect_ratio")?.toFloat()
+                        ?: json.optDoubleOrNull("aspectRatio")?.toFloat(),
+                    cornerRadius = json.optIntOrNull("corner_radius"),
+                )
+                "icon" -> QuroIconNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    name = json.optStringOrNull("name") ?: "info",
+                    size = json.optIntOrNull("size"),
+                    tint = json.optColorOrNull(),
+                    description = json.optStringOrNull("description"),
+                )
+                "markdown", "md", "richtext", "doc" -> QuroMarkdownNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    value = json.optStringOrNull("value")
+                        ?: json.optStringOrNull("content")
+                        ?: json.optStringOrNull("text") ?: "",
+                )
+                "video", "videoplayer" -> QuroVideoNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    url = json.optStringOrNull("url") ?: json.optStringOrNull("src") ?: "",
+                    title = json.optStringOrNull("title"),
+                )
+                "audio", "music", "audioplayer" -> QuroAudioNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    url = json.optStringOrNull("url") ?: json.optStringOrNull("src") ?: "",
+                    title = json.optStringOrNull("title"),
+                )
+                "browser", "webview", "web" -> QuroBrowserNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    url = json.optStringOrNull("url") ?: "",
+                    height = json.optIntOrNull("height"),
+                )
+                // 修复：AI 写 {"type":"html","html":"..."} 时，"html" 不在白名单，
+                // 走 unknown fallback 只保留 style/children，html 内容字段被整个丢弃。
+                // 新增 QuroHtmlNode 承接「自写 UI」能力：AI 直接写完整 HTML 内联渲染。
+                "html", "raw_html", "htmlview" -> QuroHtmlNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    html = json.optStringOrNull("html")
+                        ?: json.optStringOrNull("content")
+                        ?: json.optStringOrNull("value") ?: "",
+                    height = json.optIntOrNull("height"),
+                )
+                "code", "codeblock", "source" -> QuroCodeNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    code = json.optStringOrNull("code")
+                        ?: json.optStringOrNull("content")
+                        ?: json.optStringOrNull("value") ?: "",
+                    lang = json.optStringOrNull("lang") ?: json.optStringOrNull("language"),
+                    title = json.optStringOrNull("title"),
+                    runnable = json.optBoolean("runnable", false) || json.optBoolean("run", false),
+                )
+                "badge", "chip", "tag" -> QuroBadgeNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    // 修复：parser 只读 text/value，但 prompt 与真实 AI 产物大量写 `label`
+                    // （badge/chip/tag 语义上就是"标签"，label 最自然）。原写法 14 个新闻
+                    // 标签全部被丢弃、badge 显示成空色块，用户感知为「quro-ui 没渲染」。
+                    // 补上 label 兜底，并允许 style.label 嵌套写法。
+                    text = json.optStringOrNull("text")
+                        ?: json.optStringOrNull("value")
+                        ?: json.optStringOrNull("label")
+                        ?: json.optJSONObject("style")?.optStringOrNull("label")
+                        ?: "",
+                    color = json.optStringOrNull("color"),
+                    background = json.optStringOrNull("background"),
+                )
+                "progress" -> QuroProgressNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    progress = json.optDoubleOrNull("progress")?.toFloat()
+                        ?: json.optDoubleOrNull("value")?.toFloat(),
+                    label = json.optStringOrNull("label"),
+                )
+                "divider" -> QuroDividerNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    thickness = json.optIntOrNull("thickness"),
+                    padding = json.optIntOrNull("padding"),
+                )
+                "spacer" -> QuroSpacerNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    height = json.optIntOrNull("height"),
+                    width = json.optIntOrNull("width"),
+                )
+                "button", "btn" -> buildButton(json)
+                "text_input", "input", "textinput", "textfield" -> QuroTextInputNode(
+                    id = json.optStringOrNull("id") ?: stableId("input", json),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label"),
+                    placeholder = json.optStringOrNull("placeholder")
+                        ?: json.optStringOrNull("hint"),
+                    value = json.optStringOrNull("value"),
+                    multiline = json.optBoolean("multiline", false),
+                    lines = json.optIntOrNull("lines"),
+                    inputType = json.optStringOrNull("input_type")
+                        ?: json.optStringOrNull("inputType"),
+                )
+                "checkbox", "check" -> QuroCheckboxNode(
+                    id = json.optStringOrNull("id") ?: stableId("check", json),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label") ?: json.optStringOrNull("text") ?: "",
+                    checked = json.optBoolean("checked", false),
+                )
+                "switch", "toggle" -> QuroSwitchNode(
+                    id = json.optStringOrNull("id") ?: stableId("switch", json),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label"),
+                    checked = json.optBoolean("checked", json.optBoolean("value", false)),
+                )
+                "select", "dropdown", "spinner" -> QuroSelectNode(
+                    id = json.optStringOrNull("id") ?: stableId("select", json),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label"),
+                    options = buildStringList(json),
+                    selected = json.optStringOrNull("selected") ?: json.optStringOrNull("value"),
+                )
+                "slider" -> QuroSliderNode(
+                    id = json.optStringOrNull("id") ?: stableId("slider", json),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label"),
+                    value = (json.optDoubleOrNull("value") ?: 0.0).toFloat(),
+                    min = (json.optDoubleOrNull("min") ?: 0.0).toFloat(),
+                    max = (json.optDoubleOrNull("max") ?: 100.0).toFloat(),
+                    step = json.optIntOrNull("step") ?: 1,
+                )
+                "list" -> QuroListNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    items = buildStringList(json),
+                    itemTemplate = json.optJSONObject("item")?.let { buildNode(it) }
+                        ?: json.optJSONObject("item_template")?.let { buildNode(it) },
+                    maxHeight = json.optIntOrNull("max_height"),
+                )
+                "tabs" -> QuroTabsNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    tabs = buildTabs(json),
+                )
+                // 选择标签组：横向滚动的一排可选标签，点击触发 on_select 动作。
+                "chips" -> QuroChipsNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    items = buildStringList(json),
+                    selected = json.optStringOrNull("selected") ?: json.optStringOrNull("value"),
+                    onSelect = json.optJSONObject("on_select")?.let { buildAction(it) }
+                        ?: json.optJSONObject("onSelect")?.let { buildAction(it) },
+                )
+                // 可视化编排图：内联渲染 mermaid 源码（复用 MermaidCard 运行时）。
+                "mermaid" -> QuroMermaidNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    source = json.optStringOrNull("source")
+                        ?: json.optStringOrNull("value")
+                        ?: json.optStringOrNull("code")
+                        ?: json.optStringOrNull("definition") ?: "",
+                    theme = json.optStringOrNull("theme"),
+                )
+
+                // ──────────────────────────────────────────────────────────────────────────
+                // v1.0.88 数据可视化 / 业务卡节点族（让 quro-ui 撑住所有 ChatCard 形态）
+                // ──────────────────────────────────────────────────────────────────────────
+                "stat" -> QuroStatNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label") ?: json.optStringOrNull("name") ?: "",
+                    value = json.optStringOrNull("value") ?: "",
+                    unit = json.optStringOrNull("unit") ?: "",
+                    delta = json.optStringOrNull("delta") ?: "",
+                    trend = json.optStringOrNull("trend") ?: "flat",
+                )
+                "table" -> QuroTableNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    headers = json.optStringList("headers"),
+                    rows = json.optStringMatrix("rows"),
+                    caption = json.optStringOrNull("caption"),
+                )
+                "alert", "notice", "banner" -> QuroAlertNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    severity = json.optStringOrNull("severity") ?: "info",
+                    title = json.optStringOrNull("title"),
+                    text = json.optStringOrNull("text")
+                        ?: json.optStringOrNull("content")
+                        ?: json.optStringOrNull("message") ?: "",
+                )
+                "rating", "stars" -> QuroRatingNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label"),
+                    value = (json.optDoubleOrNull("value") ?: 0.0).toFloat(),
+                    max = json.optIntOrNull("max") ?: 5,
+                )
+                "gauge", "dial", "meter" -> QuroGaugeNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label"),
+                    progress = (json.optDoubleOrNull("progress") ?: json.optDoubleOrNull("value") ?: 0.0)
+                        .toFloat().coerceIn(0f, 1f),
+                    color = json.optStringOrNull("color"),
+                )
+                "countdown" -> QuroCountdownNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label") ?: "",
+                    targetEpochMs = json.optLong("target_epoch_ms", 0L)
+                        .takeIf { it > 0 } ?: json.optLong("targetEpochMs", 0L),
+                )
+                "steps", "stepper" -> QuroStepsNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    steps = json.optStringList("steps"),
+                    current = json.optIntOrNull("current") ?: 0,
+                )
+                "timeline" -> QuroTimelineNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    events = json.optStringList("events"),
+                )
+                "todo" -> QuroTodoNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    items = json.optStringList("items"),
+                )
+                // 🔴 折叠类容器同样中招「展开后空白」：body 写成组件对象时 optString 拿不到文本。
+                // extractSlotContent 会把对象/数组/字符串三种形态分别转成节点/竖排/markdown。
+                // 🔴 composite 此前**完全没有实现**：schema（QuroToolsUiWidget.description）
+                // 明确教模型写 `composite{layout(stack|tabs|accordion),children:[...]}`，
+                // 但解析器没有这个分支 → 走 buildUnknown → layout 这个字段进了 fields 里没人读，
+                // children 虽是通用容器能渲染，但 layout=tabs/accordion 的**切换语义完全丢失**
+                // （用户看到的只是一坨堆叠，跟声明的布局不符）。
+                //
+                // 修法：不新增节点类型（那要同步改 sealed 分派 / Catalog / Renderer / 序列化四处，
+                // 漏一处就是新的静默失效），而是在**解析期降解**成已有节点：
+                //   stack     → ColumnNode（竖排，与卡片侧 CompositeCardView 的 stack 分支同义）
+                //   tabs      → TabsNode（每个子节点一个标签页）
+                //   accordion → ExpandableNode（每个子节点一个折叠块）
+                // 三者都复用 extractSlotContent 的同一套键名容错，语义与卡片侧对齐。
+                "composite", "combo", "group" -> buildComposite(json)
+                "expandable", "accordion", "collapse" -> QuroExpandableNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    title = json.optStringOrNull("title")
+                        ?: json.optStringOrNull("label")
+                        ?: json.optStringOrNull("name") ?: "",
+                    // 🔴 必须用标量版：optString 对 JSONObject 会返回整段 JSON 文本，
+                    // 那会把组件定义当正文显示出来，比空白更糟。
+                    body = json.optScalarStringOrNull("body")
+                        ?: json.optScalarStringOrNull("content")
+                        ?: json.optScalarStringOrNull("text")
+                        ?: "",
+                    expanded = json.optBoolean("expanded", false),
+                    node = extractSlotContent(json),
+                )
+                "pie" -> QuroPieNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    segments = json.optStringList("segments"),
+                    title = json.optStringOrNull("title"),
+                )
+                "compare" -> QuroCompareNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    items = json.optStringList("items"),
+                )
+                "radar" -> QuroRadarNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    axes = json.optStringList("axes"),
+                )
+                "heatmap" -> QuroHeatmapNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    cells = json.optStringList("cells"),
+                    columns = json.optIntOrNull("columns") ?: 8,
+                )
+                "kanban" -> QuroKanbanNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    columns = json.optStringList("columns"),
+                )
+                // 🔴 轮播同族缺陷：原来 slides 是 List<String>，渲染只能取 title/body 两个字符串。
+                // body 是组件对象时每张只剩标题，「切换过去看不到内容」。
+                "carousel", "swiper" -> QuroCarouselNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    slides = buildSlides(json),
+                )
+                "timer" -> QuroTimerNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label"),
+                    seconds = json.optIntOrNull("seconds") ?: 0,
+                )
+                "tagcloud", "tags" -> QuroTagCloudNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    tags = json.optStringList("tags"),
+                )
+                "avatargroup", "avatars" -> QuroAvatarGroupNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    avatars = json.optStringList("avatars"),
+                )
+                "counter", "animated_number" -> QuroCounterNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label") ?: "",
+                    value = (json.optDoubleOrNull("value") ?: 0.0).toFloat(),
+                    target = json.optDoubleOrNull("target")?.toFloat(),
+                    unit = json.optStringOrNull("unit") ?: "",
+                )
+                "breadcrumb" -> QuroBreadcrumbNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    crumbs = json.optStringList("crumbs"),
+                )
+                "color", "swatch" -> QuroColorNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    color = json.optStringOrNull("color") ?: "",
+                    name = json.optStringOrNull("name") ?: "",
+                )
+                "media" -> QuroMediaNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    url = json.optStringOrNull("url") ?: json.optStringOrNull("src") ?: "",
+                    mediaType = json.optStringOrNull("media_type")
+                        ?: json.optStringOrNull("mediaType") ?: "image",
+                    title = json.optStringOrNull("title"),
+                    height = json.optIntOrNull("height"),
+                )
+                "form" -> QuroFormNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    fields = json.optStringList("fields"),
+                    title = json.optStringOrNull("title"),
+                )
+                // 游戏棋盘：NxM 可点击网格，点击回发坐标/取值给模型（AI 维持游戏状态）。
+                "game_board", "grid", "board" -> QuroGameBoardNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    rows = json.optIntOrNull("rows") ?: 3,
+                    cols = json.optIntOrNull("cols") ?: 3,
+                    cells = json.optStringList("cells"),
+                    values = json.optStringList("values"),
+                    cellColors = json.optStringList("cellColors").ifEmpty { json.optStringList("cell_colors") },
+                    cellAction = json.optJSONObject("cell_action")?.let { buildAction(it) }
+                        ?: json.optJSONObject("cellAction")?.let { buildAction(it) },
+                    clickable = json.optBoolean("clickable", true),
+                    cellSize = json.optIntOrNull("cell_size") ?: json.optIntOrNull("cellSize"),
+                )
+                "genui", "genui_screen", "genui_render" -> QuroGenUiNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    content = json.optString("content", ""),
+                    theme = json.optStringOrNull("theme"),
+                )
+
+                // ── 常用组件别名：让 AI 用更直观的名字也能命中原生渲染（不再被固定死）──
+                // snackbar / callout → alert；segmented_control / segmented → chips；
+                // searchbar / search_bar / search → text_input；timeline_marker / milestone → timeline。
+                "snackbar", "callout" -> QuroAlertNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    severity = json.optStringOrNull("severity") ?: "info",
+                    title = json.optStringOrNull("title"),
+                    text = json.optStringOrNull("text")
+                        ?: json.optStringOrNull("content")
+                        ?: json.optStringOrNull("message") ?: "",
+                )
+                "segmented_control", "segmented" -> QuroChipsNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    items = buildStringList(json),
+                    selected = json.optStringOrNull("selected") ?: json.optStringOrNull("value"),
+                    onSelect = json.optJSONObject("on_select")?.let { buildAction(it) }
+                        ?: json.optJSONObject("onSelect")?.let { buildAction(it) },
+                )
+                "searchbar", "search_bar", "search" -> QuroTextInputNode(
+                    id = json.optStringOrNull("id") ?: stableId("input", json),
+                    style = buildStyle(json),
+                    label = json.optStringOrNull("label"),
+                    placeholder = json.optStringOrNull("placeholder") ?: json.optStringOrNull("hint"),
+                    value = json.optStringOrNull("value"),
+                    inputType = json.optStringOrNull("input_type") ?: json.optStringOrNull("inputType"),
+                )
+                "timeline_marker", "milestone" -> QuroTimelineNode(
+                    id = json.optStringOrNull("id"),
+                    style = buildStyle(json),
+                    events = json.optStringList("events").ifEmpty { json.optStringList("items") },
+                )
+                // 捕获型兜底：任何未显式建模的 type 都保留为 QuroUnknownNode，
+                // 原始属性原样存入 fields，子节点递归解析。渲染层用「融合解释器」把它画成结构化富卡，
+                // 不再「降级为普通容器」、不再丢字段、不再出现「未识别的节点类型」提示。
+                // 这是 quro-ui 支持 AI 自由书写任意节点类型的关键。
+                else -> buildUnknown(json, type)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 解析未知节点类型：保留 AI 给出的所有非保留字段（原样存入 [QuroUnknownNode.fields]），
+     * 子节点递归解析。绝不丢弃任何信息——渲染层负责用「融合解释器」把它画成结构化富卡。
+     */
+    private fun buildUnknown(json: JSONObject, type: String): QuroUnknownNode {
+        val reserved = setOf(
+            "type", "kind", "id", "style", "children",
+            "on_click", "onClick", "on_select", "onSelect",
+            "action", "on_click_action",
+            "item", "item_template", "itemTemplate"
+        )
+        val fields = LinkedHashMap<String, Any?>()
+        json.keys().forEach { k ->
+            if (k in reserved) return@forEach
+            fields[k] = when (val v = json.opt(k)) {
+                is JSONObject -> v.toString()
+                is JSONArray -> (0 until v.length()).mapNotNull { v.opt(it)?.toString() }
+                else -> v
+            }
+        }
+        return QuroUnknownNode(
+            id = json.optStringOrNull("id"),
+            style = buildStyle(json),
+            type = type,
+            // AI 自写的任意组件都可挂 action / on_click，融合解释器据此把整卡变可点击。
+            action = json.optJSONObject("action")?.let { buildAction(it) }
+                ?: json.optJSONObject("on_click")?.let { buildAction(it) },
+            fields = fields,
+            children = buildChildren(json),
+        )
+    }
+
+    private fun buildColumn(json: JSONObject) = QuroColumnNode(
+        id = json.optStringOrNull("id"),
+        style = buildStyle(json),
+        children = buildChildren(json),
+        spacing = json.optIntOrNull("spacing"),
+        padding = json.optIntOrNull("padding"),
+        horizontalAlign = json.optStringOrNull("align")
+            ?: json.optStringOrNull("horizontal_align"),
+        scrollable = json.optBoolean("scrollable", false),
+        weight = json.optDoubleOrNull("weight")?.toFloat(),
+    )
+
+    private fun buildRow(json: JSONObject) = QuroRowNode(
+        id = json.optStringOrNull("id"),
+        style = buildStyle(json),
+        children = buildChildren(json),
+        spacing = json.optIntOrNull("spacing"),
+        padding = json.optIntOrNull("padding"),
+        verticalAlign = json.optStringOrNull("align") ?: json.optStringOrNull("vertical_align"),
+        scrollable = json.optBoolean("scrollable", false),
+        weight = json.optDoubleOrNull("weight")?.toFloat(),
+    )
+
+    private fun buildText(json: JSONObject) = QuroTextNode(
+        id = json.optStringOrNull("id"),
+        // 通用视觉样式（背景/边距/尺寸等）挂在 style 上。
+        style = buildStyle(json),
+        value = json.optStringOrNull("value")
+            ?: json.optStringOrNull("text")
+            ?: json.optStringOrNull("content")
+            ?: "",
+        // typography：旧 style 字符串语义（title/headline/body/caption/label）。
+        // 若 `style` 是对象（AI 高频 `style:{fontSize,fontWeight,color,...}`），则各子字段
+        // 独立提取到 size/bold/color，typography 留空（避免与对象式样式冲突）。
+        typography = if (json.has("style") && json.opt("style") is String) json.optString("style") else null,
+        bold = run {
+            val s = json.optJSONObject("style")
+            // 修复：原判定只覆盖 style.fontWeight=="bold" 字符串与顶层 bold 布尔。
+            // 但 CSS 习惯与多数 AI 产物写法是 `weight: 700`（数字权重）——
+            // 700 在 CSS 里就是 Bold，600 是 SemiBold。此处统一数值语义：
+            // weight ≥ 600 → bold；否则按原 string/bool 判定。
+            s?.optStringOrNull("fontWeight") == "bold"
+                || s?.optStringOrNull("font_weight") == "bold"
+                || (s?.optIntOrNull("fontWeight") ?: s?.optIntOrNull("font_weight") ?: 0) >= 600
+                || (json.optIntOrNull("weight") ?: json.optIntOrNull("font_weight") ?: 0) >= 600
+                || json.optBoolean("bold", false)
+        },
+        italic = json.optBoolean("italic", false),
+        color = run {
+            val s = json.optJSONObject("style")
+            s?.optStringOrNull("color")
+                ?: s?.optStringOrNull("text_color")
+                ?: json.optColorOrNull()
+        },
+        size = run {
+            val s = json.optJSONObject("style")
+            s?.optIntOrNull("fontSize")
+                ?: s?.optIntOrNull("font_size")
+                ?: json.optIntOrNull("fontSize")
+                ?: json.optIntOrNull("font_size")
+                ?: json.optIntOrNull("size")
+        },
+        maxLines = json.optIntOrNull("max_lines") ?: json.optIntOrNull("maxLines"),
+        // align 兼容对象式 style（style.align / style.text_align）与顶层写法（CSS 习惯同 color/fontSize）
+        align = run {
+            val s = json.optJSONObject("style")
+            s?.optStringOrNull("align")
+                ?: s?.optStringOrNull("text_align")
+                ?: s?.optStringOrNull("textAlign")
+                ?: json.optStringOrNull("align")
+                ?: json.optStringOrNull("text_align")
+        },
+    )
+
+    private fun buildButton(json: JSONObject): QuroButtonNode {
+        val action = json.optJSONObject("action")?.let { buildAction(it) }
+            ?: json.optJSONObject("on_click")?.let { buildAction(it) }
+            ?: json.optJSONObject("onClick")?.let { buildAction(it) }
+        return QuroButtonNode(
+            id = json.optStringOrNull("id"),
+            style = buildStyle(json),
+            label = json.optStringOrNull("label")
+                ?: json.optStringOrNull("text")
+                ?: json.optStringOrNull("value")
+                ?: "",
+            action = action,
+            variant = json.optStringOrNull("variant") ?: json.optStringOrNull("style"),
+            enabled = json.optBoolean("enabled", true),
+            icon = json.optStringOrNull("icon"),
+        )
+    }
+
+    /** 构建动作。type 缺失时按字段名推断（有 tool → tool_call，有 url → open_url ...）。 */
+    fun buildAction(json: JSONObject): QuroUiAction? {
+        val type = json.optString("type", json.optString("kind", "")).trim().lowercase()
+            .ifBlank {
+                when {
+                    json.has("tool") -> "tool_call"
+                    json.has("skill") -> "skill"
+                    json.has("url") -> "open_url"
+                    json.has("copy") || json.has("text") -> "copy"
+                    json.has("target_id") || json.has("targetId") -> "toggle"
+                    json.has("package") || json.has("package_name") -> "open_app"
+                    else -> "callback"
+                }
+            }
+        return try {
+            when (type) {
+                "callback", "event", "submit" -> QuroCallbackAction(
+                    event = json.optStringOrNull("event") ?: json.optStringOrNull("name") ?: "submit",
+                    data = buildStringMap(json.optJSONObject("data")),
+                    collectFrom = json.optStringList("collect_from")
+                        .ifEmpty { json.optStringList("collectFrom") },
+                )
+                "toggle", "visibility" -> QuroToggleAction(
+                    targetId = json.optStringOrNull("target_id")
+                        ?: json.optStringOrNull("targetId") ?: "",
+                )
+                "open_url", "url", "link" -> QuroOpenUrlAction(
+                    url = json.optStringOrNull("url") ?: "",
+                )
+                "copy", "copy_to_clipboard", "clipboard" -> QuroCopyAction(
+                    text = json.optStringOrNull("text") ?: json.optStringOrNull("copy") ?: "",
+                    label = json.optStringOrNull("label"),
+                )
+                "tool_call", "tool", "call_tool" -> QuroToolCallAction(
+                    tool = json.optStringOrNull("tool") ?: json.optStringOrNull("name") ?: "",
+                    arguments = buildStringMap(json.optJSONObject("arguments"))
+                        .ifEmpty { buildStringMap(json.optJSONObject("args")) },
+                    collectFrom = json.optStringList("collect_from")
+                        .ifEmpty { json.optStringList("collectFrom") },
+                )
+                "skill", "run_skill" -> QuroSkillAction(
+                    skill = json.optStringOrNull("skill") ?: json.optStringOrNull("name") ?: "",
+                    input = json.optStringOrNull("input"),
+                    collectFrom = json.optStringList("collect_from")
+                        .ifEmpty { json.optStringList("collectFrom") },
+                )
+                "open_app", "app", "launch" -> QuroOpenAppAction(
+                    // 修复：prompt 教 AI 写 {"type":"open_app","app_name":"微信"}，
+                    // 但 parser 只读 package_name/package/app，app_name 直接被丢弃，
+                    // 导致 packageName=""，open_app 动作落地即失效。补上 app_name 兜底。
+                    packageName = json.optStringOrNull("package_name")
+                        ?: json.optStringOrNull("app_name")
+                        ?: json.optStringOrNull("package")
+                        ?: json.optStringOrNull("app") ?: "",
+                )
+                // ─── 多层渲染 / 深链导航（v1.0.82 新增）───
+                // 打开 ZorvAI 内置界面（终端/模型配置/可视化编程/Web 应用/工具中心等）
+                "open_screen", "open_screen_target", "screen", "openscreen" -> QuroOpenScreenAction(
+                    target = json.optStringOrNull("target")
+                        ?: json.optStringOrNull("screen")
+                        ?: json.optStringOrNull("name") ?: "",
+                )
+                // 直接渲染 HTML / Web 应用到对话气泡（第一层渲染）
+                "render_html", "open_html", "html", "miniapp", "render_miniapp" -> QuroRenderHtmlAction(
+                    html = json.optStringOrNull("html")
+                        ?: json.optStringOrNull("content")
+                        ?: json.optStringOrNull("source") ?: "",
+                )
+                // 直接渲染可视化编程（mermaid）到对话气泡（第一层渲染）
+                "render_vispro", "render_mermaid", "vispro", "mermaid" -> QuroRenderVisproAction(
+                    source = json.optStringOrNull("source")
+                        ?: json.optStringOrNull("mermaid")
+                        ?: json.optStringOrNull("content")
+                        ?: json.optStringOrNull("html") ?: "",
+                )
+                // 可视化弹窗（标题 + 内容）
+                "visual_popup", "popup", "dialog", "alert" -> QuroVisualPopupAction(
+                    title = json.optStringOrNull("title") ?: "",
+                    content = json.optStringOrNull("content")
+                        ?: json.optStringOrNull("body")
+                        ?: json.optStringOrNull("text") ?: "",
+                )
+                // 可视化询问（prompt + 选项，选中项回发对话）
+                "visual_ask", "ask", "choose", "select_option" -> QuroVisualAskAction(
+                    prompt = json.optStringOrNull("prompt")
+                        ?: json.optStringOrNull("title")
+                        ?: json.optStringOrNull("question") ?: "",
+                    options = json.optStringList("options")
+                        .ifEmpty { buildStringList(json) },
+                )
+                // zxwidget 卡片：component 取 zx_ 开头的组件名，
+                // dsl 是该组件的 JSON 数据。卡片内交互会结构化回发给模型。
+                "zx_web_card", "zx_card", "web_card", "webui_card", "zx_widget_card" -> QuroZxWebCardAction(
+                    component = json.optStringOrNull("component")
+                        ?: json.optStringOrNull("widget")
+                        ?: json.optStringOrNull("name") ?: "",
+                    title = json.optStringOrNull("title")
+                        ?: json.optStringOrNull("label") ?: "",
+                    // dsl 允许两种写法：字符串 JSON，或直接嵌套 JSON 对象
+                    dsl = when (val raw = json.opt("dsl")) {
+                        is JSONObject -> raw.toString()
+                        is String -> raw
+                        else -> json.opt("data")?.toString() ?: ""
+                    },
+                )
+                else -> null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // =========================================================================================
+    // 通用样式解析（v1.0.83）：把嵌套 style 对象或顶层平铺别名收进 QuroUiStyle
+    // =========================================================================================
+
+    /**
+     * 解析通用样式对象。两种写法等价：
+     *  - 嵌套对象：`"style":{"backgroundColor":"#fff","borderRadius":12,"padding":8}`
+     *  - 顶层平铺：`{"type":"box","backgroundColor":"#fff","borderRadius":12,"padding":8}`
+     * 任一字段非法都回落默认值；全空则返回 null（不挂多余空对象）。
+     */
+    private fun buildStyle(json: JSONObject): QuroUiStyle? {
+        val s = json.optJSONObject("style")
+        val background = buildBackground(s, json)
+        val padding = buildEdges(s?.opt("padding") ?: json.opt("padding"))
+        val margin = buildEdges(s?.opt("margin") ?: json.opt("margin"))
+        val width = buildSize(s?.opt("width") ?: json.opt("width"))
+        val height = buildSize(s?.opt("height") ?: json.opt("height"))
+        val opacityRaw = readNum(s, json, "opacity")
+        val opacity = opacityRaw?.let { if (it > 1f) it / 100f else it }
+        val style = QuroUiStyle(
+            background = background,
+            borderColor = readStr(s, json, "borderColor", "border_color"),
+            borderWidth = readInt(s, json, "borderWidth", "border_width"),
+            borderRadius = readInt(s, json, "borderRadius", "border_radius", "corner_radius", "cornerRadius"),
+            shadowElevation = readInt(s, json, "shadowElevation", "shadow", "elevation"),
+            shadowColor = readStr(s, json, "shadowColor"),
+            padding = padding,
+            margin = margin,
+            width = width,
+            height = height,
+            maxWidth = readInt(s, json, "maxWidth", "max_width"),
+            maxHeight = readInt(s, json, "maxHeight", "max_height"),
+            opacity = opacity,
+            align = readStr(s, json, "align"),
+            visible = readBool(s, json, "visible"),
+        )
+        return if (style == QuroUiStyle()) null else style
+    }
+
+    /** 背景：纯色或渐变。 */
+    private fun buildBackground(s: JSONObject?, json: JSONObject): QuroUiBackground? {
+        val gradientObj = s?.optJSONObject("gradient") ?: json.optJSONObject("gradient")
+        val bgObj = s?.optJSONObject("background") ?: json.optJSONObject("background")
+        // 渐变：gradient 对象，或 background 对象含 colors 数组
+        val gradSrc = gradientObj ?: bgObj?.takeIf { it.has("colors") }
+        if (gradSrc != null) {
+            val colors = readColorList(gradSrc)
+            if (colors.isNotEmpty()) {
+                return QuroUiBackground.Gradient(
+                    colors = colors,
+                    direction = gradSrc.optStringOrNull("direction"),
+                    angle = gradSrc.optIntOrNull("angle"),
+                )
+            }
+        }
+        // background 是对象但只给了 color 字段
+        if (bgObj != null && gradientObj == null) {
+            bgObj.optStringOrNull("color")?.let { return QuroUiBackground.Solid(it) }
+        }
+        // 纯色：backgroundColor / background（字符串）
+        val solid = readStr(s, json, "backgroundColor", "background_color", "background")
+        return solid?.let { QuroUiBackground.Solid(it) }
+    }
+
+    /** 边距：数字 → 四边同值；对象 → 单边/双边分别取。 */
+    private fun buildEdges(raw: Any?): QuroUiEdges? {
+        val edges = when (raw) {
+            is Int -> QuroUiEdges(all = raw)
+            is Number -> QuroUiEdges(all = raw.toInt())
+            is String -> raw.trim().toIntOrNull()?.let { QuroUiEdges(all = it) }
+            is JSONObject -> QuroUiEdges(
+                all = raw.optIntOrNull("all"),
+                horizontal = raw.optIntOrNull("horizontal") ?: raw.optIntOrNull("h"),
+                vertical = raw.optIntOrNull("vertical") ?: raw.optIntOrNull("v"),
+                top = raw.optIntOrNull("top"),
+                bottom = raw.optIntOrNull("bottom"),
+                start = raw.optIntOrNull("start") ?: raw.optIntOrNull("left"),
+                end = raw.optIntOrNull("end") ?: raw.optIntOrNull("right"),
+            )
+            else -> null
+        }
+        return if (edges == null || edges == QuroUiEdges()) null else edges
+    }
+
+    /** 尺寸：数字 → 固定 dp；字符串 fill/auto → 撑满/自适应；对象 → {weight} 或 {fixed}。 */
+    private fun buildSize(raw: Any?): QuroUiSize? {
+        return when (raw) {
+            is Int -> QuroUiSize.Fixed(raw)
+            is Number -> QuroUiSize.Fixed(raw.toInt())
+            is String -> when (raw.trim().lowercase()) {
+                "fill", "fill_parent", "match_parent", "100%", "max" -> QuroUiSize.Fill()
+                "auto", "wrap", "wrap_content", "wrapcontent" -> QuroUiSize.Wrap
+                else -> raw.trim().toIntOrNull()?.let { QuroUiSize.Fixed(it) }
+            }
+            is JSONObject -> {
+                val weight = raw.optDoubleOrNull("weight")?.toFloat()
+                    ?: raw.optDoubleOrNull("fill")?.toFloat()
+                if (weight != null) QuroUiSize.Fill(weight)
+                else raw.optIntOrNull("fixed")?.let { QuroUiSize.Fixed(it) }
+                    ?: raw.optIntOrNull("dp")?.let { QuroUiSize.Fixed(it) }
+            }
+            else -> null
+        }
+    }
+
+    private fun readStr(s: JSONObject?, json: JSONObject, vararg keys: String): String? {
+        for (k in keys) s?.optStringOrNull(k)?.let { return it }
+        for (k in keys) json.optStringOrNull(k)?.let { return it }
+        return null
+    }
+
+    private fun readInt(s: JSONObject?, json: JSONObject, vararg keys: String): Int? {
+        for (k in keys) s?.optIntOrNull(k)?.let { return it }
+        for (k in keys) json.optIntOrNull(k)?.let { return it }
+        return null
+    }
+
+    private fun readNum(s: JSONObject?, json: JSONObject, vararg keys: String): Float? {
+        for (k in keys) s?.optDoubleOrNull(k)?.toFloat()?.let { return it }
+        for (k in keys) json.optDoubleOrNull(k)?.toFloat()?.let { return it }
+        return null
+    }
+
+    private fun readBool(s: JSONObject?, json: JSONObject, vararg keys: String): Boolean? {
+        for (k in keys) {
+            val v = s?.opt(k)
+            if (v is Boolean) return v
+        }
+        for (k in keys) {
+            val v = json.opt(k)
+            if (v is Boolean) return v
+        }
+        return null
+    }
+
+    /** 读取颜色数组（["#a","#b"] 或 [{"color":"#a"}]）。 */
+    private fun readColorList(json: JSONObject): List<String> {
+        val arr = json.optJSONArray("colors") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            when (val v = arr.opt(i)) {
+                is String -> v
+                is JSONObject -> v.optStringOrNull("color") ?: v.optStringOrNull("value")
+                else -> null
+            }
+        }
+    }
+
+    // =========================================================================================
+    // 工具方法：容错读取
+    // =========================================================================================
+
+    /** children 既接受数组也接受单个对象。 */
+    private fun buildChildren(json: JSONObject): List<QuroUiNode> {
+        val arr = json.optJSONArray("children")
+            ?: json.optJSONArray("items")?.takeIf { json.optString("type") != "list" }
+            ?: json.optJSONArray("content")
+        if (arr != null) {
+            return (0 until arr.length()).mapNotNull { i ->
+                arr.optJSONObject(i)?.let { buildNode(it) }
+            }
+        }
+        // 单子节点直接包一层
+        return json.optJSONObject("child")?.let { buildNode(it) }?.let { listOf(it) } ?: emptyList()
+    }
+
+    /** 读取字符串列表，兼容 ["a","b"] 与 [{"value":"a"}] 两种写法。 */
+    private fun buildStringList(json: JSONObject): List<String> {
+        val arr = json.optJSONArray("options") ?: json.optJSONArray("items") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            when (val v = arr.opt(i)) {
+                is String -> v
+                is JSONObject -> v.optStringOrNull("value")
+                    ?: v.optStringOrNull("text")
+                    ?: v.optStringOrNull("label")
+                    ?: v.optStringOrNull("title")
+                else -> v?.toString()
+            }
+        }
+    }
+
+    private fun buildStringMap(json: JSONObject?): Map<String, String> {
+        if (json == null) return emptyMap()
+        val map = LinkedHashMap<String, String>()
+        json.keys().forEach { key ->
+            val v = json.opt(key)
+            // LLM 常把数字/布尔写进 data，这里统一强制转字符串（与 Kai dataAsStrings 同思路）
+            if (v != null && v != JSONObject.NULL) map[key] = v.toString()
+        }
+        return map
+    }
+
+    /**
+     * 🔴 切换类容器的**通用子内容提取器**（tabs / expandable / carousel 共用）。
+     *
+     * ## 为什么要有这个函数（族级缺陷，不是一个tabs 的 bug）
+     *
+     * 用户报「可视化组件能切换，但组件下的内容没有」。排查后确认这是**一族**问题，
+     * 凡是「切换/折叠类容器」都中招，根因有两条，且两条对每个容器都成立：
+     *
+     * 1. **键名白名单太窄**：tabs 只认 `node` / `content` / `child` 三个键。而工具描述
+     *    （`QuroToolsUiWidget.description`）明确告诉模型写的是 **`body`**，
+     *    schema 与解析器不一致 → 模型照 schema 写 `body`，解析器拿不到 → `node = null`。
+     * 2. **只接受 JSONObject**：即使键名对上了，若模型把内容写成**字符串**或**数组**
+     *    （`body: "一段说明"` / `content: [{...},{...}]`），`optJSONObject` 也一律返回 null。
+     *
+     * 渲染端再补一刀：`RenderTabs` 写的是 `?.node?.let { RenderNode(it) }`，
+     * node 为 null 时**什么都不渲染、零提示** → 用户只看到 TabRow + 一片空白，
+     * 完全无法判断是「模型没给内容」还是「客户端渲染坏了」。
+     *
+     * ## 本函数的行为
+     *
+     * 按 [SLOT_CONTENT_KEYS] 的优先级依次尝试，**三种值形态都接**：
+     * - [org.json.JSONObject] → 递归 [buildNode]（组件 / 排版 / 嵌套容器）
+     * - [org.json.JSONArray]→ 包一层 [QuroColumnNode]（多个子节点竖排）
+     * - 其它非空标量（String / 数字 / Boolean）→ 包一层 [QuroMarkdownNode]
+     *   （纯文字也必须看得见，这正是用户要的「文字排版」）
+     *
+     * 全部找不到才返回 null，由渲染端给出**显式空态提示**，不再静默空白。
+     *
+     * 键名优先级刻意把 `body` 放最前：它既是工具描述教模型写的名字，
+     * 也是人形最自然的名字；而 `node` / `content` 是历史键，保留向后兼容。
+     */
+    private fun extractSlotContent(o: JSONObject): QuroUiNode? {
+        for (k in SLOT_CONTENT_KEYS) {
+            if (!o.has(k)) continue
+            when (val v = o.opt(k)) {
+                null, JSONObject.NULL -> continue
+                is JSONObject -> return buildNode(v)
+                is JSONArray -> {
+                    // 数组：逐项解析；项可以是组件对象，也可以是纯字符串
+                    val kids = (0 until v.length()).mapNotNull { i ->
+                        when (val e = v.opt(i)) {
+                            is JSONObject -> buildNode(e)
+                            is String -> e.takeIf { it.isNotBlank() }?.let { QuroMarkdownNode(value = it) }
+                            else -> null
+                        }
+                    }
+                    if (kids.isNotEmpty()) return QuroColumnNode(children = kids)
+                }
+                // 🔴 标量（含 String）：纯文字也要渲染出来，不能当成「没内容」
+                else -> {
+                    val s = v.toString()
+                    if (s.isNotBlank() && s != "null") return QuroMarkdownNode(value = s)
+                }
+            }
+        }
+        return null
+    }
+
+    /** 切换类容器取子内容的候选键名（有序，命中即用）。见 [extractSlotContent]。 */
+    private val SLOT_CONTENT_KEYS = listOf(
+        // 工具描述教模型写的名字，放最前
+        "body", "content", "node", "child",
+        // 常见别名，AI 自由书写时用
+        "view", "panel", "inner", "html", "markdown", "text", "desc", "description",
+        // 数组形态（多个子节点）
+        "children", "items", "elements", "blocks", "sections",
+    )
+
+    /**
+     * 组合卡：按 [layout] 降解成已有节点类型。
+     *
+     * | layout      | 降解为                       | 语义 |
+     * |-------------|------------------------------|------|
+     * | `stack`     | [QuroColumnNode]             | 子卡竖排（缺省） |
+     * | `tabs`      | [QuroTabsNode]               | 每个子节点一个标签页，一次显示一个 |
+     * | `accordion` | Column（子项包Expandable）   | 各子卡独立折叠 |
+     *
+     * children 的取法走 [buildChildren]（children / items / content / child 四种键），
+     * 与其余容器的键名容错保持一致。
+     *
+     * ⚠️ 为什么降解而不新增 `QuroCompositeNode`：新增节点类型要同步改
+     * sealed 分派、Catalog 白名单、Renderer 分支、序列化四处，**漏一处不会编译报错**，
+     * 只会又造出一个新的静默失效（这正是本轮修的病根）。降解则四处零改动。
+     *
+     * 与卡片侧 `QuroChatCard.CompositeCard` / `CompositeCardView` 的三种布局语义对齐——
+     * 同一个模型输出，走动态 UI 或走卡片两条通道，看到的布局相同。
+     */
+    private fun buildComposite(json: JSONObject): QuroUiNode {
+        val id = json.optStringOrNull("id")
+        val style = buildStyle(json)
+        val layout = (json.optStringOrNull("layout")
+            ?: json.optStringOrNull("mode")
+            ?: "stack").lowercase()
+        val kids = buildChildren(json)
+        val desc = json.optStringOrNull("description") ?: json.optStringOrNull("desc")
+        val spacing = json.optIntOrNull("spacing")
+        val padding = json.optIntOrNull("padding")
+
+        return when (layout) {
+            "tabs", "tab" -> QuroTabsNode(
+                id = id,
+                style = style,
+                tabs = kids.mapIndexed { i, c ->
+                    QuroTabItem(title = childTitle(c) ?: "Tab ${i + 1}", node = c)
+                },
+            )
+            "accordion", "collapse", "fold" -> QuroColumnNode(
+                id = id,
+                style = style,
+                children = kids.mapIndexed { i, c ->
+                    // 已经是折叠节点就原样用（尊重它自己的展开态）；否则套一层，首项默认展开
+                    if (c is QuroExpandableNode) {
+                        c.copy(expanded = c.expanded || i == 0)
+                    } else {
+                        QuroExpandableNode(
+                            title = childTitle(c) ?: "第 ${i + 1} 项",
+                            expanded = i == 0,
+                            node = c,
+                        )
+                    }
+                },
+                spacing = spacing,
+                padding = padding,
+            )
+            // stack / 未知值：竖排堆叠（缺省行为，最保守）
+            else -> QuroColumnNode(
+                id = id,
+                style = style,
+                children = buildChildren(json),
+                spacing = spacing,
+                padding = padding,
+            )
+        }
+    }
+
+    /**
+     * 取子节点自带标题（给组合卡里的标签页/折叠块命名）。
+     * 文本节点只在短文本时采纳，长段落当标题会让标签栏挤成一两个字。
+     */
+    private fun childTitle(c: QuroUiNode): String? = when (c) {
+        is QuroCardNode -> c.title
+        is QuroTextNode -> c.value
+        is QuroExpandableNode -> c.title
+        is QuroTabsNode -> null
+        else -> null
+    }?.trim()?.takeIf { it.isNotEmpty() && it.length <= 24 }
+
+    /**
+     * 解析轮播页列表。每项支持三种形态：
+     * - `{"title":"...","body":"文本"}` → 纯文本页（原有行为）
+     * - `{"title":"...","body":{"type":"table",...}}` → 富内容页，body 转子节点
+     * - `{"title":"...","content":[子节点,子节点]}` → 竖排多节点页
+     */
+    private fun buildSlides(json: JSONObject): List<QuroSlideItem> {
+        val arr = json.optJSONArray("slides") ?: json.optJSONArray("items") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            // 单页也允许直接给字符串，如 slides: ["第一页","第二页"]
+            QuroSlideItem(
+                title = o.optStringOrNull("title")
+                    ?: o.optStringOrNull("label")
+                    ?: o.optStringOrNull("name")
+                    ?: "",
+                // 🔴 标量版：body 若是组件对象，不能把它的 JSON 文本当摘要显示
+                body = o.optScalarStringOrNull("body")
+                    ?: o.optScalarStringOrNull("text")
+                    ?: o.optScalarStringOrNull("content")
+                    ?: "",
+                node = extractSlotContent(o),
+                color = o.optStringOrNull("color"),
+            )
+        }
+    }
+
+    private fun buildTabs(json: JSONObject): List<QuroTabItem> {
+        val arr = json.optJSONArray("tabs") ?: json.optJSONArray("items") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            QuroTabItem(
+                title = o.optStringOrNull("title")
+                    ?: o.optStringOrNull("label")
+                    ?: o.optStringOrNull("name")
+                    ?: o.optStringOrNull("text")
+                    ?: "Tab ${i + 1}",
+                node = extractSlotContent(o),
+            )
+        }
+    }
+
+    private fun JSONObject.optStringOrNull(key: String): String? =
+        takeIf { has(key) }?.optString(key)?.takeIf { it.isNotBlank() && it != "null" }
+
+    /**
+     * 🔴 只在值**确实是标量**时才返回文本；对象/数组一律返回 null。
+     *
+     * 为什么不直接用 [optStringOrNull]：Android 的 `optString` 内部走 `JSON.toString()`，
+     * 对 JSONObject 值会返回**整段 JSON 文本**而不是 null。后果：
+     * `body: {"type":"table",...}` → body = `{"type":"table","headers":[...]}`，
+     * 渲染出来是一坨 JSON 代码，比空白更糟且极难排查。
+     *
+     * 用在「文本字段与富内容字段同名」的场合（如 expandable/carousel 的 body）：
+     * 标量走文本、对象/数组交给 [extractSlotContent] 转成节点，两条路互不干扰。
+     */
+    private fun JSONObject.optScalarStringOrNull(key: String): String? {
+        if (!has(key)) return null
+        return when (val v = opt(key)) {
+            is String -> v
+            is Number, is Boolean -> v.toString()
+            else -> null // JSONObject / JSONArray / NULL：交给节点解析路径
+        }?.takeIf { it.isNotBlank() && it != "null" }
+    }
+
+    /**
+     * 修复：原代码缺 id 的控件用 "input_${System.nanoTime()}" 兜底，流式重渲染每帧
+     * 重解析都会生成新 id → remember(node.id) 重置、用户输入被清空、collectFrom
+     * 收不到值。改为基于 JSON 内容 hashCode 的稳定 id：同一 UI 结构每次解析得到
+     * 同一 id；UI 结构改变 id 也随之变。防 id 冲突由 buildChildren 的索引参与。
+     */
+    private fun stableId(prefix: String, json: JSONObject): String =
+        "${prefix}_${json.toString().hashCode().toUInt().toString(36)}"
+
+    private fun JSONObject.optIntOrNull(key: String): Int? =
+        takeIf { has(key) }?.opt(key)?.let { v ->
+            when (v) {
+                is Int -> v
+                is Number -> v.toInt()
+                is String -> v.trim().toIntOrNull()
+                else -> null
+            }
+        }
+
+    private fun JSONObject.optDoubleOrNull(key: String): Double? =
+        takeIf { has(key) }?.opt(key)?.let { v ->
+            when (v) {
+                is Double -> v
+                is Number -> v.toDouble()
+                is String -> v.trim().toDoubleOrNull()
+                else -> null
+            }
+        }
+
+    /** 颜色字段：优先 color，其次 text_color / tint。 */
+    private fun JSONObject.optColorOrNull(): String? =
+        optStringOrNull("color") ?: optStringOrNull("text_color") ?: optStringOrNull("tint")
+
+    private fun JSONObject.optStringList(key: String): List<String> {
+        val arr = optJSONArray(key) ?: return emptyList()
+        // 修复：optString 对数字/布尔返回空串被过滤，options:[1,2,3] 全丢。
+        // 改用 opt(i)?.toString() 保留原始类型字面量。
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.opt(i)?.toString()?.takeIf { it.isNotBlank() && it != "null" }
+        }
+    }
+
+    /** 读取二维字符串矩阵（表格 rows）：外层数组套内层字符串数组，兼容 [["a","b"],["c","d"]]。 */
+    private fun JSONObject.optStringMatrix(key: String): List<List<String>> {
+        val arr = optJSONArray(key) ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { r ->
+            val row = arr.optJSONArray(r) ?: return@mapNotNull null
+            (0 until row.length()).mapNotNull { c ->
+                row.opt(c)?.toString()?.takeIf { it.isNotBlank() && it != "null" }
+            }
+        }
+    }
+}

@@ -1,0 +1,9807 @@
+package com.ai.assistance.quro.ui
+import com.ai.assistance.quro.util.qstr
+import androidx.compose.ui.res.stringResource
+import com.ai.assistance.quro.R
+
+import android.util.Log
+import android.net.Uri
+import android.media.RingtoneManager
+import android.content.Intent
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import com.ai.assistance.quro.core.tools.QuroTool
+import com.ai.assistance.quro.core.tools.ImportedToolDef
+import com.ai.assistance.quro.core.tools.QuroImportedToolRegistry
+import com.ai.assistance.quro.core.tools.QuroUiActionBridge
+import com.ai.assistance.quro.core.tools.UiNavigationBus
+import com.ai.assistance.quro.core.tools.ui.UiNavigationEvent
+import com.ai.assistance.quro.core.tools.VisualCustomPopupQueue
+import com.ai.assistance.quro.core.tools.VisualPopupQueue
+import com.ai.assistance.quro.core.tools.ZxWebCardQueue
+import com.ai.assistance.quro.core.tools.PopupButton
+import com.ai.assistance.quro.core.tools.PopupInput
+import com.ai.assistance.quro.core.tools.PopupResult
+import com.ai.assistance.quro.core.tools.QuroToolRegistry
+import com.ai.assistance.quro.ui.canvas.AipCanvas
+import com.ai.assistance.quro.core.tools.LaunchAppTool
+import com.ai.assistance.quro.core.tools.QuroSkillTool
+import com.ai.assistance.quro.BuildConfig
+import com.ai.assistance.quro.core.linux.QuroLinuxEnv
+import com.ai.assistance.quro.core.terminal.QuroTerminalPrefs
+import com.ai.assistance.quro.core.terminal.QuroTerminalBridge
+import com.ai.assistance.quro.terminal.TerminalManager
+import com.ai.assistance.quro.terminal.rememberTerminalEnv
+import com.ai.assistance.quro.terminal.utils.CacheManager
+import com.ai.assistance.quro.terminal.utils.FtpServerManager
+import com.ai.assistance.quro.terminal.view.TerminalScreen
+import com.ai.assistance.quro.ui.QuroChatCardTray
+import com.ai.assistance.quro.ui.QuroChatCardView
+import com.ai.assistance.quro.ui.VisualDialogs
+import com.ai.assistance.quro.ui.VisualPopupDialog
+import com.ai.assistance.quro.ui.VisualCustomPopupDialog
+import com.ai.assistance.quro.core.cards.CardAction
+import com.ai.assistance.quro.core.cards.CardActionRouter
+import com.ai.assistance.quro.core.cards.CardFence
+import com.ai.assistance.quro.core.cards.CardPatch
+import com.ai.assistance.quro.core.cards.CardPatchBridge
+import com.ai.assistance.quro.core.cards.QuroChatCard
+import com.ai.assistance.quro.core.cards.RankingCard
+import com.ai.assistance.quro.core.cards.parseComponentSpec
+import com.ai.assistance.quro.ui.QuroShareBridge
+// 自研卡片渲染（feat_self_card）：独立功能，与动态 UI 的 quro-ui 完全不合并。
+import com.ai.assistance.quro.core.ui.card.CardModule
+import com.ai.assistance.quro.core.ui.card.host.ActionBus
+import com.ai.assistance.quro.core.ui.card.host.CardSurface
+import com.ai.assistance.quro.core.ui.card.spec.CardSpec
+import com.ai.assistance.quro.core.ui.card.spec.parseCardSpec
+// ZorvAI 生成式 UI（:genui 模块）：AI 自写 JSX/HTML → 对话框内 WebView 渲染
+import com.ai.assistance.quro.service.QuroMediaService
+import com.ai.assistance.quro.service.QuroMiniWindowManager
+import com.ai.assistance.quro.service.QuroMiniWindowManager.MiniChatLine
+import com.ai.assistance.quro.core.tools.QuroMediaController
+import com.ai.assistance.quro.core.QuroBrowserBridge
+import com.ai.assistance.quro.util.QuroDiag
+import com.ai.assistance.quro.workflow.data.WorkflowRepository
+// Zorv 构建台（端侧 APK 构建器，已从 build-aci 集成，剥离 ACI 受控端）
+import com.ai.assistance.quro.build.BuildScreen
+import com.ai.assistance.quro.workflow.data.model.Workflow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import android.app.Activity
+import android.content.ContextWrapper
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.view.Gravity
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
+import android.provider.OpenableColumns
+import android.content.ContentValues
+import android.widget.Toast
+import java.io.File
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.core.content.ContextCompat
+import androidx.activity.compose.BackHandler
+import androidx.activity.result.contract.ActivityResultContracts
+import com.canhub.cropper.CropImageContract
+import com.canhub.cropper.CropImageContractOptions
+import com.canhub.cropper.CropImageOptions
+import com.canhub.cropper.CropImageView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.view.ViewGroup
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import com.ai.assistance.quro.core.agent.QuroAgentTrace
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
+import com.ai.assistance.quro.core.QuroAttachment
+import com.ai.assistance.quro.core.QuroMessage
+import com.ai.assistance.quro.ui.data.Attachment
+import com.ai.assistance.quro.ui.data.ChatModel
+import com.ai.assistance.quro.ui.data.HistoryItem
+import com.ai.assistance.quro.ui.data.Message
+import com.ai.assistance.quro.ui.data.ModelGroup
+import com.ai.assistance.quro.ui.data.Persona
+import com.ai.assistance.quro.ui.data.SAMPLE_MESSAGES
+import com.ai.assistance.quro.ui.data.SAMPLE_PERSONAS
+import com.ai.assistance.quro.ui.data.ThinkBlock
+import com.ai.assistance.quro.ui.data.ToolCallUi
+import com.ai.assistance.quro.ui.data.ZxInlineSpec
+import com.ai.assistance.quro.ui.icons.LucideIcon
+import com.ai.assistance.quro.ui.chat.ChatPermissionModeBar
+import com.ai.assistance.quro.ui.chat.ZxWebCard
+import com.ai.assistance.quro.ui.chat.ZxWidgetInline
+import com.ai.assistance.quro.ui.chat.zxSpecOf
+import com.ai.assistance.quro.service.QuroWebUiService
+import com.ai.assistance.quro.ui.chat.WebUiLinkDialog
+import com.ai.assistance.quro.ui.chat.ChatTopBar
+import com.ai.assistance.quro.core.policy.QuroPolicy
+import com.ai.assistance.quro.core.policy.QuroPolicyStore
+import com.ai.assistance.quro.core.QuroAttachmentKit
+import com.ai.assistance.quro.core.QuroConversationMeta
+import com.ai.assistance.quro.core.QuroPersona
+import com.ai.assistance.quro.core.QuroCrashLogger
+import com.ai.assistance.quro.ui.QuroChatViewModel
+import com.ai.assistance.quro.ui.dialog.RichText
+import com.ai.assistance.quro.ui.dialog.CodeSourceView
+import com.ai.assistance.quro.ui.dialog.MarkdownTableView
+import com.ai.assistance.quro.ui.dialog.messageContentMaxWidth
+import com.ai.assistance.quro.ui.dialog.bodyTopInsetDp
+import com.ai.assistance.quro.ui.dialog.nameRowCenterOffsetDp
+import com.ai.assistance.quro.core.experience.QuroMemoryInfo
+import com.ai.assistance.quro.core.experience.QuroStorageStats
+import com.ai.assistance.quro.core.experience.measureDirOrNull
+import com.ai.assistance.quro.core.experience.measureExternalAppDirs
+import com.ai.assistance.quro.core.experience.readProcessMemory
+import com.ai.assistance.quro.core.experience.readStorageStats
+import com.ai.assistance.quro.core.experience.requestMemoryTrim
+import com.ai.assistance.quro.core.tools.QuroVoiceStyle
+import com.ai.assistance.quro.core.tools.QuroSttHolder
+import com.ai.assistance.quro.core.tools.QuroSttPrefs
+import com.ai.assistance.quro.core.tools.QuroTtsHolder
+import com.ai.assistance.quro.core.tools.QuroVoiceFeaturePrefs
+import android.speech.SpeechRecognizer
+import com.ai.assistance.quro.core.media.QuroVideoLauncher
+import com.ai.assistance.quro.core.media.QuroMusicLauncher
+import com.ai.assistance.quro.core.media.QuroDocLauncher
+import com.ai.assistance.quro.core.model.QuroModelConfigRepository
+import com.ai.assistance.quro.ui.QuroModelConfigViewModel
+import com.ai.assistance.quro.core.network.QuroModelListResult
+import com.ai.assistance.quro.core.model.QuroSavedProfile
+import com.ai.assistance.quro.core.model.QuroSavedProfileRepository
+import com.ai.assistance.quro.core.model.QuroCustomProviderRepository
+import com.ai.assistance.quro.core.model.QuroLocalModelRepository
+import com.ai.assistance.quro.core.model.QuroLocalModelType
+import com.ai.assistance.quro.ui.QuroPersonaViewModel
+import com.ai.assistance.quro.ui.theme.Accent
+import com.ai.assistance.quro.ui.theme.AccentPress
+import com.ai.assistance.quro.ui.theme.AccentSoft
+import com.ai.assistance.quro.ui.theme.Card
+import com.ai.assistance.quro.ui.theme.Ink
+import com.ai.assistance.quro.ui.theme.InkD
+import com.ai.assistance.quro.ui.theme.InkSoft
+import com.ai.assistance.quro.ui.theme.Line
+import com.ai.assistance.quro.ui.theme.Line2
+import com.ai.assistance.quro.ui.theme.Muted
+import com.ai.assistance.quro.ui.theme.Paper
+import com.ai.assistance.quro.ui.theme.Sage
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextDecoration
+import kotlinx.coroutines.flow.filterNotNull
+import org.json.JSONObject
+import com.ai.assistance.quro.core.websearch.IntentRouter
+import com.ai.assistance.quro.core.websearch.IntentType
+import com.ai.assistance.quro.core.tools.RunCodeTool
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.core.content.FileProvider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.DataUsage
+import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.DeveloperBoard
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.History
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material3.Icon
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.graphics.asImageBitmap
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import com.ai.assistance.quro.ui.VisualPopupConfigDialog
+import com.ai.assistance.quro.ui.VisualQuestionConfigDialog
+// 动态 UI：AI 输出的 quro-ui DSL 直接渲染为原生可交互控件
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiDslParser
+import com.ai.assistance.quro.core.ui.dynamicui.A2uiInterpreter
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiParseResult
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiRenderer
+import com.ai.assistance.quro.core.ui.dynamicui.SurfaceHost
+import com.ai.assistance.quro.core.ui.dynamicui.QuroUiAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroCallbackAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroToolCallAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroSkillAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroOpenUrlAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroCopyAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroOpenAppAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroToggleAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroOpenScreenAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroRenderHtmlAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroRenderVisproAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroVisualPopupAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroVisualAskAction
+import com.ai.assistance.quro.core.ui.dynamicui.QuroZxWebCardAction
+
+private enum class SheetType { Model, Persona, Settings, Upload, Voice }
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun ChatScreen(
+    vm: QuroChatViewModel,
+    modelVm: QuroModelConfigViewModel,
+    personaVm: QuroPersonaViewModel,
+    voiceBallEnabled: Boolean = false,
+    onToggleVoiceBall: (Boolean) -> Unit = {},
+    darkMode: Boolean = false,
+    onToggleDark: () -> Unit = {},
+) {
+    val cs = MaterialTheme.colorScheme
+    val fontTiers = listOf(0.92f, 1f, 1.14f)
+    val fontNames = listOf(stringResource(R.string.qk_00012), stringResource(R.string.qk_00013), stringResource(R.string.qk_00014))
+
+    // ---- Zorv AI 后端状态（单一真相源） ----
+    val messages by vm.messages.collectAsState()
+    val busy by vm.busy.collectAsState()
+    val generatingIds by vm.generatingIds.collectAsState()
+    val conversations by vm.conversations.collectAsState()
+    val currentId by vm.currentId.collectAsState()
+    val thinking by vm.thinking.collectAsState()
+    val autoSaveMemory by vm.autoSaveMemory.collectAsState()
+    val subAgentEnabled by vm.subAgentEnabled.collectAsState()
+    val activePersona by personaVm.activePersona.collectAsState()
+    val personas by personaVm.personas.collectAsState()
+    val cfg by modelVm.cfg.collectAsState()
+    // [D5] 收集 ViewModel 错误通道，供顶部错误横幅展示（异常不再被静默吞掉）。
+    val errorState by vm.error.collectAsState()
+
+    // ── 执行轨迹总线：全局只在此处订阅一次，去重后存入共享状态，三个面板统一读取；
+    //    切换会话时清空，避免跨会话污染；add 前按 id 去重，避免重复 key / 重复事件。 ──
+    val traceLines = remember { mutableStateListOf<QuroAgentTrace.AgentTraceEvent>() }
+    LaunchedEffect(Unit) {
+        QuroAgentTrace.flow.collect { ev ->
+            if (traceLines.none { it.id == ev.id }) {
+                traceLines.add(ev)
+                if (traceLines.size > 200) traceLines.removeAt(0)
+            }
+        }
+    }
+    LaunchedEffect(currentId) {
+        traceLines.clear()
+    }
+
+    // ---- 本地 UI 偏好（单一真相源：QuroChatViewModel.quro_ui，落盘持久化） ----
+    val fontTier by vm.fontTierPref.collectAsState()
+    val soundOn by vm.soundOnPref.collectAsState()
+    val enterSend by vm.enterSendPref.collectAsState()
+    val followSystemLang by vm.followSystemLangPref.collectAsState()
+    val aiReplyNotify by vm.aiReplyNotifyPref.collectAsState()
+    // 深色模式由 QuroApp 根部经 darkOverride 注入 QuroTheme，这里仅透传参数
+    val ringtoneCtx = LocalContext.current
+
+    // 回复完成提示音：监听 busy 由 true→false 的下降沿（首帧 prevBusy=false 不触发）
+    var prevBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(busy, currentId) {
+        if (prevBusy && !busy && vm.isSoundOn()) {
+            runCatching {
+                val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                RingtoneManager.getRingtone(ringtoneCtx, uri)?.play()
+            }
+        }
+        prevBusy = busy
+    }
+    val attachments = remember { mutableStateListOf<QuroAttachment>() }
+
+    // 选中模型：直接用 cfg.model 合成（真实配置的模型，不再反查示例假数据）
+    val selectedModel: ChatModel = remember(cfg.model) {
+        ChatModel(
+            name = cfg.model.ifBlank { qstr(R.string.qk_00015) }, id = cfg.model,
+            desc = qstr(R.string.qk_00016), provider = cfg.provider,
+            mark = cfg.provider.firstOrNull()?.uppercase() ?: "Q",
+        )
+    }
+    // 顶栏芯片显示「真正配置 / 真正发送给 API 的模型」（不再经示例列表翻译，确保与模型配置一致）
+    val modelLabel = remember(cfg) { if (cfg.model.isBlank()) qstr(R.string.qk_00017) else cfg.model }
+    val selectedPersona: Persona = remember(activePersona) {
+        (activePersona ?: fallbackPersona()).toPersona()
+    }
+
+    // 当前会话 → MoWen Message 列表（工具调用可见化：把 hidden 管道消息配对成「🔧 工具调用」块）
+    val uiMessages = remember(messages, busy, selectedPersona, thinking, cfg) {
+        // 🔑 工具结果渲染策略（自包含为主 + 旧数据回退），同上
+        val fallbackMap = messages
+            .filter { it.role == "tool" && it.toolCallId != null }
+            .mapNotNull { m -> if (isGarbageToolResult(m.content)) null else (m.toolCallId!! to m.content) }
+            .toMap()
+
+        // 🔧 修复「每次输出重开一个气泡」：把同一回合（相邻 user 消息之间）连续的
+        //   assistant(+隐藏 tool) 消息聚合成【单个气泡】，内部累积 思考/工具/文本/卡片。
+        //   这样「思考→工具调用→再思考→工具调用→最终文本」整轮响应只在 1 个气泡内流式增长，
+        //   不再为每个 assistant 轮次各开一个气泡。单轮纯文本回复不受影响（仍是 1 气泡）。
+        val out = mutableListOf<Message>()
+        var aggId = 0
+        val aggIds = mutableListOf<String>()
+        var aggTime = ""
+        var hasAgg = false
+        val aggThinkLines = mutableListOf<String>()
+        val aggTools = mutableListOf<ToolCallUi>()
+        val aggText = StringBuilder()
+        val aggCards = mutableListOf<QuroChatCard>()
+        /**
+         * 本聚合段要内联渲染的 zxwidget。
+         *
+         * 🔴 zxwidget「不是卡片方式，是直接渲染在对话框的」（用户 2026-10-13 拍板）。
+         *   它的载体是模型那次 `zx_web_card` 工具调用——component/dsl 就在参数里，
+         *   所以在聚合阶段抽成 [ZxInlineSpec]，**不给 QuroMessage 加字段**，
+         *   历史重放与流式过程都能正常渲染。
+         */
+        val aggZx = mutableListOf<ZxInlineSpec>()
+        val aggAttach = mutableListOf<Attachment>()
+        // 🔴 当前聚合段的发言人（集群/子智能体的角色名）。null = 普通助手消息。
+        // 见下方 else 分支：**发言人不同就 flush**，绝不把不同角色的话并进同一个气泡。
+        var aggSpeaker: String? = null
+
+        fun flushAgg() {
+            if (!hasAgg) return
+            val think = if (aggThinkLines.isNotEmpty()) ThinkBlock(aggThinkLines.toList()) else null
+            val text = aggText.toString().takeIf { it.isNotBlank() }
+            if (think != null || aggTools.isNotEmpty() || text != null || aggCards.isNotEmpty() ||
+                aggAttach.isNotEmpty() || aggZx.isNotEmpty()
+            ) {
+                // 🔴 发言人优先用聚合段自己的 senderName（集群/子智能体按角色分段后才非空），
+                // 没有才回退人格名。头像同理：集群角色用首字符当头像，
+                // 否则 8 个角色顶着同一张脸，用户根本分不清谁在说话。
+                val speaker = aggSpeaker
+                out.add(
+                    Message(
+                        id = aggId,
+                        uids = aggIds.toList(),
+                        mine = false,
+                        author = if (speaker.isNullOrBlank()) selectedPersona.name else speaker,
+                        avatar = if (speaker.isNullOrBlank()) selectedPersona.ava else speaker.take(1),
+                        avatarUri = if (speaker.isNullOrBlank()) selectedPersona.avatarUri else "",
+                        isClusterSpeaker = !speaker.isNullOrBlank(),
+                        time = aggTime,
+                        text = text,
+                        attachments = aggAttach.toList(),
+                        think = think,
+                        tools = if (aggTools.isEmpty()) null else aggTools.toList(),
+                        cards = aggCards.toList(),
+                        zxWidgets = aggZx.toList(),
+                    )
+                )
+            }
+            hasAgg = false
+            aggThinkLines.clear(); aggTools.clear(); aggText.clear(); aggCards.clear(); aggAttach.clear(); aggIds.clear()
+            aggZx.clear()
+            aggSpeaker = null
+        }
+
+        for (m in messages) {
+            when (m.role) {
+                "user" -> {
+                    if (m.hidden) { flushAgg(); continue } // hidden 用户消息（如 [第N轮] 标记）不渲染
+                    flushAgg()
+                    out.add(m.toMessage(selectedPersona.name, selectedPersona.ava, selectedPersona.avatarUri, vm.userProfile.value.avatarUri, vm.userProfile.value.name))
+                }
+                "tool" -> { /* 隐藏内部消息：结果已进 toolCalls.result，不单独渲染、不参与聚合文本 */ }
+                else -> {
+                    // 隐藏的 system 指令（如防死循环的「[系统提示]」）只给模型看，绝不渲染进对话气泡
+                    if (m.role == "system" && m.hidden) { flushAgg(); continue }
+                    // 隐藏且无任何可见内容的纯管道占位 → 跳过；否则参与聚合（含隐藏但有工具/推理/文本/卡片）
+                    if (m.hidden && m.toolCalls.isNullOrEmpty() && m.reasoning.isNullOrBlank() && m.content.isBlank() && m.cards.isEmpty()) continue
+                    // 🔴🔴 集群/子智能体：发言人不同就**另起一个气泡**。
+                    //
+                    // 旧实现把连续的 assistant 消息全部并进一个气泡、且 author 硬编码成人格名，
+                    // 于是 8 个角色的发言变成一段没人能认领的自言自语 ——
+                    // 这就是用户报的「集群像黑盒，不知道他们在干什么、讨论了什么」。
+                    // 气泡名字行会显示 [qk_04061] 渲染出的「集群 · 角色名」，
+                    // 每个角色一个气泡，先后顺序即发言顺序，参与感由此而来。
+                    val sp = m.senderName?.trim()?.takeIf { it.isNotEmpty() && it != selectedPersona.name }
+                    if (hasAgg && sp != null && sp != aggSpeaker) flushAgg()
+                    aggIds.add(m.id)
+                    if (!hasAgg) {
+                        hasAgg = true
+                        aggId = m.id.hashCode()
+                        aggTime = formatChatTime(m.createdAt)
+                    }
+                    if (sp != null) aggSpeaker = sp
+                    // 集群工具调用：投影器把工具名放在 toolLabel（它不是 toolCalls），
+                    // 这里补成一条 ToolCallUi，让对话框的「N 工具」胶囊能展开看到。
+                    if (sp != null) {
+                        m.toolLabel?.takeIf { it.isNotBlank() }?.let { lbl ->
+                            val args = m.content.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+                            aggTools.add(ToolCallUi(lbl, args, "（集群角色 $sp 调用）", 0L))
+                        }
+                    }
+                    m.reasoning?.takeIf { it.isNotBlank() }?.lineSequence()
+                        ?.filter { it.isNotBlank() }?.forEach { aggThinkLines.add(it) }
+                    m.toolCalls?.forEach { c ->
+                        // zxwidget：这不是「一次工具调用」，而是用户要看到的一块**动态交互界面**。
+                        // 抽成内联规格后就地渲染（撑满宽度、长在消息流里），
+                        // 并且**不再**往工具列表里塞一行原始 JSON —— 那正是「卡片方式」的残留观感。
+                        if (c.name == "zx_web_card") {
+                            zxSpecOf(c.arguments)?.let { aggZx.add(it) }
+                            return@forEach
+                        }
+                        val r = (c.result ?: fallbackMap[c.id])?.takeIf { !isGarbageToolResult(it) }
+                        aggTools.add(ToolCallUi(c.name, c.arguments, r, c.durationMs))
+                        // v1057：run_code 的 html 产物 → 对话框内联实时网页预览卡片
+                        //（AI 写网页 → AI 运行 → 网页直接长在气泡里，把手机 AI IDE 的产出物真正融入对话内容区）
+                        if (c.name == "run_code" && r != null) {
+                            when {
+                                // HTML/SVG 内容 → 网页预览卡片
+                                looksLikeHtml(r) || r.contains("<svg") -> {
+                                    aggCards.add(
+                                        QuroChatCard.HtmlPreviewCard(
+                                            id = "rh_" + (c.id ?: r.hashCode().toString()),
+                                            title = qstr(R.string.qk_00018),
+                                            html = r,
+                                        )
+                                    )
+                                }
+                                // 图片路径 → 媒体卡片
+                                r.startsWith("🖼️ IMAGE_PATH:") -> {
+                                    val imagePath = r.removePrefix("🖼️ IMAGE_PATH:")
+                                    aggCards.add(
+                                        QuroChatCard.MediaCard(
+                                            id = "ri_" + (c.id ?: r.hashCode().toString()),
+                                            title = qstr(R.string.qk_00019),
+                                            mediaUrl = imagePath,
+                                            mediaType = "image",
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (m.content.isNotBlank()) {
+                        if (aggText.isNotEmpty()) aggText.append("\n\n")
+                        aggText.append(m.content)
+                    }
+                    if (m.cards.isNotEmpty()) aggCards.addAll(m.cards)
+                    if (!m.attachments.isNullOrEmpty()) {
+                        aggAttach.addAll(m.attachments.map { Attachment(it.name, formatSize(it.size), path = it.uri, type = it.type) })
+                    }
+                }
+            }
+        }
+        flushAgg()
+
+        // 「深度思考」关闭时不渲染推理过程卡片 —— 但**仅对云端模型成立**（N12）。
+        //
+        // 这个开关的真实语义是「要不要命令云端模型想得更深」：它被编译成 reasoning_effort /
+        // thinking budget / enable_thinking 等**请求侧**字段（见 QuroReasoningControl）。
+        // 端侧（MNN / llama.cpp）根本不消费这个开关——思考与否由模型自带 chat_template 的
+        // enable_thinking 决定，引擎侧照旧会产出 reasoning。
+        //
+        // 此前把「不命令它想」直接当成「不许展示思考」，于是端侧模型产出的思考段被无条件丢弃，
+        // 用户看到的现象正是「对话框不支持 MNN + llama.cpp 的思考」。
+        // 判定必须同时看开关与引擎类型，二者不可互相顶替。
+        val localEngine = cfg.provider == "MNN" || cfg.provider == "LLAMA_CPP"
+        if (!thinking && !localEngine) {
+            for (i in out.indices) {
+                val mm = out[i]
+                if (mm.think != null) out[i] = mm.copy(think = null)
+            }
+        }
+
+        if (busy) {
+            // 🔧 对话框进度反馈（v216 修复 → v230 优化 → v453 升级「等等」动态小组件）：
+            //   仅当聚合列表中尚无助手消息时才追加占位气泡，避免与已聚合的真实消息重复显示。
+            //   聚合逻辑已经把 hidden assistant 消息的 thinking/toolCalls 合并进了同一个气泡，
+            //   所以大部分情况下不需要额外占位；占位仅覆盖「纯等待首条响应」的空窗期。
+            //   v453：占位不再用默认收起的「思考中」文字气泡（等于看不见），改为内容区独立的
+            //   「等等」动态小组件（跳动圆点动画）；头像与人格名字保持不变（复用 persona），
+            //   小组件独立于头像/名字，不替代、不隐藏它们。
+            // 🔧 Bug修复「等待气泡缺失」：原判定 `out.any { !it.mine }` 会把会话首条的
+            //   【欢迎语 assistant 消息】也算进去 → 任何会话恒为 true → 「等等」小组件永远不显示。
+            //   正确语义：仅统计【最后一条用户消息之后】是否已有助手回复（含流式占位）。
+            //   用户刚发出消息、AI 还没产出任何内容时，等待气泡才出现；首个 token/思考到达后消失。
+            val lastUserIdx = out.indexOfLast { it.mine }
+            val afterUser = out.drop(if (lastUserIdx >= 0) lastUserIdx + 1 else 0)
+            val hasAssistantMsg = afterUser.any { !it.mine && it.id != -1 }
+            // 🔧 执行态展示：存在「结果尚未回填」的工具调用（正卡在 engine.execute 慢任务上）时，
+            // 追加一条「AI 正在执行工具…」工作指示气泡。多轮工具循环里第一轮之后必有助手消息，
+            // 原「等等」组件因 hasAssistantMsg=true 永不出现 → 循环期间对话框无任何「工作中」反馈，
+            // 看起来像死循环重复文本。此分支专门补上执行中展示。
+            val hasPendingTool = afterUser.any { !it.mine && !it.tools.isNullOrEmpty() && it.tools.any { t -> t.result.isNullOrBlank() } }
+            if (!hasAssistantMsg) {
+                out.add(
+                    Message(
+                        id = -1, mine = false, author = selectedPersona.name,
+                        avatar = selectedPersona.ava, avatarUri = selectedPersona.avatarUri,
+                        time = "", text = null, isWaiting = true,
+                    )
+                )
+            } else if (hasPendingTool) {
+                // 收集仍在执行（结果尚未回填）的工具名，透出到工作指示气泡做细节展示，
+                // 让"AI 正在执行工具…"细化为"AI 正在执行工具：web_search · read_url …"。
+                val pendingTools = afterUser
+                    .filter { !it.mine && !it.tools.isNullOrEmpty() }
+                    .flatMap { it.tools!! }
+                    .filter { it.result.isNullOrBlank() }
+                    .map { it.name }
+                    .distinct()
+                // 若待执行工具含 web_search，进一步判定其意图，透出更细的标签
+                // （"hot" / "entity:ZorvAI"）；本地化在组合作用域的 WorkingIndicator 里做。
+                val workingIntent = if (pendingTools.contains("web_search")) {
+                    val q = afterUser
+                        .flatMap { it.tools ?: emptyList() }
+                        .firstOrNull { it.name == "web_search" && it.result.isNullOrBlank() }
+                        ?.args
+                        ?.let { runCatching { org.json.JSONObject(it) }.getOrNull()?.optString("query", "") }
+                        ?.trim().orEmpty()
+                    if (q.isNotBlank()) {
+                        when (IntentRouter.classify(q).type) {
+                            IntentType.HOT_NEWS -> "hot"
+                            IntentType.ENTITY_SELF -> "entity:" + (IntentRouter.classify(q).entity?.name ?: "")
+                            else -> null
+                        }
+                    } else null
+                } else null
+                out.add(
+                    Message(
+                        id = -2, mine = false, author = selectedPersona.name,
+                        avatar = selectedPersona.ava, avatarUri = selectedPersona.avatarUri,
+                        time = "", text = null, isWorking = true,
+                        workingTools = pendingTools,
+                        workingIntent = workingIntent,
+                    )
+                )
+            }
+        }
+        out
+    }
+
+    // 历史（按日期分组，标注当前会话）与人格列表
+    val history = remember(conversations, currentId) {
+        conversations.map { it.toHistoryItem(it.id == currentId) }
+    }
+    val personaList = remember(personas) { personas.map { it.toPersona() } }
+
+    var sheet by remember { mutableStateOf<SheetType?>(null) }
+    var lastSheet by remember { mutableStateOf<SheetType?>(null) }
+    SideEffect { if (sheet != null) lastSheet = sheet }
+
+    // 人格编辑对话框（Zorv AI 完整流程：图片上传头像 / 描述 / 角色设定 / 开场白 / 聊天设定 / 标签 / AI孵化 / 保存）
+    var personaToEdit by remember { mutableStateOf<QuroPersona?>(null) }
+    var personaEditIsNew by remember { mutableStateOf(false) }
+    var showSoulSheet by remember { mutableStateOf(false) }
+    var showMemoryDialog by remember { mutableStateOf(false) }
+    // 模型配置仓库：在可组合作用域直接创建（LocalContext.current 不能放进 remember/普通 lambda）
+    val modelConfigRepo = QuroModelConfigRepository(LocalContext.current)
+    var showAbout by remember { mutableStateOf(false) }
+    var showCleanup by remember { mutableStateOf(false) }
+    var showFileManager by remember { mutableStateOf(false) }
+    // ACI 管理中心屏：从设置「功能 → ACI 管理中心」进入（此前仅有 AI 工具 ui_open_aci 可打开，无手动按钮）
+    var showAci by remember { mutableStateOf(false) }
+    // ACI 应用选择器对话框
+    var showAciSelector by remember { mutableStateOf(false) }
+    // 工作区选择器对话框
+    var showWorkspaceSelector by remember { mutableStateOf(false) }
+    // 工作区代码编辑器（写代码 / 浏览代码）全屏页
+    var showCodeWorkspace by remember { mutableStateOf(false) }
+    // 集群配置页入口：🔴 纯配置，**不承担对话**（见 QuroClusterSettingsScreen）
+    // 功能模型配置屏（从设置「功能模型配置」进入）：为 5 类 AI 子能力各自绑定模型
+    var showFeatureModelConfig by remember { mutableStateOf(false) }
+    var showAppearance by remember { mutableStateOf(false) }
+    var showVoice by remember { mutableStateOf(false) }
+    var showTts by remember { mutableStateOf(false) }
+    var showStt by remember { mutableStateOf(false) }
+    // 语音服务 Hub（四卡片总览）
+    var showVoiceService by remember { mutableStateOf(false) }
+    // 云模型配置屏（语音合成 TTS 的真实配置界面：选服务商 + 填参数 + 音色 + 风格标签）
+    var showCloudTts by remember { mutableStateOf(false) }
+    // 独立模型配置屏（从设置底部弹层「模型配置」或「添加模型」进入）
+    var showModelConfig by remember { mutableStateOf(false) }
+    // 追踪模型配置屏是否从设置页进入（用于返回键正确导航：设置→模型配置→返回→回到设置）
+    var modelConfigFromSettings by remember { mutableStateOf(false) }
+    // 权限管理页（从设置页入口进入）
+    var showPermission by remember { mutableStateOf(false) }
+    var showLspose by remember { mutableStateOf(false) }
+    // USB / 无线调试 (ADB) 页（从设置页入口进入）
+    var showUsbDebug by remember { mutableStateOf(false) }
+    // 默认应用角色管理页（从设置页入口进入）
+    var showDefaultApp by remember { mutableStateOf(false) }
+    // 包管理页（插件 / 工具包 / 技能 / MCP，从设置页入口进入）
+    var showCms by remember { mutableStateOf(false) }
+    // 工具箱（设置页入口：文件管理 / 包名查询 / 代码运行 / 内置浏览器）
+    var showToolbox by remember { mutableStateOf(false) }
+    // 插件运行时 Demo 入口
+    var showPlugins by remember { mutableStateOf(false) }
+    // 技能 SKILL 管理入口
+    var showSkills by remember { mutableStateOf(false) }
+    // 技能选择对话框（从输入框工具菜单/上下文标识栏进入）
+    var showSkillSelector by remember { mutableStateOf(false) }
+    // 可视化弹窗配置对话框
+    var showVisualPopupConfig by remember { mutableStateOf(false) }
+    val pendingVisualPopup = remember { mutableStateOf(false) }
+    // 可视化询问配置对话框
+    var showVisualQuestionConfig by remember { mutableStateOf(false) }
+    val pendingVisualQuestion = remember { mutableStateOf(false) }
+    // 输入框功能选择器（一次性强制）：选中后下一条消息强制 AI 用对应可视化能力（参考可视化弹窗机制）
+    val pendingSelfCard = remember { mutableStateOf(false) }
+    val pendingDynamicUi = remember { mutableStateOf(false) }
+    val pendingAipDoc = remember { mutableStateOf(false) }
+    // zxwidget 开关：选中后下一条消息强制 AI 走 zx 交互式卡片
+    val pendingZxWebCard = remember { mutableStateOf(false) }
+    // 定时任务管理入口
+    var showSchedule by remember { mutableStateOf(false) }
+    // 工作流管理入口
+    var showWorkflow by remember { mutableStateOf(false) }
+    // 知识库管理页（从设置页入口进入：浏览 / 查看 / 新建 / 删除 knowledge_base 文档）
+    var showKnowledge by remember { mutableStateOf(false) }
+    // 机器人设置页（C2）：从工具箱「机器人」入口进入
+    var showBots by remember { mutableStateOf(false) }
+    // 应用内文档查看器（本地渲染引擎，替代原 Collabora/外跳 ONLYOFFICE；已整合原「文档中心」）
+    var showOnlyOffice by remember { mutableStateOf(false) }
+    var showTerminal by remember { mutableStateOf(false) }
+    var showBrowser by remember { mutableStateOf(false) }
+    var showMcp by remember { mutableStateOf(false) }
+    // 多角色集群设置（招人 / 绑模型 / 主持熔断 / 发起任务）
+    var showClusterSettings by remember { mutableStateOf(false) }
+    // 聚合式「系统状态」浏览界面（设备 / 权限 / 模块运行态 / 人格心跳）
+    var showSystemStatus by remember { mutableStateOf(false) }
+    // 可视化组件画廊
+    var showComponentGallery by remember { mutableStateOf(false) }
+    // 内置代码编辑器入口
+    var showEditor by remember { mutableStateOf(false) }
+    // 输入框文本（提升到本层，便于编辑器结果回填）
+    var inputText by remember { mutableStateOf(TextFieldValue("")) }
+    // 系统分享桥：其它 App 分享进来的文本/链接预填到输入框；图片/文件作为附件（用户在对话框确认后发送）
+    val shareCtx = LocalContext.current
+    LaunchedEffect(Unit) {
+        snapshotFlow { QuroShareBridge.pendingText.value to QuroShareBridge.pendingUris.value }
+            .collect { pair ->
+                val text = pair.first
+                val uris = pair.second
+                if (text == null && uris.isEmpty()) return@collect
+                if (!text.isNullOrBlank()) inputText = TextFieldValue(text)
+                if (uris.isNotEmpty()) {
+                    uris.forEach { uri ->
+                        val mime = shareCtx.contentResolver.getType(uri) ?: "*/*"
+                        QuroAttachmentKit.fromUri(shareCtx, uri, mime)?.let { a -> attachments.add(a) }
+                    }
+                }
+                QuroShareBridge.consume()
+            }
+    }
+    // 内置浏览器 URL（open_web 工具或工具箱触发）
+    var browserUrl by remember { mutableStateOf<String?>(null) }
+    // 浏览器「化小窗」：非空时全屏浏览器收起、改由可拖拽悬浮小窗承载同一网址
+    var browserFloatUrl by remember { mutableStateOf<String?>(null) }
+    // 对话框「化小窗」：true 时主对话收起、改由可拖拽悬浮小窗承载
+    var chatMinimized by remember { mutableStateOf(false) }
+
+    // 应用内视频播放器（VideoView 渲染屏）
+    var showVideoPlayer by remember { mutableStateOf(false) }
+    var videoPlayerUri by remember { mutableStateOf("") }
+    var videoPlayerTitle by remember { mutableStateOf("") }
+    // 全屏图片查看器
+    var showImageViewer by remember { mutableStateOf(false) }
+    var imageViewerPath by remember { mutableStateOf("") }
+    var imageViewerName by remember { mutableStateOf("") }
+    // 应用内文档查看器（附件点击 → 用 QuoroDocumentViewer 内联渲染 docx/xlsx/pdf 等）
+    var showDocViewer by remember { mutableStateOf(false) }
+    var docViewerPath by remember { mutableStateOf("") }
+    var docViewerName by remember { mutableStateOf("") }
+    // 应用内全屏音乐播放器
+    var showMusicPlayer by remember { mutableStateOf(false) }
+    // 工具中心（能力聚合入口：终端/Web 应用/CMS/工具箱/沙箱/私有库）
+    var showToolCenter by remember { mutableStateOf(false) }
+    // 工具中心初始进入的子面板（供 AI 经 ui_control(open,target=vispro|node_editor|miniapp 等) 直达）
+    var toolCenterInitial by remember { mutableStateOf<String?>(null) }
+    // Zorv 构建台（端侧 APK 构建器：Java → DEX → APK，已从 build-aci 集成，剥离 ACI 受控端）
+    var showBuild by remember { mutableStateOf(false) }
+
+    // GitHub 管理屏（登录 + 仓库/Issue/Star/搜索）：从设置「GitHub」/ ui_open_github 进入
+    var showGitHub by remember { mutableStateOf(false) }
+    // /gh 命令预填到 GitHub 搜索的关键词
+    var githubPrefill by remember { mutableStateOf("") }
+    // 离线模型下载中心：从设置「离线模型下载」/ ui_open_model_hub 进入
+    var showModelHub by remember { mutableStateOf(false) }
+
+    // 可视化弹窗 / 询问（动态 UI 深链交互）：经 UiNavigationBus.VisualPopup / VisualAsk 触发
+    var showVisualPopup by remember { mutableStateOf(false) }
+    var visualPopupTitle by remember { mutableStateOf("") }
+    var visualPopupContent by remember { mutableStateOf("") }
+    var showVisualAsk by remember { mutableStateOf(false) }
+    var visualAskPrompt by remember { mutableStateOf("") }
+    var visualAskOptions by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    // Web UI 面板：开启/查看 Web UI 后台服务（只显示地址/复制/扫码，不再内嵌 WebView）。
+    // 旧实现把 WebView 嵌在对话框里（showZxWebChat + WebUiDialog）：
+    //   · 关掉对话框服务就停 → 无法后台；
+    //   · 投影（只读块序列）与「另一个功能相同的对话框」诉求冲突。
+    // 现在 Web UI 是**常驻前台服务**，手机上的入口只负责开关与给地址。
+    var showWebUiPanel by remember { mutableStateOf(false) }
+
+    /**
+     * zxwidget 没有「弹出层」了 —— 用户 2026-10-13 拍板：**直接渲染在对话框里**。
+     *
+     * 工具来源的 zxwidget 挂在自己那条 assistant 消息上，由消息流内联渲染
+     * （聚合阶段从 `zx_web_card` 工具调用抽出 [ZxInlineSpec]，见 `aggZx`）；
+     * 动态 UI 动作来源的那条没有消息可挂，走 `vm.showInlineZxWidget` 造一条
+     * 「只给用户看」的消息，同样落在消息流里。
+     *
+     * 所以这里**不再需要**消费 [ZxWebCardQueue] 的 CardAdded 去弹框：
+     * 渲染由消息流负责，工具照样阻塞等用户交互（交互一到就放行）。
+     */
+
+    // ═══ UI 动作桥：把 AI 调用的 ui_* 工具回调到本组合作用域，打开对应界面/弹层/开关 ═══
+    fun handleUiAction(action: String) {
+        when (action) {
+            "ui_open_onlyoffice" -> showOnlyOffice = true
+            "ui_open_knowledge" -> showKnowledge = true
+            "ui_open_terminal" -> showTerminal = true
+            "ui_open_editor" -> showEditor = true
+            "ui_open_toolbox" -> showToolbox = true
+            "ui_open_kaleidobox" -> { toolCenterInitial = "kaleidobox"; showToolCenter = true }
+            "ui_open_build" -> showBuild = true
+            "ui_open_plugins" -> showPlugins = true
+            "ui_open_skills" -> showSkills = true
+            "ui_open_schedule" -> showSchedule = true
+            "ui_open_bots" -> showBots = true
+            "ui_open_cms" -> showCms = true
+            "ui_open_system_status" -> showSystemStatus = true
+            "ui_open_permission" -> showPermission = true
+            "ui_open_model_config" -> showModelConfig = true
+            "ui_open_voice" -> showVoice = true
+            "ui_open_tts" -> showTts = true
+            "ui_open_stt" -> showStt = true
+            "ui_open_voice_service" -> showVoiceService = true
+            "ui_open_doc_viewer" -> showOnlyOffice = true
+            "ui_open_about" -> showAbout = true
+            "ui_open_aci" -> showAci = true
+            "ui_open_appearance" -> showAppearance = true
+            "ui_open_soul" -> showSoulSheet = true
+            "ui_open_memory" -> showMemoryDialog = true
+            "ui_open_sheet_model" -> sheet = SheetType.Model
+            "ui_open_sheet_persona" -> sheet = SheetType.Persona
+            "ui_open_sheet_settings" -> sheet = SheetType.Settings
+            "ui_open_sheet_upload" -> sheet = SheetType.Upload
+            "ui_open_sheet_voice" -> sheet = SheetType.Voice
+            "ui_open_upload", "ui_open_import_tool", "ui_open_ai_search", "ui_open_doc_generate" -> sheet = SheetType.Upload
+            // Web UI 后台服务：打开独立对话框，只显示地址/复制/扫码，不再内嵌 WebView
+            "ui_open_webui" -> showWebUiPanel = true
+            "ui_toggle_deepthink" -> vm.setThinking(!vm.thinking.value)
+            "ui_toggle_memory" -> vm.setAutoSaveMemory(!vm.autoSaveMemory.value)
+            "ui_clear_chat" -> vm.clear()
+            "ui_new_chat" -> vm.newConversation()
+            "ui_open_tool_center" -> showToolCenter = true
+            "ui_open_github" -> showGitHub = true
+            "ui_open_model_hub" -> showModelHub = true
+        }
+    }
+    val appCtx = LocalContext.current
+    LaunchedEffect(Unit) {
+        QuroUiActionBridge.dispatch = { handleUiAction(it) }
+        // 桌面组件/通知在「Activity 已建、Compose 未组合」窗口期下发的打开请求：此刻补派
+        QuroUiActionBridge.pendingAction?.let { a ->
+            handleUiAction(a)
+            QuroUiActionBridge.pendingAction = null
+        }
+        // 可视化组件融进聊天气泡：AI 经 ui_widget / ui_card 下发的卡片挂到当前助手消息
+        QuroUiActionBridge.onCard = { vm.attachCardToLastAssistant(it) }
+        // 文档事件桥 → 打开文档查看器
+        launch {
+            QuroDocLauncher.file.collect { f ->
+                if (f != null) {
+                    if (!QuroDocOpener.open(appCtx, f)) {
+                        Toast.makeText(appCtx, qstr(R.string.qk_00020), Toast.LENGTH_LONG).show()
+                    }
+                    QuroDocLauncher.consume()
+                }
+            }
+        }
+    }
+
+    // 媒体启动事件桥：把工具 / 卡片发出的「打开视频 / 音乐播放器」请求落到应用内渲染屏
+    LaunchedEffect(Unit) {
+        launch {
+            QuroVideoLauncher.event.collect { req ->
+                if (req != null) {
+                    videoPlayerUri = req.uri
+                    videoPlayerTitle = req.title
+                    showVideoPlayer = true
+                    QuroVideoLauncher.consume()
+                }
+            }
+        }
+        launch {
+            QuroMusicLauncher.open.collect { open ->
+                if (open) {
+                    showMusicPlayer = true
+                    QuroMusicLauncher.consume()
+                }
+            }
+        }
+    }
+
+    // ═══ 卡片补丁宿主桥：card_patch 工具 → 真正持有卡片的 vm ═══
+    // 工具是全局单例、拿不到 ViewModel（见 CardPatchBridge 的 KDoc），
+    // 所以在这里注册一个处理器，让工具能同步拿到回执（成功条数 / 失败原因 + 合法路径）。
+    // 装在 UI 控制事件桥旁边：两处都是「AI 意图 → 界面执行」的入口，放一起便于对照。
+    DisposableEffect(vm) {
+        CardPatchBridge.install(
+            host = CardPatchBridge.Host { cardId, patchJson ->
+                val spec = runCatching { org.json.JSONObject(patchJson) }.getOrNull()
+                if (spec == null) {
+                    CardPatch.Result(
+                        card = null, changed = false, applied = emptyList(),
+                        errors = listOf("补丁不是合法 JSON")
+                    )
+                } else {
+                    vm.patchCard(cardId, spec)
+                }
+            },
+            describer = { cardId -> vm.describeCard(cardId) },
+        )
+        // 🔴 必须注销：切会话后 vm 会换新，旧处理器若留着会让工具把补丁打进
+        //   上一条会话的卡片 —— 表现为「补丁偶尔改错地方」，且完全无法复现。
+        onDispose { CardPatchBridge.install(null, null) }
+    }
+
+    // ═══ UI 控制事件桥：AI 调用 ui_control 工具时，通过 UiNavigationBus 通知 ChatScreen 执行界面操作 ═══
+    LaunchedEffect(Unit) {
+        // 修复：原 navEvent 是单槽 @Volatile var，连发两个事件时后者覆盖前者 → 事件丢失。
+        // 现在 UiNavigationBus 底层是 Channel(BUFFERED)，直接 collect eventFlow 按序消费，不丢事件。
+        UiNavigationBus.eventFlow.collect { event ->
+            when (event) {
+                    // ─── 打开界面 ───
+                    is UiNavigationEvent.OpenScreen -> {
+                        when (event.target) {
+                            "editor" -> showEditor = true
+                            "terminal" -> showTerminal = true
+                            "toolbox" -> showToolbox = true
+                            "knowledge" -> showKnowledge = true
+                            "cms" -> showCms = true
+                            "aci" -> showAci = true
+                            "about" -> showAbout = true
+                            "appearance" -> showAppearance = true
+                            "soul" -> showSoulSheet = true
+                            "memory" -> showMemoryDialog = true
+                            "permission" -> showPermission = true
+                            "model_config" -> showModelConfig = true
+                            "voice" -> showVoice = true
+                            "settings" -> sheet = SheetType.Settings
+                            "tool_center" -> showToolCenter = true
+                            // v1057 暴露给 AI：工具中心的子能力可直接打开，无需先手动进工具中心
+                            "vispro" -> { toolCenterInitial = "vispro"; showToolCenter = true }
+                            "node_editor" -> { toolCenterInitial = "flow"; showToolCenter = true }
+                            "miniapp" -> { toolCenterInitial = "miniapp"; showToolCenter = true }
+                            "kaleidobox" -> { toolCenterInitial = "kaleidobox"; showToolCenter = true }
+                            "workbench" -> { toolCenterInitial = "workbench"; showToolCenter = true }
+                            else -> { /* 忽略未知界面 */ }
+                        }
+                    }
+
+                    // ─── 切换开关 ───
+                    is UiNavigationEvent.ToggleSwitch -> {
+                        when (event.target) {
+                            "deepthink" -> vm.setThinking(!vm.thinking.value)
+                            "memory" -> vm.setAutoSaveMemory(!vm.autoSaveMemory.value)
+                            else -> { /* 忽略未知开关 */ }
+                        }
+                    }
+
+                    // ─── 打开弹层 ───
+                    is UiNavigationEvent.OpenSheet -> {
+                        when (event.target) {
+                            "model" -> sheet = SheetType.Model
+                            "persona" -> sheet = SheetType.Persona
+                            "settings" -> sheet = SheetType.Settings
+                            "upload" -> sheet = SheetType.Upload
+                            "voice" -> sheet = SheetType.Voice
+                            else -> { /* 忽略未知弹层 */ }
+                        }
+                    }
+
+                    // ─── 对话管理 ───
+                    is UiNavigationEvent.ChatAction -> {
+                        when (event.action) {
+                            "new" -> vm.newConversation()
+                            "clear" -> vm.clear()
+                            else -> { /* 忽略未知对话操作 */ }
+                        }
+                    }
+
+                    // ─── 渲染卡片 ───
+                    is UiNavigationEvent.RenderCard -> {
+                        val card = com.ai.assistance.quro.core.cards.QuroChatCard.InfoCard(
+                            id = "ui_card_${System.currentTimeMillis()}",
+                            title = event.title,
+                            body = event.content,
+                            align = "start"
+                        )
+                        vm.attachCardToLastAssistant(card)
+                    }
+
+                    // ─── 渲染组件 ───
+                    is UiNavigationEvent.RenderWidget -> {
+                        // 修复：button/toggle/else→InfoCard 直接用 event.id（工具中心传 id=""）→ 空 id 卡片，
+                        // 卡片列表按 id 去重/做 key 时会冲突。统一 ifBlank 兜底（与 mermaid/miniapp 对齐）。
+                        val safeId = event.id.ifBlank { "${event.type}_${System.nanoTime()}" }
+                        val card = when (event.type) {
+                            "button" -> com.ai.assistance.quro.core.cards.QuroChatCard.ButtonCard(
+                                id = safeId,
+                                title = event.label,
+                                label = event.label,
+                                command = event.value,
+                                variant = "filled"
+                            )
+                            "toggle" -> com.ai.assistance.quro.core.cards.QuroChatCard.ToggleCard(
+                                id = safeId,
+                                title = event.label,
+                                label = event.label,
+                                checked = event.value.toBooleanStrictOrNull() ?: false,
+                                command = ""
+                            )
+                            // v1070 修复：AI 经 ui_control(action:"widget", type:"mermaid") 渲染可视化编程，
+                            // 之前走 else→InfoCard 被当纯文本，图出不来。这里直接构造 MermaidCard，
+                            // 复用与 ui_widget 完全一致的 onCard→气泡→MermaidCardView 离线渲染通路。
+                            "mermaid" -> com.ai.assistance.quro.core.cards.QuroChatCard.MermaidCard(
+                                id = event.id.ifBlank { "mermaid_${System.currentTimeMillis()}" },
+                                title = event.label.ifBlank { qstr(R.string.qk_00021) },
+                                source = event.value,
+                                theme = ""
+                            )
+                            // v1057 修复：AI 经 ui_control(action:"widget", type:"miniapp", value:"<html>")
+                            // 渲染 Web 应用，之前走 else→InfoCard 被当纯文本（HTML 整段显示）。这里直接构造
+                            // MiniAppCard，复用与 ui_widget 完全一致的 onCard→气泡→MiniAppCardView 运行时通路。
+                            "miniapp" -> com.ai.assistance.quro.core.cards.QuroChatCard.MiniAppCard(
+                                id = event.id.ifBlank { "mini_${System.currentTimeMillis()}" },
+                                title = event.label.ifBlank { qstr(R.string.qk_00022) },
+                                html = event.value,
+                                config = emptyMap(),
+                            )
+                            else -> com.ai.assistance.quro.core.cards.QuroChatCard.InfoCard(
+                                id = safeId,
+                                title = event.label,
+                                body = event.value,
+                                align = "start"
+                            )
+                        }
+                        vm.attachCardToLastAssistant(card)
+                    }
+
+                    // ─── 可视化交互（动态 UI 深链）───
+                    is UiNavigationEvent.VisualPopup -> {
+                        visualPopupTitle = event.title
+                        visualPopupContent = event.content
+                        showVisualPopup = true
+                    }
+                    is UiNavigationEvent.VisualAsk -> {
+                        visualAskPrompt = event.prompt
+                        visualAskOptions = event.options
+                        showVisualAsk = true
+                    }
+
+                    // zxwidget 动态交互界面：**直接渲染在对话框里**，不弹窗。
+                    // 交互不回发固定文案，而是把「用户在界面上做了什么」整理成
+                    // 结构化描述喂给模型。
+                    is UiNavigationEvent.ZxWebCard -> {
+                        if (event.component.isBlank() || event.dsl.isBlank()) {
+                            QuroDiag.log("ZXWIDGET", "ZxWebCard 事件缺 component/dsl，已忽略")
+                        } else {
+                            // 动态 UI 动作来源：没有工具在等，交互走 vm.send；
+                            // 由 vm 造一条「只给用户看」的消息落进消息流，同样内联渲染。
+                            vm.showInlineZxWidget(
+                                component = event.component,
+                                dsl = event.dsl,
+                                title = event.title,
+                            )
+                        }
+                    }
+
+                    // ─── 查询状态 ───
+                    is UiNavigationEvent.QueryStatus -> {
+                        // TODO: 实现状态查询逻辑
+                    }
+
+                    // ─── 更新组件属性 ───
+                    is UiNavigationEvent.UpdateComponent -> {
+                        // 旧通路（ui_control action:"update"）：props 是扁平的 key→value 串。
+                        // 🔴 这里曾长期是 TODO —— 模型调 update 工具时**静默无效**，
+                        //   表现为「工具返回成功、卡片却毫无变化」，没有任何报错可查。
+                        // 现在转成 merge 补丁走同一条真通路：旧调用方式不必改，
+                        // 新代码直接用 card_patch（支持数组下标 / inc / append）。
+                        // 代价是 props 的值都是字符串，数值字段靠 merge 的整体覆盖
+                        // —— 这是旧格式本身的信息损失，不在补丁层弥补（会掩盖问题）。
+                        val jo = org.json.JSONObject().apply {
+                            put("patches", org.json.JSONArray().apply {
+                                event.props.forEach { (k, v) ->
+                                    put(org.json.JSONObject().put("op", "merge").put("value",
+                                        org.json.JSONObject().put(k, v)))
+                                }
+                            })
+                        }
+                        val r = vm.patchCard(event.component, jo)
+                        if (!r.ok) QuroDiag.log("CARD", "UpdateComponent 失败：${r.errors.joinToString("; ")}")
+                    }
+
+                    // ─── 滚动 ───
+                    is UiNavigationEvent.ScrollTo -> {
+                        // TODO: 实现滚动逻辑
+                    }
+
+                    // ─── 聚焦 ───
+                    is UiNavigationEvent.FocusComponent -> {
+                        // TODO: 实现聚焦逻辑
+                    }
+
+                    // ─── 隐藏 ───
+                    is UiNavigationEvent.HideComponent -> {
+                        // TODO: 实现隐藏逻辑
+                    }
+
+                    // ─── 显示 ───
+                    is UiNavigationEvent.ShowComponent -> {
+                        // TODO: 实现显示逻辑
+                    }
+
+                    // ─── 页面内导航 ───
+                    is UiNavigationEvent.NavigateTo -> {
+                        // TODO: 实现页面内导航逻辑
+                    }
+
+                    // ─── 权限控制 ───
+                    is UiNavigationEvent.PermissionControl -> {
+                        // TODO: 实现权限控制逻辑
+                    }
+
+                    // ─── 手势操作（点击/长按/双击/滑动/缩放/旋转）───
+                    is UiNavigationEvent.ClickElement,
+                    is UiNavigationEvent.LongPress,
+                    is UiNavigationEvent.DoubleTap,
+                    is UiNavigationEvent.Swipe,
+                    is UiNavigationEvent.Pinch,
+                    is UiNavigationEvent.Rotate -> {
+                        // TODO: 实现手势操作逻辑
+                    }
+
+                    // ─── 文本操作（输入/复制/粘贴/剪切/全选/撤销/重做）───
+                    is UiNavigationEvent.InputText,
+                    is UiNavigationEvent.Copy,
+                    is UiNavigationEvent.Paste,
+                    is UiNavigationEvent.Cut,
+                    is UiNavigationEvent.SelectAll,
+                    is UiNavigationEvent.Undo,
+                    is UiNavigationEvent.Redo -> {
+                        // TODO: 实现文本操作逻辑
+                    }
+
+                    // ─── 系统操作（返回/首页/最近任务/分屏/截屏等）───
+                    is UiNavigationEvent.Back,
+                    is UiNavigationEvent.Home,
+                    is UiNavigationEvent.Recent,
+                    is UiNavigationEvent.SplitScreen,
+                    is UiNavigationEvent.Screenshot,
+                    is UiNavigationEvent.Share,
+                    is UiNavigationEvent.Search,
+                    is UiNavigationEvent.Refresh,
+                    is UiNavigationEvent.StopLoading,
+                    is UiNavigationEvent.Bookmark,
+                    is UiNavigationEvent.Fullscreen,
+                    is UiNavigationEvent.Minimize,
+                    is UiNavigationEvent.Maximize,
+                    is UiNavigationEvent.Close,
+                    is UiNavigationEvent.MinimizeApp,
+                    is UiNavigationEvent.LockScreen,
+                    is UiNavigationEvent.WakeScreen,
+                    is UiNavigationEvent.OpenNotification,
+                    is UiNavigationEvent.OpenQuickSettings -> {
+                        // TODO: 实现系统操作逻辑
+                    }
+
+                    // ─── 媒体控制 ───
+                    is UiNavigationEvent.TakePhoto,
+                    is UiNavigationEvent.StartRecording,
+                    is UiNavigationEvent.StopRecording,
+                    is UiNavigationEvent.PlayMedia,
+                    is UiNavigationEvent.PauseMedia,
+                    is UiNavigationEvent.StopMedia,
+                    is UiNavigationEvent.NextTrack,
+                    is UiNavigationEvent.PrevTrack -> {
+                        // TODO: 实现媒体控制逻辑
+                    }
+
+                    // ─── 设备控制 ───
+                    is UiNavigationEvent.VolumeUp,
+                    is UiNavigationEvent.VolumeDown,
+                    is UiNavigationEvent.Mute,
+                    is UiNavigationEvent.Unmute,
+                    is UiNavigationEvent.BrightnessUp,
+                    is UiNavigationEvent.BrightnessDown,
+                    is UiNavigationEvent.AutoBrightness,
+                    is UiNavigationEvent.WifiOn,
+                    is UiNavigationEvent.WifiOff,
+                    is UiNavigationEvent.BluetoothOn,
+                    is UiNavigationEvent.BluetoothOff,
+                    is UiNavigationEvent.AirplaneModeOn,
+                    is UiNavigationEvent.AirplaneModeOff,
+                    is UiNavigationEvent.DoNotDisturbOn,
+                    is UiNavigationEvent.DoNotDisturbOff,
+                    is UiNavigationEvent.FlashlightOn,
+                    is UiNavigationEvent.FlashlightOff,
+                    is UiNavigationEvent.LocationOn,
+                    is UiNavigationEvent.LocationOff,
+                    is UiNavigationEvent.NfcOn,
+                    is UiNavigationEvent.NfcOff,
+                    is UiNavigationEvent.AutoRotateOn,
+                    is UiNavigationEvent.AutoRotateOff,
+                    is UiNavigationEvent.Portrait,
+                    is UiNavigationEvent.Landscape -> {
+                        // TODO: 实现设备控制逻辑
+                    }
+
+                    // ─── 应用管理 ───
+                    is UiNavigationEvent.OpenApp,
+                    is UiNavigationEvent.CloseApp,
+                    is UiNavigationEvent.InstallApp,
+                    is UiNavigationEvent.UninstallApp,
+                    is UiNavigationEvent.FreezeApp,
+                    is UiNavigationEvent.UnfreezeApp -> {
+                        // TODO: 实现应用管理逻辑
+                    }
+
+                    // ─── 设置管理 ───
+                    is UiNavigationEvent.OpenSettings,
+                    is UiNavigationEvent.OpenAccessibilitySettings,
+                    is UiNavigationEvent.OpenDeveloperOptionsSettings,
+                    is UiNavigationEvent.OpenAboutPhoneSettings,
+                    is UiNavigationEvent.OpenBatterySettings,
+                    is UiNavigationEvent.OpenStorageSettings,
+                    is UiNavigationEvent.OpenNetworkSettings,
+                    is UiNavigationEvent.OpenDisplaySettings,
+                    is UiNavigationEvent.OpenSoundSettings,
+                    is UiNavigationEvent.OpenSecuritySettings,
+                    is UiNavigationEvent.OpenPrivacySettings,
+                    is UiNavigationEvent.OpenAccountsSettings,
+                    is UiNavigationEvent.OpenDateTimeSettings,
+                    is UiNavigationEvent.OpenLanguageSettings -> {
+                        // TODO: 实现设置管理逻辑
+                    }
+                }
+            }
+    }
+
+    // 应用上下文：提前声明，供 handleUiAction / handleCardCommand 等局部函数捕获
+    val ctx = LocalContext.current
+    quroDiagCtx = ctx
+
+    // 系统级悬浮窗（TYPE_APPLICATION_OVERLAY）权限：已授权时化小窗走 QuroMiniWindowManager，
+    // 即使 App 退后台也浮于其他 App 之上；未授权降级为应用内 Compose 浮层。提前声明供下方条件判断使用。
+    val useSystemOverlay = remember { QuroMiniWindowManager.hasOverlayPermission(ctx) }
+    // 当前选择的工作区路径（从持久化存储初始化）
+    var currentWorkspace by remember { mutableStateOf(com.ai.assistance.quro.core.tools.WorkspacePreferences.getCurrentWorkspace(ctx)) }
+    // 当前选择的 ACI 应用名称（从持久化存储初始化，用于上下文标识栏）
+    var currentAciName by remember { mutableStateOf(com.ai.assistance.quro.core.aidlaci.AciAppPreferences.getDefaultAppName(ctx)) }
+    // 已启用的技能数量（用于上下文标识栏）
+    var enabledSkillsCount by remember { mutableStateOf(
+        com.ai.assistance.quro.core.skill.QuroSkillStore.load(ctx).count { it.enabled }
+    ) }
+
+    // ───────── 结构化动作协议（core/cards/CardAction） ─────────
+    //
+    // 老链路是一串 `startsWith` 裸串：渲染层拼 `"ai:${x}"`、这里再拆字符串，
+    // 两边各写一套方言，改个动词要动七八处。协议是**加在前面**的，
+    // 下面那条老 `when` 一个字都没删 —— 协议没覆盖的族照样从它走，所以接协议零行为变化。
+
+    /** 写剪贴板 + 已复制提示。协议与老链路共用一份，别两边各写一遍。 */
+    fun copyToClipboard(text: String) {
+        if (text.isEmpty()) return
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("Zorv", text))
+        Toast.makeText(ctx, qstr(R.string.qk_00023), Toast.LENGTH_SHORT).show()
+    }
+
+    /** 结构化动作分支。返回 true = 已处理；false = 交回老链路。 */
+    fun handleCardAction(action: CardAction.Action): Boolean {
+        return when (action.kind) {
+            CardAction.Kind.REPLY, CardAction.Kind.AI -> {
+                val t = action.payload()
+                if (t.isNotEmpty()) {
+                    vm.send(t, emptyList(), cfg)
+                    true
+                } else {
+                    false
+                }
+            }
+            CardAction.Kind.UI, CardAction.Kind.SCREEN -> {
+                QuroUiActionBridge.dispatch?.invoke(action.payload())
+                true
+            }
+            CardAction.Kind.INSTALL -> {
+                QuroLinuxEnv.setup(ctx)
+                true
+            }
+            CardAction.Kind.RUN -> {
+                showTerminal = true
+                true
+            }
+            CardAction.Kind.OPEN -> {
+                QuroBrowserBridge.open(action.payload())
+                true
+            }
+            CardAction.Kind.COPY -> {
+                copyToClipboard(action.payload())
+                true
+            }
+            // 页面内导航：交 UiNavigationBus（ChatScreen 自己消费 NavigateTo）
+            CardAction.Kind.NAVIGATE -> {
+                val t = action.payload()
+                if (t.isNotEmpty()) {
+                    UiNavigationBus.navEvent = UiNavigationEvent.NavigateTo(t)
+                    true
+                } else {
+                    false
+                }
+            }
+            CardAction.Kind.TOAST -> {
+                val t = action.payload()
+                if (t.isNotEmpty()) {
+                    Toast.makeText(ctx, t, Toast.LENGTH_SHORT).show()
+                    true
+                } else {
+                    false
+                }
+            }
+            // EMIT 只走进程内总线；走到这里说明没人订阅（AI 发了个空响），
+            // 返回 false 让老链路兜底时自然不做事，别抛、别刷屏。
+            CardAction.Kind.EMIT -> false
+            CardAction.Kind.UNKNOWN -> false
+        }
+    }
+
+    /** 卡片动作命令分发：ui_* 走 UI 桥；linux:install 触发沙箱安装；run:<cmd> 喂给终端。 */
+    // 🔴 [send] 定义在本函数**之后**，Kotlin 局部函数不能前向引用。
+    // 用一个引用持有者把两者接起来：组件点击（ui_reply:）必须走真正的 send()，
+    // 而不是退化成 vm.send() —— 只有 send() 才会带上附件/上下文标记，
+    // 并且在集群模式下把这次操作交给集群（用户「参与集群」的前提）。
+    var sendRef: ((String) -> Unit)? = null
+
+    fun handleCardCommand(cmd: String) {
+        val action = CardAction.parse(cmd)
+        if (CardActionRouter.dispatch(action) { a -> handleCardAction(a) }) return
+        // 老链路兜底（一字未改）
+        when {
+            cmd.startsWith("reply:") -> {
+                val t = cmd.removePrefix("reply:").trim()
+                if (t.isNotEmpty()) vm.send(t, emptyList(), cfg)
+            }
+            cmd.startsWith("ui_") -> QuroUiActionBridge.dispatch?.invoke(cmd)
+            cmd == "linux:install" -> QuroLinuxEnv.setup(ctx)
+            cmd.startsWith("run:") -> {
+                // 打开移植后的重终端；命令由用户在终端内输入，不再预填。
+                showTerminal = true
+            }
+            // ── v221 富事件命令：open / copy / ai / screen ──
+            cmd.startsWith("open:") -> QuroBrowserBridge.open(cmd.removePrefix("open:").trim())
+            cmd.startsWith("copy:") -> {
+                copyToClipboard(cmd.removePrefix("copy:").trim())
+            }
+            cmd.startsWith("ai:") -> {
+                val t = cmd.removePrefix("ai:").trim()
+                if (t.isNotEmpty()) vm.send(t, emptyList(), cfg)
+            }
+            cmd.startsWith("screen:") -> QuroUiActionBridge.dispatch?.invoke(cmd.removePrefix("screen:").trim())
+            // 🔴🔴 动态 UI / 互动游戏组件的交互回发（点棋盘格、选选项、点按钮…）。
+            //   这一条曾经**根本不存在**：组件点一下，onCommand 收到
+            //   `【ttt_move】\nrow: 0...` 这样的裸串，老 when 一个分支都不匹配 →
+            //   静默丢弃 → 用户报「组件点不了」，AI 也永远收不到操作。
+            //   现在显式成一条真·用户消息（走 send()，集群模式下自动交给集群参与）。
+            cmd.startsWith(UI_REPLY_PREFIX) -> {
+                val t = cmd.removePrefix(UI_REPLY_PREFIX).trim()
+                if (t.isNotEmpty()) {
+                    val f = sendRef
+                    if (f != null) f(t)
+                    else vm.send(t, emptyList(), cfg)
+                }
+            }
+            // 打开全屏音乐播放器（工具 / 卡片触发）
+            cmd == "ui_open_music_player" -> showMusicPlayer = true
+            // 点击 AI 头像 → 编辑当前激活灵魂卡（v232 修复：此前 __edit_soul_card__ 无对应分支，点击无反应进不去）
+            cmd == "__edit_soul_card__" -> {
+                val p = personaVm.activePersona.value
+                if (p != null) {
+                    personaToEdit = p
+                    personaEditIsNew = false
+                } else {
+                    showSoulSheet = true
+                }
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            QuroUiActionBridge.dispatch = null
+            QuroUiActionBridge.onCard = null
+        }
+    }
+
+    val drawerState = rememberDrawerState(initialValue = androidx.compose.material3.DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
+
+    val fontScale = fontTiers[fontTier]
+    fun scaled(base: Int) = (base * fontScale).sp
+
+    // 文件选择器（支持多选：真实唤起系统选择器，落盘到应用私有目录）
+    val pickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
+        for (uri in uris) {
+            val mime = ctx.contentResolver.getType(uri) ?: "*/*"
+            QuroAttachmentKit.fromUri(ctx, uri, mime)?.let { a -> attachments.add(a) }
+        }
+    }
+
+    // 视频通话：先申请相机/麦克风（Android 14+ 前台服务类型 camera|microphone 要求运行时权限已授予），
+    // 再检查悬浮窗权限（通话界面是 WindowManager 悬浮窗），最后拉起 QuroVideoCallService。
+    val videoCallLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        val cam = result[android.Manifest.permission.CAMERA] == true
+        val mic = result[android.Manifest.permission.RECORD_AUDIO] == true
+        if (cam && mic) startVideoCall(ctx)
+        else Toast.makeText(ctx, qstr(R.string.qk_03901), Toast.LENGTH_LONG).show()
+    }
+    val openVideoCall: () -> Unit = {
+        val cam = ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        val mic = ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (cam && mic) startVideoCall(ctx)
+        else videoCallLauncher.launch(
+            arrayOf(android.Manifest.permission.CAMERA, android.Manifest.permission.RECORD_AUDIO)
+        )
+    }
+
+    // 屏幕捕获（MediaProjection 媒体投影 / 录屏投屏）系统授权 launcher：
+    // 长按「看懂屏幕」开关 → 弹系统授权 dialog → 用户允许 → 授权结果交给 QuroMediaProjectionService
+    // （Android 14+ 红线：getMediaProjection() 必须在 mediaProjection 前台服务运行期调用，否则抛
+    // SecurityException；故不在 Activity 直接调，转交前台服务内部合规调用）。
+    // 之后 captureOnce 优先走像素帧抓取，AI 真正"看到"屏幕画面（视频/游戏/WebView/复杂 UI）。
+    val mpLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
+            // 授权成功：把 resultCode + data 交给 mediaProjection 前台服务，由服务内部调 getMediaProjection 并注入。
+            val svcIntent = Intent(ctx, com.ai.assistance.quro.service.QuroMediaProjectionService::class.java).apply {
+                putExtra(com.ai.assistance.quro.service.QuroMediaProjectionService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(com.ai.assistance.quro.service.QuroMediaProjectionService.EXTRA_DATA, result.data)
+            }
+            ctx.startForegroundService(svcIntent)
+        } else {
+            Toast.makeText(ctx, qstr(R.string.qk_00024), Toast.LENGTH_SHORT).show()
+        }
+    }
+    fun requestMediaProjection() {
+        val intent = com.ai.assistance.quro.core.vision.ScreenCaptureController.createConsentIntent(ctx)
+        mpLauncher.launch(intent)
+    }
+    // ══ #666：把发起逻辑注册进全局闸门，供 QuroVisionLoop / AI 工具 enable_screen_capture 在任意位置触发 ══
+    com.ai.assistance.quro.core.vision.MediaProjectionRequester.request = { requestMediaProjection() }
+
+    fun send(text: String) {
+        val t = text.trim()
+        if (t.isEmpty() && attachments.isEmpty()) return
+        // 对话框做 GitHub 搜索引擎：/gh <关键词> 直接在 GitHub 屏搜索（不发给 AI）
+        if (t.startsWith("/gh", ignoreCase = true)) {
+            githubPrefill = t.removePrefix("/gh").trim()
+            showGitHub = true
+            return
+        }
+        // 构建上下文信息（作为隐藏消息注入，用户不可见）
+        val ctxParts = mutableListOf<String>()
+        val wsPath = currentWorkspace
+        if (wsPath != null) {
+            val wsName = wsPath.substringAfterLast("/").ifBlank { qstr(R.string.qk_00025) }
+            ctxParts.add(qstr(R.string.qk_00026, (wsName).toString(), (wsPath).toString()))
+        }
+        val aciName = currentAciName
+        if (aciName != null) {
+            val pkg = com.ai.assistance.quro.core.aidlaci.AciAppPreferences.getDefaultPackage(ctx)
+            if (pkg != null) {
+                ctxParts.add(qstr(R.string.qk_00027, (aciName).toString(), (pkg).toString()))
+            }
+        }
+        if (pendingVisualPopup.value) {
+            ctxParts.add(qstr(R.string.qk_00028))
+            pendingVisualPopup.value = false
+        }
+        if (pendingVisualQuestion.value) {
+            ctxParts.add(qstr(R.string.qk_00029))
+            pendingVisualQuestion.value = false
+        }
+        if (pendingSelfCard.value) {
+            ctxParts.add(qstr(R.string.qk_00030))
+            pendingSelfCard.value = false
+        }
+        if (pendingDynamicUi.value) {
+            ctxParts.add(qstr(R.string.qk_00031))
+            pendingDynamicUi.value = false
+        }
+        if (pendingAipDoc.value) {
+            ctxParts.add(qstr(R.string.qk_00032))
+            pendingAipDoc.value = false
+        }
+        if (pendingZxWebCard.value) {
+            ctxParts.add(qstr(R.string.qk_04069))
+            pendingZxWebCard.value = false
+        }
+        if (enabledSkillsCount > 0) {
+            val enabledSkills = com.ai.assistance.quro.core.skill.QuroSkillStore.load(ctx)
+                .filter { it.enabled }
+                .map { it.name }
+            ctxParts.add("已启用技能(${enabledSkillsCount}个): ${enabledSkills.joinToString("、")}")
+        }
+        val contextStr = ctxParts.joinToString("\n").ifBlank { null }
+
+        vm.send(t, attachments.toList(), cfg, contextMessage = contextStr)
+        attachments.clear()
+    }
+
+    // 🔴 回填 send 引用（供 [UI_REPLY_PREFIX] 分支使用）。
+    // 必须在 send 定义之后赋值：Kotlin 局部函数不能前向引用，
+    // 而 send 又必须定义在 handleCardCommand 之后（它用到了后面才声明的变量）。
+    // 组件点击 → ui_reply: → handleCardCommand → 这里 → send()，
+    // 这样动态 UI / 互动游戏的交互才会真正变成一条用户消息（集群模式下自动交给集群）。
+    sendRef = { t -> send(t) }
+
+    // Web UI 常驻服务：用户开关开着时，回到前台补一次拉起。
+    // START_STICKY 只覆盖「进程被杀后重建」，部分 ROM 会连前台服务一起清掉，
+    // 回到前台补一次是最省事又最可靠的续命点（本人不发通知、不占资源）。
+    LaunchedEffect(Unit) { QuroWebUiService.ensureIfEnabled(ctx) }
+
+    @Composable
+    fun ChatOverlays() {
+        // 模型选择 = 当前配置 + 已保存预设 + 从 API 拉取到的真实可用模型（彻底摒弃硬编码假示例）
+        val modelList by modelVm.modelList.collectAsState()
+        val isFetchingModels by modelVm.isFetchingModels.collectAsState()
+        val modelFetchError = (modelList as? QuroModelListResult.Error)?.message
+
+        val currentModelGroup = remember(cfg) {
+            listOf(ModelGroup(qstr(R.string.qk_00034), listOf(
+                ChatModel(
+                    name = cfg.model.ifBlank { qstr(R.string.qk_00015) },
+                    id = cfg.model,
+                    desc = "提供商: ${cfg.provider} · ${cfg.baseUrl.takeIf { it.isNotBlank() } ?: "未设置BaseURL"}",
+                    provider = cfg.provider.ifBlank { qstr(R.string.qk_00036) },
+                    mark = cfg.provider.firstOrNull()?.uppercase() ?: "Q"
+                )
+            )))
+        }
+
+        // 已保存预设：从持久化仓库加载，每个预设是一个可快速切换的模型选项
+        val profileRepo = remember { QuroSavedProfileRepository(ctx.applicationContext) }
+        var savedProfiles by remember { mutableStateOf(profileRepo.loadAll()) }
+        val savedProfileGroup: ModelGroup? = remember(savedProfiles) {
+            if (savedProfiles.isEmpty()) null
+            else ModelGroup(qstr(R.string.qk_00037), savedProfiles.map { p ->
+                ChatModel(
+                    name = p.name,
+                    id = "__profile__${p.id}",  // 特殊 id 前缀标识这是预设
+                    desc = "${p.model} @ ${p.provider} · ${p.baseUrl}",
+                    provider = p.customProviderName.ifBlank { p.provider },
+                    mark = p.name.firstOrNull()?.uppercase() ?: "S"
+                )
+            })
+        }
+
+        // 用户自建「其他供应商」：在「模型配置」里添加，这里作为独立分组供选择
+        val customProviderRepo = remember { QuroCustomProviderRepository(ctx.applicationContext) }
+        var customProviders by remember { mutableStateOf(customProviderRepo.loadAll()) }
+        val customProviderGroup: ModelGroup? = remember(customProviders) {
+            if (customProviders.isEmpty()) null
+            else ModelGroup(qstr(R.string.qk_00038), customProviders.map { p ->
+                ChatModel(
+                    name = p.name.ifBlank { qstr(R.string.qk_00039) },
+                    id = "__custom__${p.id}",
+                    desc = "${p.defaultModel.ifBlank { "（请在模型配置填写默认模型）" }} @ ${p.baseUrl.ifBlank { "未设置地址" }}",
+                    provider = p.name.ifBlank { qstr(R.string.qk_00040) },
+                    mark = p.name.firstOrNull()?.uppercase() ?: "C"
+                )
+            })
+        }
+
+        // 本地离线模型：MNN（上传 .mnn 文件）/ llama.cpp（文件夹扫描 .gguf）
+        val localModelRepo = remember { QuroLocalModelRepository(ctx.applicationContext) }
+        var localModels by remember { mutableStateOf(localModelRepo.loadAll()) }
+        val localModelGroup: ModelGroup? = remember(localModels) {
+            if (localModels.isEmpty()) null
+            else ModelGroup(qstr(R.string.qk_00041), localModels.map { m ->
+                val typeLabel = if (m.type == QuroLocalModelType.LLAMA_CPP) "llama.cpp" else "MNN"
+                ChatModel(
+                    name = m.name.ifBlank { typeLabel },
+                    id = "__local__${m.id}",
+                    desc = "$typeLabel 本地推理 · ${m.path.ifBlank { "未设置路径" }}${if (m.modelNames.isNotEmpty()) " · ${m.modelNames.first()}" else ""}",
+                    provider = m.type.name,
+                    mark = "L"
+                )
+            })
+        }
+
+        // 打开模型选择时，刷新所有持久化分组
+        LaunchedEffect(sheet) {
+            if (sheet == SheetType.Model) {
+                savedProfiles = profileRepo.loadAll()
+                customProviders = customProviderRepo.loadAll()
+                localModels = localModelRepo.loadAll()
+                // v396：改为手动拉取——进入模型面板只加载本地缓存，不自动联网；
+                // 用户点「从 API 拉取可用模型」按钮才请求，结果会持久化缓存。
+                modelVm.loadCachedModels()
+            }
+        }
+
+        // 将拉取结果转换为可选模型分组
+        val fetchedGroup: ModelGroup? = when (val ml = modelList) {
+            is QuroModelListResult.Success -> ModelGroup(
+                stringResource(R.string.qk_00043),
+                ml.models.map { info ->
+                    ChatModel(name = info.id, id = info.id, desc = qstr(R.string.qk_00044, (cfg.baseUrl).toString()), provider = cfg.provider.ifBlank { qstr(R.string.qk_00036) }, mark = info.id.firstOrNull()?.uppercase() ?: "M")
+                }
+            )
+            else -> null
+        }
+
+        val allModelGroups = remember(currentModelGroup, savedProfileGroup, fetchedGroup, customProviderGroup, localModelGroup) {
+            buildList {
+                addAll(currentModelGroup)
+                savedProfileGroup?.let { add(it) }
+                customProviderGroup?.let { add(it) }
+                localModelGroup?.let { add(it) }
+                fetchedGroup?.let { add(it) }
+            }
+        }
+
+        // 任意「设置子页」浮层是否开着：用于禁用设置 sheet 的返回回调，保证逐级返回
+        val settingsChildOpen = showModelConfig || showToolbox || showVoice || showAbout || showAppearance ||
+            showPermission || showCms || showPlugins || showKnowledge || showTerminal || showSchedule || showBots ||
+            showTts || showStt || showVoiceService || showSystemStatus || showFeatureModelConfig || showAci ||
+            showToolCenter || showUsbDebug || showDefaultApp
+        SheetOverlay(
+            sheet = sheet, lastSheet = lastSheet,
+            onDismiss = { sheet = null },
+            backEnabled = sheet != null && !settingsChildOpen,
+            scaled = { scaled(it) },
+            modelGroups = allModelGroups,
+            selectedModel = selectedModel,
+            onSelectModel = { m ->
+                when {
+                    // 已保存预设 → 应用整套预设配置
+                    m.id.startsWith("__profile__") -> {
+                        val profileId = m.id.removePrefix("__profile__")
+                        val profile = savedProfiles.find { it.id == profileId }
+                        if (profile != null) {
+                            profileRepo.applyToConfig(profile, modelVm.repo)
+                            modelVm.reload()
+                        }
+                    }
+                    // 自建「其他供应商」→ 回填其 BaseURL / 默认模型，路由走 HTTP
+                    m.id.startsWith("__custom__") -> {
+                        val cpId = m.id.removePrefix("__custom__")
+                        val cp = customProviders.find { it.id == cpId }
+                        if (cp != null) {
+                            modelVm.update {
+                                copy(
+                                    provider = "OTHER",
+                                    customProviderName = cp.name,
+                                    baseUrl = cp.baseUrl,
+                                    model = cp.defaultModel,
+                                )
+                            }
+                        }
+                    }
+                    // 本地离线模型（MNN / llama.cpp）→ 走本地推理路由
+                    m.id.startsWith("__local__") -> {
+                        val lmId = m.id.removePrefix("__local__")
+                        val lm = localModels.find { it.id == lmId }
+                        if (lm != null) {
+                            modelVm.update {
+                                copy(
+                                    provider = lm.type.name,
+                                    localModelPath = lm.path,
+                                    model = lm.modelNames.firstOrNull() ?: "",
+                                )
+                            }
+                        }
+                    }
+                    // 普通模型（当前配置或 API 拉取）→ 仅切换 model 字段
+                    else -> {
+                        modelVm.update { copy(model = m.id) }
+                    }
+                }
+                sheet = null
+            },
+            onAddModel = { _, _ -> showModelConfig = true },  // 添加模型 → 独立模型配置屏（保留设置弹层，返回回设置）
+            isFetchingModels = isFetchingModels,
+            modelFetchError = modelFetchError,
+            onFetchModels = { modelVm.fetchModels() },
+            personaList = personaList,
+            selectedPersona = selectedPersona,
+            onSelectPersona = { p -> if (p.id.isNotBlank()) personaVm.setActive(p.id); sheet = null },
+            onAddPersona = { _, _ ->
+                sheet = null
+                personaToEdit = QuroPersona(
+                    id = java.util.UUID.randomUUID().toString(), name = "", description = "",
+                    avatarEmoji = "🤖", avatarType = "emoji",
+                    roleSetting = "", opening = "", chatSetting = "", voiceSetting = "",
+                    tags = emptyList(), incubation = "", createdAt = 0L, updatedAt = 0L,
+                )
+                personaEditIsNew = true
+            },  // 打开 Zorv AI 完整人格创建对话框
+            onPickFile = { mime -> pickLauncher.launch(mime) },
+            onExport = {
+                val path = exportConversation(ctx, uiMessages)
+                if (path != null) {
+                    Toast.makeText(ctx, qstr(R.string.qk_00045, (path).toString()), Toast.LENGTH_LONG).show()
+                    val share = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, qstr(R.string.qk_00046, (path).toString()))
+                    }
+                    runCatching { ctx.startActivity(Intent.createChooser(share, qstr(R.string.qk_00047))) }
+                } else {
+                    Toast.makeText(ctx, qstr(R.string.qk_00048), Toast.LENGTH_SHORT).show()
+                }
+            },
+            onClear = { vm.clear() },
+            onOpenBrowser = { browserUrl = it },
+            // 设置底部弹层：UI 取自 MoWenApp，功能接 Zorv AI 现有状态/页面
+            settingsDarkMode = darkMode,
+            onSettingsToggleDark = onToggleDark,
+            settingsSoundOn = soundOn,
+            onSettingsToggleSound = { vm.setSoundOn(!soundOn) },
+            settingsEnterSend = enterSend,
+            onSettingsToggleEnter = { vm.setEnterSend(!enterSend) },
+            settingsFontName = fontNames[fontTier],
+            onSettingsCycleFont = { vm.setFontTier((fontTier + 1) % 3) },
+            onOpenModelConfig = { showModelConfig = true; modelConfigFromSettings = true },
+            onOpenFeatureModelConfig = { showFeatureModelConfig = true },
+            onOpenPermission = { showPermission = true },
+            onOpenLspose = { showLspose = true },
+            onOpenUsbDebug = { showUsbDebug = true },
+            onOpenDefaultApp = { showDefaultApp = true },
+            onOpenCms = { showCms = true },
+            onOpenToolbox = { showToolbox = true },
+            onOpenKnowledge = { showKnowledge = true },
+            onOpenTerminal = { showTerminal = true },
+            onOpenPlugins = { showPlugins = true },
+            onOpenSkills = { showSkills = true },
+            onOpenBots = { showBots = true },
+            onOpenSchedule = { showSchedule = true },
+            onManagePersona = { sheet = null; showSoulSheet = true },
+            onOpenVoice = { showVoice = true },
+            onOpenTts = { showTts = true },
+            onOpenStt = { showStt = true },
+            onOpenOnlyOffice = { showOnlyOffice = true },
+            onOpenVoiceService = { sheet = null; showVoiceService = true },
+            onClearChat = { vm.clear() },
+            settingsVoiceBallEnabled = voiceBallEnabled,
+            onSettingsToggleVoiceBall = onToggleVoiceBall,
+            settingsAiReplyNotify = aiReplyNotify,
+            onSettingsToggleAiReplyNotify = { vm.setAiReplyNotify(!aiReplyNotify) },
+            onOpenAbout = { showAbout = true },
+            onOpenCleanup = { showCleanup = true },
+            onOpenFileManager = { showFileManager = true },
+            onOpenAci = { showAci = true },
+            onOpenMcp = { showMcp = true },
+            onOpenCluster = { showClusterSettings = true },
+            onOpenSystemStatus = { showSystemStatus = true },
+            onOpenComponentGallery = { showComponentGallery = true },
+            onOpenAppearance = { showAppearance = true },
+            vm = vm,
+            onSendText = { send(it) },
+            onOpenGitHub = { showGitHub = true },
+            onOpenModelHub = { showModelHub = true },
+        )
+
+        // 权限管理页：全屏覆盖层（从设置底部弹层入口进入，返回关页回对话）
+        if (showPermission) {
+            // 从设置进入的子屏：返回键只关闭本层，保留设置（showSettings 仍 true）
+            BackHandler { showPermission = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(Color(0xFFF2F2F7))) {
+                QuroPermissionScreen(onClose = { showPermission = false })
+            }
+        }
+
+        // LSPosed 模块页：全屏覆盖层（从设置底部弹层入口进入，返回关页回设置）
+        if (showLspose) {
+            BackHandler { showLspose = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                QuroLsposeScreen(onClose = { showLspose = false })
+            }
+        }
+
+        // USB / 无线调试 (ADB) 页：全屏覆盖层（从设置页入口进入，返回关页回设置）
+        if (showUsbDebug) {
+            BackHandler { showUsbDebug = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                QuroUsbDebugScreen(
+                    onClose = { showUsbDebug = false },
+                    // 「打开终端」真实跳转到终端页（此前是弹 Toast 的占位）
+                    onOpenTerminal = { showUsbDebug = false; showTerminal = true },
+                )
+            }
+        }
+
+        // 默认应用角色管理页：全屏覆盖层（从设置页入口进入，返回关页回设置）
+        if (showDefaultApp) {
+            BackHandler { showDefaultApp = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                QuroDefaultAppScreen(onClose = { showDefaultApp = false })
+            }
+        }
+
+        // CMS v2 能力模块系统页：全屏覆盖层（从设置页入口进入，返回关页回设置）
+        if (showCms) {
+            BackHandler { showCms = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(Color(0xFFF2F2F7))) {
+                QuroCmsScreen(onClose = { showCms = false })
+            }
+        }
+
+        // 聚合式「系统状态」浏览界面：全屏覆盖层（从设置页入口进入，返回关页回设置）
+        if (showSystemStatus) {
+            BackHandler { showSystemStatus = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                QuroSystemStatusScreen(onClose = { showSystemStatus = false }, personaVm = personaVm)
+            }
+        }
+
+        // 可视化组件画廊
+        if (showComponentGallery) {
+            BackHandler { showComponentGallery = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                QuroComponentGalleryScreen(onBack = { showComponentGallery = false })
+            }
+        }
+
+        // 插件管理页：全屏覆盖层（从工具栏「插件」/ ui_open_plugins 进入）
+        // ★ 2026-09-16 修正：此前这里打开的是 PluginsScreen —— 那是「JS 插件运行时」的演示壳
+        //   （QuickJS + WebView，页面本身没有插件列表，所以看起来一片空白）。
+        //   APK 级插件框架的管理界面是 PluginManagerScreen，入口必须指到它。
+        if (showPlugins) {
+            BackHandler { showPlugins = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                PluginManagerScreen(onClose = { showPlugins = false })
+            }
+        }
+
+        // 技能 SKILL 管理页：全屏覆盖层（从工具栏「技能」/ ui_open_skills 进入）
+        if (showSkills) {
+            BackHandler { showSkills = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(Color(0xFFF2F2F7))) {
+                QuroSkillsScreen(onClose = {
+                    showSkills = false
+                    // 技能页关闭后刷新已启用技能数量
+                    enabledSkillsCount = com.ai.assistance.quro.core.skill.QuroSkillStore.load(ctx).count { it.enabled }
+                })
+            }
+        }
+
+        // 定时任务管理页：全屏覆盖层（从设置页「定时任务」/ ui_open_schedule 进入）
+        if (showSchedule) {
+            BackHandler { showSchedule = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(Color(0xFFF2F2F7))) {
+                QuroScheduleScreen(onClose = { showSchedule = false })
+            }
+        }
+
+        // 工作流管理页：全屏覆盖层（从工具箱「工作流」入口进入）
+        if (showWorkflow) {
+            BackHandler { showWorkflow = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(Color(0xFFF2F2F7))) {
+                QuroWorkflowScreen(onClose = { showWorkflow = false })
+            }
+        }
+
+        // 全屏文本编辑器：编辑对话框长文本
+        if (showEditor) {
+            BackHandler { showEditor = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(Color(0xFFF2F2F7))) {
+                TextEditorScreen(
+                    initialText = inputText.text,
+                    onClose = { text -> inputText = TextFieldValue(text); showEditor = false }
+                )
+            }
+        }
+
+        // 人格创建/编辑对话框（Zorv AI 完整流程）
+        personaToEdit?.let { p ->
+            PersonaEditDialog(
+                initial = p,
+                vm = personaVm,
+                isNew = personaEditIsNew,
+                onDismiss = { personaToEdit = null },
+            )
+        }
+
+        // 灵魂注入 / 人格管理（旧 Zorv AI 设置功能，经设置页入口唤出）
+        if (showSoulSheet) {
+            SoulInjectionSheet(
+                vm = personaVm,
+                onDismiss = { showSoulSheet = false },
+                onCreate = {
+                    showSoulSheet = false
+                    personaToEdit = QuroPersona(
+                        id = java.util.UUID.randomUUID().toString(), name = "", description = "",
+                        avatarEmoji = "🤖", avatarType = "emoji",
+                        roleSetting = "", opening = "", chatSetting = "", voiceSetting = "",
+                        tags = emptyList(), incubation = "", createdAt = 0L, updatedAt = 0L,
+                    )
+                    personaEditIsNew = true
+                },
+                onEdit = { id ->
+                    showSoulSheet = false
+                    personaToEdit = personas.find { it.id == id }
+                    personaEditIsNew = false
+                },
+                onManageMemory = {
+                    showMemoryDialog = true
+                },
+            )
+        }
+
+        if (showMemoryDialog) {
+            MemoryDialog(personaVm = personaVm, onDismiss = { showMemoryDialog = false })
+        }
+
+        // 关于页：全屏覆盖层（从设置「关于 Zorv AI」进入）
+        if (showAbout) {
+            // 拦截系统返回键：先关闭关于页回到设置（showSettings 仍 true），而非 finish Activity
+            BackHandler { showAbout = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroAboutScreen(onBack = { showAbout = false })
+            }
+        }
+
+        // 清理存储页：全屏覆盖层（从设置「数据 → 清理存储」进入）
+        if (showCleanup) {
+            BackHandler { showCleanup = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                CleanupScreen(onClose = { showCleanup = false }, scaled = { scaled(it) })
+            }
+        }
+
+        // 文件管理页：全屏覆盖层（从设置「文件管理」进入）
+        if (showFileManager) {
+            BackHandler { showFileManager = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                FileManagerDialog(onClose = { showFileManager = false }, scaled = { scaled(it) })
+            }
+        }
+
+        // 功能模型配置页：全屏覆盖层（从设置「功能模型配置」进入）
+        if (showFeatureModelConfig) {
+            BackHandler { showFeatureModelConfig = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroFeatureModelConfigScreen(onBack = { showFeatureModelConfig = false })
+            }
+        }
+
+        // MCP 服务设置页：全屏覆盖层（从设置「MCP 服务」进入）
+        if (showMcp) {
+            BackHandler { showMcp = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroMcpSettingsScreen(onBack = { showMcp = false })
+            }
+        }
+
+        // 多角色集群设置页：全屏覆盖层（从设置「多角色集群」进入）
+        if (showClusterSettings) {
+            BackHandler { showClusterSettings = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroClusterSettingsScreen(onBack = { showClusterSettings = false })
+            }
+        }
+
+        // ACI 管理中心页：全屏覆盖层（从设置「功能 → ACI 管理中心」进入，AI 工具 ui_open_aci 亦可打开）
+        if (showAci) {
+            BackHandler { showAci = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroAidlAciCenterScreen(onClose = { showAci = false })
+            }
+        }
+
+        // ACI 应用选择器对话框
+        if (showAciSelector) {
+            AciAppSelectionDialog(
+                onDismiss = { showAciSelector = false },
+                onAppSelected = { packageName, appName ->
+                    // 设置默认 ACI 应用
+                    com.ai.assistance.quro.core.aidlaci.AciAppPreferences.setDefaultApp(
+                        ctx, packageName, appName
+                    )
+                    currentAciName = appName
+                    Toast.makeText(ctx, qstr(R.string.qk_00049, (appName).toString()), Toast.LENGTH_SHORT).show()
+                    showAciSelector = false
+                },
+                onClearSelection = {
+                    // 清除默认 ACI 应用
+                    com.ai.assistance.quro.core.aidlaci.AciAppPreferences.clearDefaultApp(ctx)
+                    currentAciName = null
+                    Toast.makeText(ctx, qstr(R.string.qk_00050), Toast.LENGTH_SHORT).show()
+                },
+                initialSelectedPackage = com.ai.assistance.quro.core.aidlaci.AciAppPreferences.getDefaultPackage(ctx),
+            )
+        }
+
+        // 工作区选择器对话框
+        if (showWorkspaceSelector) {
+            WorkspaceSelectionDialog(
+                onDismiss = { showWorkspaceSelector = false },
+                onWorkspaceSelected = { path ->
+                    currentWorkspace = path
+                    com.ai.assistance.quro.core.tools.WorkspacePreferences.setCurrentWorkspace(ctx, path)
+                    Toast.makeText(ctx, qstr(R.string.qk_00051, (path.substringAfterLast('/')).toString()), Toast.LENGTH_SHORT).show()
+                },
+                onClearWorkspace = {
+                    currentWorkspace = null
+                    com.ai.assistance.quro.core.tools.WorkspacePreferences.clearCurrentWorkspace(ctx)
+                    Toast.makeText(ctx, qstr(R.string.qk_00052), Toast.LENGTH_SHORT).show()
+                },
+                initialSelectedPath = currentWorkspace,
+            )
+        }
+
+        // 工作区代码编辑器（写代码 / 浏览代码）：当前工作区未选时落到默认工作区
+        if (showCodeWorkspace) {
+            BackHandler { showCodeWorkspace = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                val codeRoot = currentWorkspace
+                    ?: java.io.File(ctx.getExternalFilesDir(null), "QuroWorkspace").apply { mkdirs() }.absolutePath
+                WorkspaceCodeScreen(
+                    rootPath = codeRoot,
+                    onClose = { showCodeWorkspace = false },
+                )
+            }
+        }
+
+        // 多角色集群面板：这里只做「编排控制」（建角色 / 下目标 / 看进度），
+        // 集群的发言经 ClusterChatBridge 投影进**本对话框的消息流**（绑定在
+        // QuroChatViewModel.init，与助手消息走同一套渲染）。
+        //
+        // 编排控制在「设置 → 多角色集群」页。
+
+
+        // 技能选择对话框（从输入框工具菜单 / 上下文标识栏进入）
+        if (showSkillSelector) {
+            SkillSelectionDialog(
+                onDismiss = { showSkillSelector = false },
+                onSkillsChanged = { count -> enabledSkillsCount = count },
+            )
+        }
+
+        // 可视化弹窗配置对话框
+        // 可视化弹窗配置对话框（已移除，使用状态模式）
+
+        // 语音设置页：内嵌对话框底部的紧凑面板（不再是全屏页）
+        if (showVoice) {
+            BackHandler { showVoice = false; showVoiceService = true }
+            Box(Modifier.fillMaxSize().zIndex(100f)) {
+                Surface(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = 560.dp)
+                        .navigationBarsPadding(),
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                    tonalElevation = 8.dp,
+                    shadowElevation = 12.dp,
+                ) {
+                    QuroVoiceSettingsScreen(
+                        onBack = { showVoice = false; showVoiceService = true },
+                        onToggleVoiceBall = onToggleVoiceBall,
+                        voiceBallEnabled = voiceBallEnabled,
+                    )
+                }
+            }
+        }
+
+        // 语音合成 (TTS) 设置页：内嵌底部紧凑面板
+        if (showTts) {
+            BackHandler { showTts = false; showVoiceService = true }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                Surface(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = 560.dp).navigationBarsPadding(),
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                    tonalElevation = 8.dp, shadowElevation = 12.dp,
+                ) {
+                    QuroTtsSettingsScreen(
+                        onBack = { showTts = false; showVoiceService = true },
+                        onOpenCloudConfig = { showTts = false; sheet = null; showCloudTts = true },
+                    )
+                }
+            }
+        }
+
+        // 语音识别 (STT) 设置页：内嵌底部紧凑面板
+        if (showStt) {
+            BackHandler { showStt = false; showVoiceService = true }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                Surface(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().heightIn(max = 560.dp).navigationBarsPadding(),
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                    tonalElevation = 8.dp, shadowElevation = 12.dp,
+                ) {
+                    QuroSttSettingsScreen(onBack = { showStt = false; showVoiceService = true })
+                }
+            }
+        }
+
+        // 语音服务 Hub：全屏覆盖（v161 改为全屏，彻底规避底部 Surface 被设置弹层遮挡/约束问题）
+        if (showVoiceService) {
+            BackHandler { showVoiceService = false; sheet = SheetType.Settings }
+            Box(Modifier.fillMaxSize().zIndex(101f).background(cs.background)) {
+                QuroVoiceServiceScreen(
+                    onBack = { showVoiceService = false; sheet = SheetType.Settings },
+                    onOpenTts = { showVoiceService = false; showTts = true },
+                    onOpenStt = { showVoiceService = false; showStt = true },
+                    onOpenVoiceSettings = { showVoiceService = false; showVoice = true },
+                )
+            }
+        }
+
+        // 云模型配置屏（语音合成 TTS 的真实配置界面）：全屏覆盖
+        if (showCloudTts) {
+            BackHandler { showCloudTts = false; showTts = true }
+            Box(Modifier.fillMaxSize().zIndex(101f).background(cs.background)) {
+                QuroCloudTtsConfigScreen(
+                    onBack = { showCloudTts = false; showTts = true },
+                )
+            }
+        }
+
+        // 独立模型配置屏：从齿轮设置页「模型配置」或「添加模型」进入
+        if (showModelConfig) {
+            // 拦截系统返回键：若从设置页进入则回设置，否则回对话
+            BackHandler { showModelConfig = false; modelConfigFromSettings = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroModelConfigScreen(modelVm, onBack = { showModelConfig = false })
+            }
+        }
+
+        // 动态 UI 可视化弹窗（VisualPopup）：纯展示，不回发模型
+        if (showVisualPopup) {
+            AlertDialog(
+                onDismissRequest = { showVisualPopup = false },
+                title = if (visualPopupTitle.isNotBlank()) {
+                    { Text(visualPopupTitle) }
+                } else null,
+                text = {
+                    Text(
+                        visualPopupContent.ifBlank { stringResource(R.string.qk_00053) },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { showVisualPopup = false }) { Text(stringResource(R.string.qk_00054)) }
+                },
+            )
+        }
+
+        // 动态 UI 可视化询问（VisualAsk）：选项点击后作为用户消息回发模型继续对话
+        if (showVisualAsk) {
+            AlertDialog(
+                onDismissRequest = { showVisualAsk = false },
+                title = if (visualAskPrompt.isNotBlank()) {
+                    { Text(visualAskPrompt) }
+                } else null,
+                text = {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        if (visualAskOptions.isEmpty()) {
+                            Text(stringResource(R.string.qk_00055), style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                        }
+                        visualAskOptions.forEach { opt ->
+                            TextButton(
+                                onClick = {
+                                    showVisualAsk = false
+                                    vm.send(opt, emptyList(), cfg)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(opt, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showVisualAsk = false }) { Text(stringResource(R.string.qk_00011)) }
+                },
+            )
+        }
+
+        // Web UI 的**设置**（用户 2026-10-13 拍板：「ZorvAI 内的 web UI 只是设置，
+        // 通过外部打开」）。
+        // 🔴 这里刻意**不再**嵌 WebView：
+        //   ① 那个内嵌界面一关，服务就随之停掉 —— 于是「返回 → 链接打不开」；
+        //   ② 在手机上看手机上同一块屏幕本身就说明定位错了。
+        // 服务本体在前台服务里（QuroWebUiService），生命周期与本弹窗无关，
+        // 所以关掉它不会断掉任何链接。
+        // 顶栏的 modelName / personaName 仍与原生 ChatTopBar 取自同两个变量，
+        // 保证两边说的是同一件事（在弹窗里同步给服务）。
+        if (showWebUiPanel) {
+            WebUiLinkDialog(
+                dark = darkMode,
+                modelName = modelLabel,
+                personaName = selectedPersona.name,
+                onDismiss = { showWebUiPanel = false },
+            )
+        }
+
+        // 工具箱（从输入框「+」工具进入：文件管理 / 包名查询 / 工作区）
+        if (showToolbox) {
+            BackHandler { showToolbox = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroToolboxScreen(
+                    onClose = { showToolbox = false },
+                    onOpenOnlyOffice = { showOnlyOffice = true },
+                    onOpenMusic = { showMusicPlayer = true },
+                    onOpenVideo = { uri, title ->
+                        videoPlayerUri = uri
+                        videoPlayerTitle = title
+                        showVideoPlayer = true
+                    },
+                    allTools = vm.allTools(),
+                    onImportTool = { vm.importTool(it) },
+                    onOpenWorkflow = { showWorkflow = true },
+                )
+            }
+        }
+
+        // 知识库管理页：全屏覆盖层（从设置页入口进入，返回关页回设置）
+        if (showKnowledge) {
+            BackHandler { showKnowledge = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroKnowledgeScreen(onClose = { showKnowledge = false })
+            }
+        }
+
+        // 机器人设置页（C2）：全屏覆盖层（从工具箱「机器人」入口进入，返回关页回工具箱）
+        if (showBots) {
+            BackHandler { showBots = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroBotSettingsScreen(onClose = { showBots = false })
+            }
+        }
+
+        // 应用内文档查看器：全屏覆盖层（从工具栏「文档」进入；已整合原「文档中心」）
+        if (showOnlyOffice) {
+            BackHandler { showOnlyOffice = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroDocScreen(onClose = { showOnlyOffice = false })
+            }
+        }
+
+        // 可交互重终端（proot + Ubuntu 24.04 + ANSI 模拟 + canvas 渲染）：全屏覆盖层（从工具栏「终端」进入）
+        if (showTerminal) {
+            BackHandler { showTerminal = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                val terminalManager = remember { TerminalManager.getInstance(ctx) }
+                val terminalEnv = rememberTerminalEnv(terminalManager)
+                TerminalScreen(env = terminalEnv)
+            }
+        }
+
+        // 工具中心（能力聚合入口：终端/Web 应用/CMS/工具箱/沙箱/私有库）
+        if (showToolCenter) {
+            BackHandler { showToolCenter = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroToolCenterScreen(
+                    context = appCtx,
+                    initialSelected = toolCenterInitial,
+                    onLaunch = { target ->
+                        when (target) {
+                            "terminal" -> showTerminal = true
+                            "cms" -> showCms = true
+                            "toolbox" -> showToolbox = true
+                            "editor" -> showEditor = true
+                            "browser_ai" -> {
+                                com.ai.assistance.quro.core.QuroBrowserBridge.open("https://www.baidu.com")
+                                showToolCenter = false
+                                android.widget.Toast.makeText(appCtx, qstr(R.string.qk_00056), android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            "crawler" -> {
+                                com.ai.assistance.quro.core.QuroBrowserBridge.open("https://www.baidu.com")
+                                showToolCenter = false
+                                android.widget.Toast.makeText(appCtx, qstr(R.string.qk_00057), android.widget.Toast.LENGTH_LONG).show()
+                            }
+                            "python_ai" -> {
+                                showTerminal = true
+                                showToolCenter = false
+                                android.widget.Toast.makeText(appCtx, qstr(R.string.qk_00058), android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            "mitm" -> {
+                                showToolCenter = false
+                                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    val tool = com.ai.assistance.quro.core.tools.PacketCaptureTool()
+                                    val out = tool.run(appCtx, "{\"action\":\"start\",\"port\":8080}")
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        android.widget.Toast.makeText(appCtx, out.take(200), android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                            "build" -> {
+                                showBuild = true
+                                showToolCenter = false
+                            }
+                            else -> showToolCenter = false
+                        }
+                    },
+                    onClose = { showToolCenter = false },
+                    // 工具中心面板「发到对话框渲染」：直接走与 AI 相同的 RenderWidget 总线
+                    onRenderInChat = { type, value, label ->
+                        UiNavigationBus.navEvent = UiNavigationEvent.RenderWidget(
+                            type = type,
+                            id = "",
+                            label = label,
+                            value = value,
+                        )
+                        showToolCenter = false
+                    },
+                    // 工具中心「AI 生成 Web 应用」：把诉求作为用户消息发给 AI（AI 会用 workbench 工具落地）
+                    onAskAi = { prompt ->
+                        send(prompt)
+                        showToolCenter = false
+                    },
+                )
+            }
+        }
+
+        // Zorv 构建台（端侧 APK 构建器：从工具中心「构建台」卡片进入，全屏覆盖层）
+        if (showBuild) {
+            BackHandler { showBuild = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                BuildScreen(onClose = { showBuild = false })
+            }
+        }
+
+        // GitHub 管理屏：全屏覆盖层（从设置「GitHub」/ ui_open_github 进入）
+        if (showGitHub) {
+            BackHandler { showGitHub = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                QuroGitHubScreen(onClose = { showGitHub = false }, initialQuery = githubPrefill)
+            }
+        }
+
+        // 离线模型下载中心：全屏覆盖层（从设置「离线模型下载」/ ui_open_model_hub 进入）
+        if (showModelHub) {
+            BackHandler { showModelHub = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
+                QuroModelHubScreen(onClose = { showModelHub = false })
+            }
+        }
+
+        // 外观与对话设置页：全屏覆盖层（从设置「外观与对话」进入，返回关页回设置）
+        val liveProfile by vm.userProfile.collectAsState()
+        if (showAppearance) {
+            BackHandler { showAppearance = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroAppearanceSettingsScreen(
+                    darkMode = darkMode, onToggleDark = onToggleDark,
+                    soundOn = soundOn, onToggleSound = { vm.setSoundOn(!soundOn) },
+                    enterSend = enterSend, onToggleEnter = { vm.setEnterSend(!enterSend) },
+                    fontName = fontNames[fontTier], onCycleFont = { vm.setFontTier((fontTier + 1) % 3) },
+                    voiceBallEnabled = voiceBallEnabled, onToggleVoiceBall = onToggleVoiceBall,
+                    followSystemLang = followSystemLang,
+                    onToggleFollowSystemLang = { vm.setFollowSystemLang(!followSystemLang) },
+                    appLanguage = vm.appLanguagePref.collectAsState().value,
+                    onSetAppLanguage = { vm.setAppLanguage(it) },
+                    historyRounds = vm.historyRoundsPref.collectAsState().value,
+                    onSetHistoryRounds = { vm.setHistoryRounds(it) },
+                    userProfile = liveProfile,
+                    onSaveProfile = { vm.saveProfile(it) },
+                    onClose = { showAppearance = false },
+                    scaled = { scaled(it) }
+                )
+            }
+        }
+
+        // 内置浏览器（WebView）：open_web 工具或工具箱触发打开
+        browserUrl?.let { url ->
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                QuroBrowserScreen(
+                    url = url,
+                    onClose = {
+                        // 显式退出/返回浏览器：真正销毁共享 WebView（释放资源）。
+                        browserUrl = null
+                        QuroMiniWindowManager.hideBrowser()
+                        com.ai.assistance.quro.core.tools.QuroBrowserViewHost.destroy()
+                    },
+                    onMinimize = {
+                        // 化小窗 = 真正浮出浏览器小窗（对标可视化弹窗：浮窗内直接承载 WebView，
+                        // 化小窗即浮出小窗，而非返回对话）。复用同一共享 WebView，从全屏容器重挂到浮窗容器
+                        // （不新建 WebView、不整页重载）；WebView 仅跨一次容器，页面与导航栈保留、零刷新。
+                        val cur = browserFloatUrl ?: url
+                        browserUrl = null        // 移除全屏浏览器（Activity 容器），WebView 由浮窗接管
+                        browserFloatUrl = cur    // 触发系统级浮窗 showBrowser，浮出可拖拽小窗
+                    },
+                    onOpenInSystem = { sysUrl ->
+                        runCatching {
+                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(sysUrl))
+                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            ctx.startActivity(intent)
+                        }
+                    },
+                )
+            }
+        }
+
+        // ═══ 系统级化小窗（TYPE_APPLICATION_OVERLAY，浮于桌面/其他 App 之上）═══
+        // 已授予 SYSTEM_ALERT_WINDOW 时，把小窗渲染为真正的系统悬浮窗（QuroMiniWindowManager），
+        // 即使 App 退后台/切到其他软件也持续可见；未授权则下方继续走应用内 Compose 浮层（降级）。
+        var askedOverlayPerm by remember { mutableStateOf(false) }
+        DisposableEffect(Unit) {
+            QuroMiniWindowManager.onExpandChat = { chatMinimized = false; if (useSystemOverlay) QuroMiniWindowManager.bringAppToForeground() }
+            QuroMiniWindowManager.onCloseChat = { chatMinimized = false; if (useSystemOverlay) QuroMiniWindowManager.bringAppToForeground() }
+            QuroMiniWindowManager.onNewConversation = { vm.newConversation(); chatMinimized = false; if (useSystemOverlay) QuroMiniWindowManager.bringAppToForeground() }
+            QuroMiniWindowManager.onRestoreBrowser = { url -> browserUrl = url; browserFloatUrl = null; if (useSystemOverlay) QuroMiniWindowManager.bringAppToForeground() }
+            QuroMiniWindowManager.onCloseBrowser = { browserFloatUrl = null; if (useSystemOverlay) QuroMiniWindowManager.bringAppToForeground() }
+            QuroMiniWindowManager.onSendMessage = { send(it) }
+            QuroMiniWindowManager.setMessageSource(vm.messages)
+            onDispose {
+                QuroMiniWindowManager.onExpandChat = null
+                QuroMiniWindowManager.onCloseChat = null
+                QuroMiniWindowManager.onNewConversation = null
+                QuroMiniWindowManager.onRestoreBrowser = null
+                QuroMiniWindowManager.onCloseBrowser = null
+                QuroMiniWindowManager.onSendMessage = null
+                // 离开对话界面时彻底释放系统级浮窗（移除视图 + 停止保活服务），避免残留前台通知/浮窗。
+                QuroMiniWindowManager.release()
+            }
+        }
+        LaunchedEffect(chatMinimized) {
+            if (useSystemOverlay) {
+                if (chatMinimized) QuroMiniWindowManager.showChat(ctx, cs) else QuroMiniWindowManager.hideChat()
+            } else if (chatMinimized && !askedOverlayPerm) {
+                // 未授权时引导用户开启「显示在其他应用上层」，以便真正系统级浮窗
+                askedOverlayPerm = true
+                QuroMiniWindowManager.requestOverlayPermission(ctx)
+            }
+        }
+        LaunchedEffect(browserFloatUrl) {
+            if (useSystemOverlay) {
+                val url = browserFloatUrl
+                if (url != null) QuroMiniWindowManager.showBrowser(ctx, url, cs) else QuroMiniWindowManager.hideBrowser()
+            } else if (browserFloatUrl != null && !askedOverlayPerm) {
+                askedOverlayPerm = true
+                QuroMiniWindowManager.requestOverlayPermission(ctx)
+            }
+        }
+
+        // 内置浏览器「化小窗」：全屏浏览器收起后，改由可拖拽悬浮小窗承载同一网址。
+        // 小窗内是独立 WebView（复用 QuroBrowserController.attach，AI 的 browser_act 仍可用），
+        // 拖到任意位置即可边浏览边用对话；点还原回到全屏，点关闭退出小窗。
+        // （仅当未启用系统级悬浮窗时走此应用内 Compose 浮层；系统级由 QuroMiniWindowManager 承载）
+        if (!useSystemOverlay) browserFloatUrl?.let { furl ->
+            Box(Modifier.fillMaxSize().zIndex(300f)) {
+                FloatingMiniWindow(
+                    title = qstr(R.string.qk_00059),
+                    initialX = 40.dp, initialY = 150.dp,
+                    initialWidth = 320.dp, initialHeight = 400.dp,
+                    onRestore = { browserUrl = furl; browserFloatUrl = null },
+                    onClose = { browserFloatUrl = null },
+                ) {
+                    // 应用内降级浮层同样复用全局唯一浏览器 WebView：化小窗只是把它重挂到浮层容器，
+                    // 不重建/不重载（与主浏览器/系统浮窗共用同一 WebView，状态统一由 QuroBrowserViewHost 维护）。
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { c ->
+                            val container = android.widget.FrameLayout(c)
+                            com.ai.assistance.quro.core.tools.QuroBrowserViewHost.getOrCreate(c)
+                            // 首次打开才加载；从全屏重挂则零重载。
+                            com.ai.assistance.quro.core.tools.QuroBrowserViewHost.loadIfNeeded(furl)
+                            com.ai.assistance.quro.core.tools.QuroBrowserViewHost.bindFloat(container)
+                            container
+                        },
+                        onRelease = {
+                            com.ai.assistance.quro.core.tools.QuroBrowserViewHost.unbindFloat(it as android.view.ViewGroup)
+                        },
+                    )
+                }
+            }
+        }
+
+        // 对话框「化小窗」：主对话收起后，改由可拖拽悬浮小窗承载最近对话，可边看边用其它功能。
+        // （仅当未启用系统级悬浮窗时走此应用内 Compose 浮层；系统级由 QuroMiniWindowManager 承载）
+        if (!useSystemOverlay && chatMinimized) {
+            Box(Modifier.fillMaxSize().zIndex(300f)) {
+                FloatingMiniWindow(
+                    title = stringResource(R.string.qk_00060),
+                    initialX = 24.dp, initialY = 120.dp,
+                    initialWidth = 300.dp, initialHeight = 420.dp,
+                    onRestore = { chatMinimized = false },
+                    onClose = { chatMinimized = false },
+                ) {
+                    Column(Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            Modifier.fillMaxWidth().weight(1f).padding(8.dp),
+                            reverseLayout = true,
+                        ) {
+                            val recent = uiMessages.takeLast(15)
+                            items(recent.size) { idx ->
+                                val m = recent[idx]
+                                val label = if (m.mine) stringResource(R.string.qk_00061) else "AI"
+                                Text(
+                                    "$label：${(m.text ?: "").take(200)}",
+                                    fontSize = 12.sp,
+                                    color = cs.onSurface,
+                                    maxLines = 4,
+                                    modifier = Modifier.padding(vertical = 3.dp),
+                                )
+                            }
+                        }
+                        Row(
+                            Modifier.fillMaxWidth().background(cs.surfaceVariant).padding(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(onClick = { vm.newConversation(); chatMinimized = false }) {
+                                Text(stringResource(R.string.qk_00062))
+                            }
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { chatMinimized = false }) {
+                                Text(stringResource(R.string.qk_00063))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 应用内视频播放器（VideoView 渲染屏）
+        if (showVideoPlayer) {
+            BackHandler { showVideoPlayer = false }
+            Box(Modifier.fillMaxSize().zIndex(120f).background(Color.Black)) {
+                QuroVideoPlayerScreen(
+                    uri = videoPlayerUri,
+                    title = videoPlayerTitle,
+                    onClose = { showVideoPlayer = false },
+                )
+            }
+        }
+
+        // 全屏图片查看器（双击缩放、双指捏合、拖动）
+        if (showImageViewer) {
+            BackHandler { showImageViewer = false }
+            FullScreenImageViewer(
+                path = imageViewerPath,
+                name = imageViewerName,
+                onClose = { showImageViewer = false },
+            )
+        }
+
+        // 应用内文档查看器（附件点击后全屏预览 docx/xlsx/pptx/pdf 等）
+        if (showDocViewer) {
+            BackHandler { showDocViewer = false }
+            Box(Modifier.fillMaxSize().zIndex(130f).background(cs.background)) {
+                val docFile = runCatching { File(docViewerPath) }.getOrNull()
+                if (docFile != null && docFile.exists()) {
+                    QuroDocumentViewer(
+                        file = docFile,
+                        onClose = { showDocViewer = false },
+                        onExternal = {
+                            openFileWithSystemViewer(ctx, Attachment(
+                                name = docViewerName,
+                                meta = "",
+                                path = docViewerPath,
+                                type = "file"
+                            ))
+                            showDocViewer = false
+                        },
+                        readOnly = false,
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(stringResource(R.string.qk_00064, (docViewerPath).toString()), color = cs.error, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+
+        // 应用内全屏音乐播放器
+        if (showMusicPlayer) {
+            BackHandler { showMusicPlayer = false }
+            Box(Modifier.fillMaxSize().zIndex(120f).background(cs.background)) {
+                QuroMusicPlayerScreen(onClose = { showMusicPlayer = false })
+            }
+        }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        // 对话框「化小窗」：chatMinimized 时主对话收起为悬浮小窗，根布局仅留背景占位。
+        // 系统级浮窗（useSystemOverlay）下不拆除主屏内容：主屏在浮层之下保持已组合状态，
+        // 返回全屏时仅移除浮层即可，避免整屏重建导致的卡顿；占位仅在应用内降级浮层时生效。
+        if (chatMinimized && !useSystemOverlay) {
+            Box(Modifier.fillMaxSize().background(cs.background))
+        } else ModalNavigationDrawer(
+            drawerState = drawerState,
+            gesturesEnabled = true,
+            drawerContent = {
+                HistoryDrawer(
+                    history = history,
+                    onClose = { scope.launch { drawerState.close() } },
+                    onNew = { vm.newConversation(); scope.launch { drawerState.close() } },
+                    onNewGenUi = {
+                        // 旧行为：新建一个 genui 类型会话（渲染面是已删除的 QuroGenUiApp）。
+                        // 新行为：拉起**内置的 GenUI-Agent 独立应用**（AI 产出 GenUI JSON DSL →
+                        // 原生 Compose 组件渲染）。它有自己的会话与模型配置，不再占用 ZorvAI 的对话框。
+                        runCatching {
+                            ctx.startActivity(
+                                android.content.Intent(ctx, com.ai.assistance.quro.genui.aiapp.GenUiAgentActivity::class.java)
+                            )
+                        }
+                        scope.launch { drawerState.close() }
+                    },
+                    onPick = { id -> vm.selectConversation(id); scope.launch { drawerState.close() } },
+                    onCopyAll = { copyConversation(ctx, uiMessages) },
+                    onDelete = { vm.deleteConversation(it) },
+                    onDeleteAll = { vm.deleteAllConversations() },
+                    scaled = { scaled(it) },
+                    generatingIds = generatingIds,
+                )
+            }
+        ) {
+            // 可视化问答和操作弹窗
+            VisualDialogs()
+            // 自由可视化弹窗
+            VisualPopupDialog()
+            // AI自写UI可视化弹窗
+            VisualCustomPopupDialog()
+            Scaffold(
+                containerColor = cs.background,
+                topBar = {
+                    ChatTopBar(
+                        modelName = modelLabel,
+                        onMenu = openDrawer,
+                        onModel = { sheet = SheetType.Model },
+                        onSettings = { sheet = SheetType.Settings },
+                        onToolCenter = { showToolCenter = true },
+                        onVideoCall = openVideoCall,
+                        onMinimize = { chatMinimized = true },
+                        persona = selectedPersona,
+                        onPick = { sheet = SheetType.Persona },
+                        scaled = { scaled(it) }
+                    )
+                }
+            ) { pad ->
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(pad)
+                ) {
+                    // [D5] 错误横幅：ViewModel 捕获的异常经 error StateFlow 暴露，这里以顶部横幅呈现并在数秒后自动消失。
+                    errorState?.let { err ->
+                        LaunchedEffect(err) {
+                            kotlinx.coroutines.delay(4000L)
+                            vm.clearError()
+                        }
+                        Surface(
+                            color = cs.errorContainer,
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("⚠️ $err", color = cs.onErrorContainer, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { vm.clearError() }) { Text(qstr(R.string.qk_00065), color = cs.onErrorContainer) }
+                            }
+                        }
+                    }
+                    MessageList(
+                        messages = uiMessages,
+                        scaled = { scaled(it) },
+                        currentId = currentId,
+                        busy = busy,
+                        traceLines = traceLines,
+                        onOpenLink = { browserUrl = it },
+                        onCommand = { handleCardCommand(it) },
+                        onSend = { send(it) },
+                        onAskFollowup = { txt ->
+                            inputText = TextFieldValue(
+                                qstr(R.string.qk_00066) + txt.take(200).replace("\n", "\n> ") + "\n\n"
+                            )
+                        },
+                        onShare = { txt -> shareText(ctx, txt) },
+                        onRegenerate = {
+                            val lastUser = uiMessages.lastOrNull { it.mine }?.text
+                            if (!lastUser.isNullOrBlank()) send(lastUser)
+                        },
+                        onDelete = { vm.deleteMessage(it) },
+                        // 上下文超限错误气泡的「新建对话」一键入口（issue #11 问题6 第3步）
+                        onNewConversation = { vm.newConversation() },
+                        onAttachmentActivate = { att ->
+                            when (att.type) {
+                                "image" -> {
+                                    imageViewerPath = att.path ?: ""
+                                    imageViewerName = att.name
+                                    showImageViewer = true
+                                }
+                                "video" -> {
+                                    videoPlayerUri = "file://" + (att.path ?: "")
+                                    videoPlayerTitle = att.name
+                                    showVideoPlayer = true
+                                }
+                                else -> {
+                                    // 文档/文件：使用应用内 QuoroDocumentViewer 预览，
+                                    // 支持 docx/xlsx/pptx/pdf 等格式的富文本渲染
+                                    val f = att.path?.let { File(it) }
+                                    if (f != null && f.exists()) {
+                                        val ext = f.extension.lowercase()
+                                        val previewableExts = setOf(
+                                            "docx", "xlsx", "pptx", "pdf",
+                                            "txt", "md", "markdown", "json", "csv", "xml",
+                                            "html", "htm", "log", "kt", "kts", "py", "js", "ts", "css", "java",
+                                            "png", "jpg", "jpeg", "gif", "webp", "bmp",
+                                        )
+                                        if (ext in previewableExts) {
+                                            docViewerPath = att.path ?: ""
+                                            docViewerName = att.name
+                                            showDocViewer = true
+                                        } else {
+                                            openFileWithSystemViewer(ctx, att)
+                                        }
+                                    } else {
+                                        openFileWithSystemViewer(ctx, att)
+                                    }
+                                }
+                            }
+                        },
+                        onAttachmentDownload = { downloadAttachment(ctx, it) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    // 交互组件卡片栏（可视化小卡片兜底）：UI 桥未就绪时 AI 下发的 ui_widget/ui_card
+                    // 富卡片回落 QuroChatCardStore，在此渲染——此前只有 import 没有调用，兜底链路断的。
+                    QuroChatCardTray(onCommand = { handleCardCommand(it) })
+                    // 语音：对话框语音输入按钮（受「语音设置 · 对话框按钮」开关控制）
+                    val voiceInputEnabled = remember { QuroVoiceFeaturePrefs.getDialogVoiceButton(ctx) }
+                    fun startDialogStt() {
+                        if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
+                            Toast.makeText(ctx, qstr(R.string.qk_00067), Toast.LENGTH_SHORT).show()
+                            return
+                        }
+                        QuroSttHolder.startListening(
+                            context = ctx,
+                            language = QuroSttPrefs.getLanguage(ctx),
+                            partialResults = QuroSttPrefs.getPartial(ctx),
+                            onPartial = { },
+                            onFinal = { txt ->
+                                if (txt.isNotBlank()) {
+                                    val cur = inputText.text
+                                    inputText = inputText.copy(text = if (cur.isBlank()) txt else "$cur $txt")
+                                }
+                            },
+                            onError = { _, msg -> Toast.makeText(ctx, qstr(R.string.qk_00068, (msg).toString()), Toast.LENGTH_SHORT).show() }
+                        )
+                    }
+                    // 自动朗读：AI 回复完成后 TTS 朗读（受「语音设置 · 自动朗读」开关控制）
+                    var autoRead by remember { mutableStateOf(QuroVoiceFeaturePrefs.getAutoRead(ctx)) }
+                    fun toggleAutoRead() { autoRead = !autoRead; QuroVoiceFeaturePrefs.setAutoRead(ctx, autoRead) }
+                    // #411 TTS 去重提升到 ViewModel：remember 是纯内存态，退出对话框 Compose 树销毁即重置为 "" →
+                    // 重进入时 last.id != "" 永远成立 → 重复播放已播过的消息。改用 ViewModel 的 StateFlow，
+                    // 生命周期跟随 ViewModel（Activity 重建也不丢）。
+                    val lastSpokenId by vm.lastSpokenMsgId.collectAsState()
+                    var wasBusy by remember { mutableStateOf(false) }
+                    var busyConvId by remember { mutableStateOf<String?>(null) }
+                    val ttsScope = rememberCoroutineScope()
+                    LaunchedEffect(busy, currentId) {
+                        // 记录「正在生成的是哪个会话」，切走其它会话时不该误触发朗读
+                        if (busy) busyConvId = currentId
+                        if (wasBusy && !busy && busyConvId == currentId) {
+                            val msgs = vm.messages.value
+                            val last = msgs.lastOrNull()
+                            if (autoRead && last != null && last.role == "assistant" && last.id != lastSpokenId) {
+                                vm.markSpoken(last.id)
+                                // ★ 朗读协调：若本回合 AI 已用 speak 工具主动播报（用户要求"让 AI 控制朗读顺序"），
+                                //   自动朗读让位，不再重复朗读同一回复；AI 的多次 speak 调用由串行队列按调用顺序播放。
+                                if (QuroTtsHolder.consumeSpeakToolFired()) {
+                                    Log.d("TTS", qstr(R.string.qk_00069))
+                                } else {
+                                    // v414 修复：ensureReady/speak 是挂起调用，改由稳定 scope 承接，UI 状态变化不再杀掉朗读。
+                                    ttsScope.launch {
+                                        QuroTtsHolder.ensureReady(ctx)
+                                        QuroTtsHolder.speak(last.content)
+                                    }
+                                }
+                            }
+                        }
+                        wasBusy = busy
+                    }
+
+                    val visionOn by vm.visionEnabled.collectAsState()
+                    Composer(
+                        deepThink = thinking,
+                        onToggleThink = { vm.setThinking(!thinking) },
+                        attachments = attachments,
+                        onRemoveAttach = { attachments.remove(it) },
+                        onAttach = { sheet = SheetType.Upload },
+                        autoSaveMemory = autoSaveMemory, onToggleAutoSave = { vm.setAutoSaveMemory(!autoSaveMemory) },
+                        subAgentEnabled = subAgentEnabled,
+                        onToggleSubAgent = { vm.setSubAgentEnabled(!subAgentEnabled) },
+                        onSend = { send(it) },
+                        text = inputText,
+                        onTextChange = { inputText = it },
+                        enterSend = enterSend,
+                        busy = busy,
+                        onStop = { vm.stop() },
+                        onOpenMusicPlayer = { showMusicPlayer = true },
+                        autoRead = autoRead,
+                        onToggleAutoRead = { toggleAutoRead() },
+                        visionEnabled = visionOn,
+                        onToggleVision = { vm.setVisionEnabled(!vm.visionEnabled.value) },
+                        onRequestMediaProjection = { requestMediaProjection() },
+                        voiceInputEnabled = voiceInputEnabled,
+                        onVoiceInput = { startDialogStt() },
+                        onOpenSkills = { showSkillSelector = true },
+                        onOpenAciSelector = { showAciSelector = true },
+                        onOpenEditor = { showEditor = true },
+                        onSelectVisualPopup = {
+                            pendingVisualPopup.value = !pendingVisualPopup.value
+                            if (pendingVisualPopup.value) {
+                                Toast.makeText(ctx, qstr(R.string.qk_00070), Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(ctx, qstr(R.string.qk_00071), Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onSelectVisualQuestion = {
+                            pendingVisualQuestion.value = !pendingVisualQuestion.value
+                            if (pendingVisualQuestion.value) {
+                                Toast.makeText(ctx, qstr(R.string.qk_00072), Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(ctx, qstr(R.string.qk_00073), Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        pendingVisualPopup = pendingVisualPopup.value,
+                        pendingVisualQuestion = pendingVisualQuestion.value,
+                        onSelectSelfCard = {
+                            pendingSelfCard.value = !pendingSelfCard.value
+                            Toast.makeText(ctx, if (pendingSelfCard.value) qstr(R.string.qk_00074) else qstr(R.string.qk_00075), Toast.LENGTH_SHORT).show()
+                        },
+                        onSelectDynamicUi = {
+                            pendingDynamicUi.value = !pendingDynamicUi.value
+                            Toast.makeText(ctx, if (pendingDynamicUi.value) qstr(R.string.qk_00076) else qstr(R.string.qk_00077), Toast.LENGTH_SHORT).show()
+                        },
+                        onSelectAipDoc = {
+                            pendingAipDoc.value = !pendingAipDoc.value
+                            Toast.makeText(ctx, if (pendingAipDoc.value) qstr(R.string.qk_00078) else qstr(R.string.qk_00079), Toast.LENGTH_SHORT).show()
+                        },
+                        onSelectZxWebCard = {
+                            // 打开 Web UI 的**设置**（开关 + 地址 + 复制），不是内嵌浏览器。
+                            // 刻意**不改** pendingZxWebCard：改设置不该改变主对话框
+                            // 下一条消息的模型行为——那是另一件事，见下面的开关。
+                            showWebUiPanel = true
+                        },
+                        onToggleZxWidget = {
+                            pendingZxWebCard.value = !pendingZxWebCard.value
+                            Toast.makeText(ctx, if (pendingZxWebCard.value) qstr(R.string.qk_04070) else qstr(R.string.qk_04071), Toast.LENGTH_SHORT).show()
+                        },
+                        pendingSelfCard = pendingSelfCard.value,
+                        pendingDynamicUi = pendingDynamicUi.value,
+                        pendingAipDoc = pendingAipDoc.value,
+                        pendingZxWebCard = pendingZxWebCard.value,
+                        currentWorkspace = currentWorkspace,
+                        onOpenWorkspaceSelector = { showWorkspaceSelector = true },
+                        onOpenCodeBrowser = { showCodeWorkspace = true },
+                        currentAciName = currentAciName,
+                        enabledSkillsCount = enabledSkillsCount,
+                        scaled = { scaled(it) }
+                    )
+                }
+            }
+        }
+
+        // （系统通知改为「离开软件时」由 QuroReplyNotifier 弹 heads-up，不在软件内不弹，故此处无应用内浮层）
+
+        // 底部弹层（自定义，统一遮罩 + 上滑）
+        ChatOverlays()
+    }
+
+    // 监听来自 open_web 工具/链接的内置浏览器打开请求：
+    // 默认化小窗（符合移动端——默认小窗、手动全屏）。与全屏形态互斥——开小窗即清全屏，
+    // 杜绝「全屏 + 小窗共同出现」；AI 多次打开浏览器也只更新同一小窗（见 QuroMiniWindowManager.showBrowser）。
+    LaunchedEffect(Unit) {
+        for (u in QuroBrowserBridge.requests) {
+            browserUrl = null
+            browserFloatUrl = u
+        }
+    }
+}
+
+// ---------------- 顶栏 ----------------
+// TopBar / PersonaBar 已抽到 ui/chat/ChatTopBar.kt（ChatTopBar），修复「长模型名 / 长人格名
+// 把设置图标测量成 0 宽」的布局塌陷根因。此处仅保留引用。
+
+// ---------------- 人格快捷条 ----------------
+
+/**
+ * 用户资料条（显示在对话框顶部：头像 + 名字 + 签名）。
+ * 资料来自「设置 > 外观与对话 > 用户资料」。
+ */
+@Composable
+private fun UserProfileBar(
+    profile: QuroChatViewModel.UserProfile,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+) {
+    val cs = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 头像圆圈（显示名字首字母或默认图标）
+        Box(
+            Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(cs.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                profile.name.first().uppercase(),
+                fontSize = 13.sp, color = cs.onPrimaryContainer, fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        // 名字 + 签名（长名字/长签名各自省略号截断，不挤压彼此）
+        Column(Modifier.weight(1f)) {
+            Text(profile.name, fontSize = scaled(12), fontWeight = FontWeight.Medium, color = cs.onBackground,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (profile.bio.isNotBlank()) {
+                Text(profile.bio, fontSize = scaled(10), color = cs.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+// ---------------- 消息列表 ----------------
+
+@Composable
+private fun MessageList(
+    messages: List<Message>,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    traceLines: SnapshotStateList<QuroAgentTrace.AgentTraceEvent>,
+    onOpenLink: (String) -> Unit,
+    onCommand: (String) -> Unit,
+    onAskFollowup: (String) -> Unit = {},
+    onShare: (String) -> Unit = {},
+    onRegenerate: () -> Unit = {},
+    onDelete: (List<String>) -> Unit = {},
+    /** 「新建对话」一键入口：上下文超限类错误气泡专用（issue #11 问题6 第3步）。 */
+    onNewConversation: () -> Unit = {},
+    onAttachmentActivate: (Attachment) -> Unit = {},
+    onAttachmentDownload: (Attachment) -> Unit = {},
+    onSend: (String) -> Unit = {},
+    currentId: String,
+    busy: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val cs = MaterialTheme.colorScheme
+    val narrow = LocalConfiguration.current.screenWidthDp < 400
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val lastMsg = messages.lastOrNull()
+    // 是否贴底（仅用于「回到底部」按钮可见性判定：列表还能继续向下滚 = 不在底部）。
+    val isAtBottom by remember { derivedStateOf { !listState.canScrollForward } }
+
+    // 是否自动跟随流式输出：由【用户拖拽手势意图】决定，而非「当前布局是否到底」。
+    // 旧逻辑曾用 !canScrollForward 同时控制跟随，但流式输出使最后一项超出视口后 canScrollForward
+    // 恒为 true，导致内容一超过一屏就停止跟随（#auto-follow 回归：对话框不能跟随 AI 最新输出）。
+    // 新方案：用户开始拖拽即暂停跟随；松手时下方仍有可滚内容=停在中/上方→保持暂停，
+    // 松手已在底部→恢复跟随。程序 scrollToItem 不触发 DragInteraction，二者互不干扰。
+    val shouldFollow = remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { inter ->
+            when (inter) {
+                is DragInteraction.Start -> shouldFollow.value = false
+                is DragInteraction.Stop -> shouldFollow.value = !listState.canScrollForward
+                is DragInteraction.Cancel -> shouldFollow.value = !listState.canScrollForward
+            }
+        }
+    }
+
+    /**
+     * 把「最后一条消息的底部」贴住视口底部（而非把消息顶部对齐视口顶部）。
+     *
+     * 关键修复（#auto-follow）：长流式 AI 回复往往比一屏还高，旧逻辑 scrollToItem(lastIndex)
+     * 只把消息顶部对齐视口顶，最新涌出的 token 仍在输入框下方看不见。这里按
+     * 「视口高度 − 最后项高度」计算底部的对齐偏移（项比视口高时偏移为负，scrollToItem
+     * 会钳制到最大滚动 → 底部贴底），确保输入框下方的内容始终可见。
+     *
+     * ⚠️ 索引映射：LazyColumn 第 0 项是顶部日期头，messages[i] 实际位于 LazyList index = i+1，
+     * 因此最后一条消息的 LazyList 索引是 messages.size（不是 messages.lastIndex）。
+     */
+    suspend fun pinToBottom() {
+        if (messages.isEmpty()) return
+        val lastItemIndex = messages.size
+        // 先把最后一项滚入视口（顶部对齐），触发布局测量
+        listState.scrollToItem(lastItemIndex)
+        // 关键修复（#滚动对齐）：等一帧让布局稳定，再读真实 item 高度——否则取到的是滚动前的旧布局，
+        // 导致「高于一屏的长消息」底部算不到位、最新 token 被推到视口下方看不见（即内容能到哪里 vs 滚动只到哪里）。
+        kotlinx.coroutines.delay(0)
+        val layoutInfo = listState.layoutInfo
+        val lastInfo = layoutInfo.visibleItemsInfo.lastOrNull { it.index == lastItemIndex } ?: return
+        val viewportH = layoutInfo.viewportSize.height
+        // 项比一屏高：scrollToItem 的 scrollOffset 必须非负，用「项高 − 视口高」(正值) 把该项底部对齐视口底，
+        // 保证输入框上方的最新内容始终可见；项比一屏矮时无需额外偏移（同样钳制到底部）。
+        if (lastInfo.size > viewportH) {
+            listState.scrollToItem(lastItemIndex, lastInfo.size - viewportH)
+        }
+    }
+
+    // 触发①：进入 / 切换会话 → 无条件落到底部看最新一条，并恢复自动跟随。
+    LaunchedEffect(currentId) {
+        shouldFollow.value = true
+        pinToBottom()
+    }
+
+    // 触发②：用户刚发出新消息（最后一条是用户消息）→ 强制跳到底部，即使此前在中部上滑，并恢复跟随。
+    LaunchedEffect(lastMsg?.id) {
+        if (lastMsg != null && lastMsg.mine) {
+            shouldFollow.value = true
+            pinToBottom()
+        }
+    }
+
+    // 触发③：流式回复增长（同条消息的可见内容变）→ 仅当用户「意图停在底部」(shouldFollow) 时自动跟随；
+    // 用户若上滑阅读历史，shouldFollow=false，跳过自动滚动，由下方「回到底部」按钮兜底，
+    // 避免流式 token 持续把视口拽回底部、导致无法阅读上方内容（#auto-follow 回归修复）。
+    // 综合签名覆盖 text + 工具卡数 + 推理步数 + 卡片数，确保思考/工具/最终文本任何阶段增长都跟随，
+    // 不再只依赖单一 text 字段（文本尚为空、仅思考/工具在推进时也能跟随）。
+    val lastSig = buildString {
+        val lm = messages.lastOrNull()
+        append(lm?.text ?: "")
+        append('#'); append(lm?.tools?.size ?: -1)
+        append('#'); append(lm?.think?.steps?.size ?: -1)
+        append('#'); append(lm?.cards?.size ?: -1)
+    }
+    LaunchedEffect(lastSig) {
+        if (messages.isEmpty()) return@LaunchedEffect
+        if (!shouldFollow.value) return@LaunchedEffect
+        pinToBottom()
+    }
+    // 注意：执行轨迹事件已统一在 ChatScreen 顶层订阅一次（单一真相源 traceLines），
+    // 此处不再各自 collect 全局流，避免重复订阅 / 跨会话污染。
+    // 互动条（scroll-to-bottom 交互）：用户上滑离开底部时浮出「回到底部」按钮，
+    // 点击即跳到最新一条。与上方三触发自动滚底互补，作手动兜底。
+    Box(modifier) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize(),
+        state = listState,
+        contentPadding = PaddingValues(top = 8.dp, bottom = 88.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        item {
+            val today = java.time.LocalDate.now()
+            val dateLabel = today.format(java.time.format.DateTimeFormatter.ofPattern(stringResource(R.string.qk_00080)))
+            Text(dateLabel, fontSize = scaled(12), color = Muted, modifier = Modifier.padding(start = 2.dp, bottom = 2.dp))
+        }
+        // 执行轨迹已「融和升级」进工具调用输出：
+        // 轨迹不再作为底部独立面板，而是内嵌到最近一次助手工具调用卡内（见 ToolCallGroup）。
+        // 纯文本（无工具卡可融）回复不再渲染独立追踪卡，避免与工具卡重复 /「旧 UI 重显」。
+        val visibleTraces = traceLines.filter { it.kind != QuroAgentTrace.TraceKind.STATUS }
+        // 稳定 key：每条消息的 Message.id 来自 QuroMessage.id（UUID）的 hashCode，唯一且流式更新时不变，
+        // 避免流式增量刷新时按 index 重组导致的整段闪烁/错位。
+        itemsIndexed(messages, key = { _, msg -> msg.id }) { index, msg ->
+            AnimatedVisibility(
+                visible = true,
+                enter = fadeIn(initialAlpha = 0.35f) + slideInVertically(initialOffsetY = { it / 10 }),
+            ) {
+                MessageRow(
+                    msg, scaled, onOpenLink,
+                    embeddedTrace = if (!msg.tools.isNullOrEmpty()) visibleTraces else emptyList(),
+                    onCommand = { onCommand(it) },
+                        onAskFollowup = onAskFollowup,
+                        onShare = onShare,
+                        onRegenerate = onRegenerate,
+                        onDelete = onDelete,
+                        onNewConversation = onNewConversation,
+                        narrow = narrow,
+                        onAttachmentActivate = onAttachmentActivate,
+                        onAttachmentDownload = onAttachmentDownload,
+                        // 🔧 Bug修复「思考没有修复」：生成中的最后一条消息默认展开思考内容，
+                        // 让流式 reasoning 实时可见（此前思考只藏在 9sp 收起胶囊后，等于看不见）。
+                        streamingThink = busy && index == messages.lastIndex,
+                        onSend = onSend,
+                    )
+            }
+        }
+    }
+    // ── 互动条：回到底部（紧凑悬浮按钮，右下角贴边，不遮挡内容）──
+    AnimatedVisibility(
+        visible = !isAtBottom && messages.isNotEmpty(),
+        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 80.dp),
+        enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+        exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 })
+    ) {
+        Surface(
+            onClick = { scope.launch { shouldFollow.value = true; pinToBottom() } },
+            shape = CircleShape,
+            color = cs.surface.copy(alpha = 0.92f),
+            contentColor = cs.onSurface,
+            modifier = Modifier.size(36.dp).shadow(4.dp, CircleShape),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                LucideIcon("chevron-down", stringResource(R.string.qk_00081), Modifier.size(18.dp), tint = cs.onSurfaceVariant)
+            }
+        }
+    }
+    }
+}
+
+/**
+ * 执行追踪已从「底部独立面板」迁移为「内嵌到工具调用卡」：见 MessageRow / ToolCallGroup。
+ * 旧 AgentTracePanel 已删除，避免与工具卡重复渲染 / 旧 UI 重显。
+ */
+
+@Composable
+private fun TraceRow(ev: QuroAgentTrace.AgentTraceEvent) {
+    val (color, label, icon) = when (ev.kind) {
+        QuroAgentTrace.TraceKind.THOUGHT -> Triple(Color(0xFF9C27B0), stringResource(R.string.qk_00082), "sparkles")
+        QuroAgentTrace.TraceKind.ACTION -> Triple(Color(0xFF2196F3), stringResource(R.string.qk_00083), "play")
+        QuroAgentTrace.TraceKind.RESULT -> Triple(Color(0xFF4CAF50), stringResource(R.string.qk_00084), "check-circle")
+        QuroAgentTrace.TraceKind.STATUS -> Triple(Color(0xFF757575), stringResource(R.string.qk_00085), "clock")
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 1.5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 左侧色条 + 图标胶囊
+        Box(
+            Modifier
+                .size(18.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(color.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center
+        ) {
+            LucideIcon(icon, label, Modifier.size(11.dp), tint = color)
+        }
+        Spacer(Modifier.width(6.dp))
+        // 标签药丸
+        Text(
+            label,
+            fontSize = 10.sp,
+            color = color.copy(alpha = 0.85f),
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(color.copy(alpha = 0.1f))
+                .padding(horizontal = 5.dp, vertical = 1.dp)
+        )
+        Spacer(Modifier.width(6.dp))
+        // 内容文字：展示文本已在发射时一次性清洗（QuroAgentTrace.cleanTrace → ev.display），
+        // 此处直接复用，绝不在重组时跑正则，避免几百事件 × 全量行重组打爆主线程 → ANR。
+        Text(
+            ev.display,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            lineHeight = 15.sp
+        )
+    }
+}
+
+private fun shareText(context: android.content.Context, text: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(intent, qstr(R.string.qk_00086)))
+}
+
+@Composable
+private fun BubbleActionButton(label: String, tint: Color, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+        modifier = Modifier.height(28.dp)
+    ) {
+        Text(label, fontSize = 11.sp, color = tint)
+    }
+}
+
+/**
+ * 判断富卡片是否为「紧凑型」：在聊天气泡自由排版（FlowRow）中，紧凑型卡片按内容自然宽度排布、
+ * 可与其他卡片并排成行并自动换行；宽型卡片（图表 / 表格 / 流程图等）独占一整行，避免被挤窄。
+ */
+private fun isCompactQuroCard(card: QuroChatCard): Boolean = when (card) {
+    is QuroChatCard.ButtonCard,
+    is QuroChatCard.ActionCard,
+    is QuroChatCard.ToggleCard,
+    is QuroChatCard.SliderCard,
+    is QuroChatCard.ProgressCard,
+    is QuroChatCard.StatCard,
+    is QuroChatCard.SegmentedCard,
+    is QuroChatCard.RatingCard,
+    is QuroChatCard.CountdownCard,
+    is QuroChatCard.ChipsCard,
+    is QuroChatCard.QuickReplyCard,
+    is QuroChatCard.QuickActionCard,
+    is QuroChatCard.ColorCard,
+    is QuroChatCard.CounterCard,
+    is QuroChatCard.BreadcrumbCard,
+    is QuroChatCard.TagCloudCard,
+    is QuroChatCard.BadgeCard,
+    is QuroChatCard.AvatarGroupCard -> true
+    else -> false
+}
+
+@Composable
+private fun MessageRow(
+    msg: Message,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    onOpenLink: (String) -> Unit,
+    embeddedTrace: List<QuroAgentTrace.AgentTraceEvent> = emptyList(),
+    onCommand: (String) -> Unit = {},
+    onAskFollowup: (String) -> Unit = {},
+    onShare: (String) -> Unit = {},
+    onRegenerate: () -> Unit = {},
+    onDelete: (List<String>) -> Unit = {},
+    /** 「新建对话」一键入口：上下文超限类错误气泡专用（issue #11 问题6 第3步）。 */
+    onNewConversation: () -> Unit = {},
+    narrow: Boolean = false,
+    /** 附件点击：图片→全屏预览 / 视频→播放器 / 文档→系统查看器（由 ChatScreen 处理具体路由）。 */
+    onAttachmentActivate: (Attachment) -> Unit = {},
+    onAttachmentDownload: (Attachment) -> Unit = {},
+    /** 该消息是否为「正在生成中的最后一条」：是则默认展开思考内容（流式 reasoning 实时可见）。 */
+    streamingThink: Boolean = false,
+    /** 代码块自动修复：发送错误信息给 AI 分析修复 */
+    onSend: (String) -> Unit = {},
+) {
+    val cs = MaterialTheme.colorScheme
+    val ctx = LocalContext.current
+    val avatarSize = if (narrow) 28 else 34
+    // 「动态 UI 组件」开关是提示词级（灵魂注入编辑里控制 AI 主动/被动），渲染管线常开：
+    // 关 = AI 不主动输出，但用户提醒后 AI 写出的 ```quro-ui 围栏仍要能正常渲染。
+    // 动态 UI 区块：从消息文本解析出所有 ```quro-ui 围栏，单独拎出来在气泡下方「全宽内联」渲染。
+    // 与气泡内普通文本/卡片互不干扰，避免被 280dp 气泡压窄、被输入条遮挡、需点开才能看。
+    val dynamicUiBlocks = remember(msg.text) {
+        val t = msg.text
+        if (t.isNullOrBlank()) emptyList<MsgBlock.DynamicUi>()
+        else {
+            val clean = extractInlineComponents(QuroVoiceStyle.strip(t)).first
+            parseBlocks(clean).filterIsInstance<MsgBlock.DynamicUi>()
+        }
+    }
+    // 自研卡片渲染（feat_self_card）：开关同为提示词级（主动/被动），渲染管线常开——
+    // 从消息文本解析所有 ```quro-card 围栏 → 完整 CardSpec（含 data），在气泡下方全宽内联渲染。
+    val selfCardBlocks = remember(msg.text) {
+        val t = msg.text
+        if (t.isNullOrBlank()) emptyList() else extractSelfCardSpecs(QuroVoiceStyle.strip(t))
+    }
+    // 自研卡片点击 → ActionBus → onCommand（命令式卡片动作回传消息流；无匹配命令时静默 no-op）。
+    ActionBus.handler = { action, _ -> action.name?.let { onCommand(it); true } ?: false }
+    // 正文文本与「内联组件 JSON」抽离结果：供气泡正文与气泡外全宽卡片共用同一份，避免重复解析。
+    // 卡片从气泡里拎出来，在下方「全宽内联」区块渲染，不再被 280dp 气泡压窄、移动端看不全。
+    val displayText = QuroVoiceStyle.strip(msg.text ?: "")
+    // 可视化组件围栏（正文第二通道）区间：先定位，供下面的内联扫描「护住」围栏 JSON，
+    // 避免围栏通道与内联通道把同一张卡各渲染一遍。
+    val cardFenceSpans = remember(displayText) {
+        runCatching { CardFence.parse(displayText).map { it.start..it.end } }.getOrElse { emptyList<IntRange>() }
+    }
+    val (cleanText, inlineCards) = remember(displayText, cardFenceSpans) { extractInlineComponents(displayText, cardFenceSpans) }
+    // 「动态对话框UI」判定：AI 消息且【几乎整条都是】quro-ui 围栏（剥离围栏后无其余正文）→
+    // 动态 UI 本身就是消息内容（对话框本身），撑满屏幕宽度、贴边、零内边距、无卡片背景；
+    // 普通消息（含正文/思考/工具、仅夹带动态 UI 区块）仍走正常气泡布局，保留左右留白与「思考/工具」胶囊。
+    // 修复：原判定只要含任一围栏就整条走「纯动态UI」布局，导致夹带正文/思考/工具的动态 UI 消息
+    // 丢失气泡正文与「思考/工具」胶囊 —— 表现为「工具调用消失」「部分文本不显示」。
+    // 现改为仅当剥离围栏后无其余正文时才走纯动态UI布局。
+    val isDynamicUiMessage = !msg.mine && dynamicUiBlocks.isNotEmpty() && cleanText.isBlank()
+    var showCopyMenu by remember { mutableStateOf(false) }
+    var copiedText by remember { mutableStateOf("") }
+
+    // 长按复制反馈：将文本写入剪贴板并显示短暂提示
+    fun copyToClipboard(text: String) {
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("Zorv", text))
+        copiedText = if (text.length > 30) text.take(30) + "…" else text
+        showCopyMenu = true
+    }
+
+    // 外层 Column：动态对话框UI 贴边屏幕边缘（撑满全宽、零水平内边距），
+    // 普通消息保留 8/16dp 水平留白，与气泡视觉一致。
+    Column(
+        Modifier.fillMaxWidth().then(
+            if (isDynamicUiMessage) Modifier
+            else Modifier.padding(horizontal = if (narrow) 8.dp else 16.dp)
+        )
+    ) {
+        // 「动态对话框UI」分支：AI消息含动态UI时直接作为消息体渲染，跳过气泡、跳过280dp限制、无卡片背景、撑满宽度。
+        if (isDynamicUiMessage) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                // AI 头像可点击 → 编辑灵魂卡
+                var showAvatarMenu by remember { mutableStateOf(false) }
+                Box(Modifier.clickable { showAvatarMenu = true }) {
+                    AvatarContent(msg.avatarUri, msg.avatar, avatarSize)
+                    DropdownMenu(expanded = showAvatarMenu, onDismissRequest = { showAvatarMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.qk_00087), fontSize = 14.sp) },
+                            onClick = { showAvatarMenu = false; onCommand("__edit_soul_card__") },
+                            leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) }
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.fillMaxWidth()) {
+                    // 名字+时间（紧凑小字）
+                    Text(
+                        "${msg.author} · ${msg.time}",
+                        fontSize = scaled(11), color = Muted,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+                    )
+                    // 动态UI直接渲染：全宽、无气泡、无卡片背景，UI本身就是对话框
+                    dynamicUiBlocks.forEach { blk ->
+                        DynamicUiBlock(source = blk.source, onCommand = onCommand, onOpenLink = onOpenLink)
+                    }
+                    // 自研卡片：全宽内联渲染（独立功能，不合并）
+                    if (selfCardBlocks.isNotEmpty()) {
+                        selfCardBlocks.forEach { spec ->
+                            Spacer(Modifier.height(6.dp))
+                            CardSurface(spec = spec, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                    // 操作按钮（复制/追问/分享/删除/重试）—— 与气泡消息一致的动作栏
+                    Spacer(Modifier.height(6.dp))
+                    val bubbleActions: @Composable () -> Unit = {
+                        BubbleActionButton(stringResource(R.string.qk_00088), Muted) { copyToClipboard(displayText) }
+                        BubbleActionButton(stringResource(R.string.qk_00089), cs.primary) { onAskFollowup(msg.text ?: "") }
+                        BubbleActionButton(stringResource(R.string.qk_00090), Muted) { onShare(msg.text ?: "") }
+                        BubbleActionButton(stringResource(R.string.qk_00091), Muted) { onDelete(msg.uids) }
+                        BubbleActionButton(stringResource(R.string.qk_00092), Muted) { onRegenerate() }
+                    }
+                    if (narrow) {
+                        FlowRow(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Start,
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) { bubbleActions() }
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Start,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) { bubbleActions() }
+                    }
+                }
+            }
+        } else {
+        // AIP 排版引擎（B 通道）解析前置：统一解析一次，供气泡过滤与【全宽内联】AIP 块共用。
+        // 声明上提到 280dp 内容列之外（消息 else 块作用域），使 AIP 全宽内联块能复用，避免重复解析。
+        val blocks = remember(cleanText) { parseBlocks(cleanText, selfCard = true) }
+        // 🔴🔴 头像是**浮在左上角**的，不是流式兄弟节点（用户实机截图「左边留那么大空间干什么」）。
+        //
+        // 旧结构 `Row { [AI头像][Spacer 10][内容列 weight] [用户头像] }` 里，头像带实打实占掉
+        // `avatarSize + 10 = 38dp` 的横向空间，于是**正文整块右推**。真机实测（360dp 屏）：
+        //   头像行左边界 11.0dp / 正文左边界 46.0dp / 正文右边界 345.7dp
+        //   → 正文可用宽度仅 299.7dp（每行约 20 字），而右边界到屏幕边只剩 11dp —— 左右严重不对称。
+        //
+        // 改成Box 后：内容列占满整宽（可用 337.7dp，每行多约 3 字），头像叠在左上角，
+        // 名字行用 `avatarIndentDp` 给它留出避让位，视觉上头像仍"挂在名字前面"但不挤压正文。
+        Box(Modifier.fillMaxWidth()) {
+        var aiAvatarMenu by remember { mutableStateOf(false) }
+        if (msg.mine) {
+            // 🔴 用户头像：与 AI **同在左上角**。
+            // 曾经浮在右上角（TopEnd），但用户明确反馈「用户的头像、消息、名称还是和 AI 一起在
+            // 左边审美更好，重新改右边有点奇怪」—— 两侧统一靠左，视线不必来回扫。
+            // 名字行的 start 避让位（avatarIndentDp）对两侧同样生效，名字挂在头像后面。
+            Box(Modifier.align(Alignment.TopStart)) {
+                AvatarContent(msg.avatarUri, msg.avatar, avatarSize)
+            }
+        } else {
+            // AI 头像可点击 → 编辑灵魂卡
+            Box(Modifier.clickable { aiAvatarMenu = true }) {
+                AvatarContent(msg.avatarUri, msg.avatar, avatarSize)
+                DropdownMenu(expanded = aiAvatarMenu, onDismissRequest = { aiAvatarMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.qk_00087), fontSize = 14.sp) },
+                        onClick = { aiAvatarMenu = false; onCommand("__edit_soul_card__") },
+                        leadingIcon = { Icon(Icons.Filled.Edit, null, Modifier.size(18.dp)) }
+                    )
+                }
+            }
+        }
+        // 🔴 正文宽度上限：**按屏宽动态取满剩余空间**，不再写死 260/280dp。
+        //    旧实现给整个消息内容列（含名字行/思考胶囊/工具胶囊/正文气泡）套了
+        //    `widthIn(max = 280.dp)` 硬上限，而它当初只是为了把「动态 UI / AIP 卡片」
+        //    那些重内容挤出气泡、改到下方全宽渲染 —— 结果**顺带把纯文本正文也压窄了**：
+        //    右侧整块留白没人用，每行只排下十几个字，中文观感就是「又窄又碎」。
+        //    口径与理由见 RichText.kt 的 messageContentMaxWidth（含下限/上限的理由）。
+        //    bubblePaddingDp = 0：气泡壳已删除（见下方「已删除聊天气泡」），
+        //    正文不再被气泡内边距吃掉 20~24dp；列表本身已有水平内边距，不会贴边。
+        //
+        // 🔴🔴 avatarSizeDp **两边都要传 avatarSize**，不能对 msg.mine 传 0：
+        //    头像布局是「AI 在左（上方 if (!msg.mine)）、用户在右（下方 if (msg.mine)）」，
+        //    两侧都实打实占掉 avatarSize + 10dp 间距。曾误写成 `if (msg.mine) 0 else avatarSize`，
+        //    算出的上限大于 Row 可用宽度 → 内部 fillMaxWidth 把内容列撑满 →
+        //    ① `Arrangement.End` 对满宽子项失效，用户消息看起来跑到左边；
+        //    ② Spacer + 右侧头像被推出可视区，头像整个消失。
+        //    这是「宽度上限必须留够兄弟节点空间」的典型坑：上限算大了不只是「更宽」，
+        //    而会连带把对齐与相邻节点一起废掉。
+        // 名字行左侧的头像避让宽度：头像边长 + 与文字的间距（与悬浮头像尺寸保持一致）
+        val avatarIndentDp = (avatarSize + 10).dp
+        // 🔴🔴 名字+正文两块**分别**相对悬浮头像做垂直对齐（两段互补，不是重复计算）
+        //
+        // 头像 align(TopStart/TopEnd) 悬浮在 Box 顶端，名字行也在顶端 → 顶边平齐，名字只占
+        // 头像上半截。R7-12 两轮反复的教训：
+        //   ·「名字行下移」→ 名字贴头像中线（nameRowCenterOffsetDp 管这个）
+        //   ·「正文下移」→ 正文从头像底部之下开始排（bodyTopInsetDp 管这个）
+        // 名字行是正文**上方**的兄弟，名字行下移会**连带**正文也下移同等距离，
+        // 所以 bodyTopInsetDp 只补剩余缺口：28dp 头像 = 名字行 3dp + 正文 7dp = 10dp 总下移。
+        //   （正文那7dp 此前被 MAX_BODY_TOP_INSET_DP=4 砍半，实测偏紧，本轮放宽到 10）
+        //
+        // 🔴 **不要再动 avatarIndentDp** —— 水平方向实测无重叠，改它是误判。
+        //   实测（R7-12 裁剪图 426px 宽）：头像占x≈336..378，名字行灰字止于 x≈300，
+        //   水平净空约 36px，方向正确且不重叠。
+        val nameRowCenterOffset = nameRowCenterOffsetDp(avatarSize).dp
+        val bodyTopInset = bodyTopInsetDp(avatarSize).dp
+        val contentMaxWidth = messageContentMaxWidth(
+            screenWidthDp = LocalConfiguration.current.screenWidthDp,
+            avatarSizeDp = avatarSize,
+            listPaddingDp = if (narrow) 16 else 32,
+            bubblePaddingDp = 0,
+        ).dp
+        // 内容列占满整宽（父已是 Box，不再需要 weight）；widthIn 只保留"宽屏行长封顶"这一个职责。
+        Column(Modifier.fillMaxWidth().widthIn(max = contentMaxWidth)) {
+            // ── 名字行 + 思考/工具小按钮 ──────────────────────────────
+            // 状态提升到 Column 作用域（展开内容在 Row 外渲染）
+            // 🔧 用户诉求（toolfix8 修正）：思考过程默认【折叠】，不手动点永远不展开。
+            //   即使生成中最后一条也保持折叠；点击下方「思考过程 · N步」胶囊才展开。
+            var showThink by remember { mutableStateOf(false) }
+            // 🔧 用户诉求（toolfix8 修正）：工具调用默认【折叠】，不手动点永远不展开。
+            //   点击「· N 工具」胶囊才展开；内层每个工具卡默认折叠（见 ToolCallRichCard defaultExpanded=false）。
+            var showTools by remember { mutableStateOf(false) }
+            val hasThinkOrTools = !msg.mine && (msg.think != null || !msg.tools.isNullOrEmpty())
+
+            Row(
+                // 🔴 两侧统一靠左：头像、名称、消息全部对齐到左边，与用户诉求一致
+                //（旧实现在这里按 msg.mine 分End / Start，右边看着别扭）。
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // AI 行左侧空出头像宽度（头像已改为悬浮，这里只做视觉避让，不再挤压正文）；
+                    // 右侧留出用户头像的悬浮位，让"名称与头像同在右上角"符合直觉。
+                    .padding(
+                        // 两侧都要让出头像宽度 —— 用户头像也回到左边了。
+                        start = avatarIndentDp,
+                        end = 0.dp,
+                        // 把名字压到与头像同一条中线上（28dp 头像 → 3dp）
+                        top = nameRowCenterOffset,
+                        bottom = if (hasThinkOrTools && (showThink || showTools)) 2.dp else 4.dp,
+                    ),
+            ) {
+                // 🔴 集群 / 子智能体的角色名加「集群 · 」前缀并换强调色：
+                // 聚合层已把不同发言人的消息拆成独立气泡（见 uiMessages 聚合逻辑），
+                // 这里再标注归属，用户才能确认「这是集群里某个角色在说话」，
+                // 而不是主助手自言自语 —— 这正是「集群要能在对话框里被看见和参与」的前提。
+                val isClusterSpeaker = msg.isClusterSpeaker
+                Text(
+                    text = if (isClusterSpeaker) {
+                        "${qstr(R.string.qk_04061, (msg.author).toString())} · ${msg.time}"
+                    } else {
+                        "${msg.author} · ${msg.time}"
+                    },
+                    fontSize = scaled(11),
+                    color = if (isClusterSpeaker) Accent else Muted,
+                )
+                // 仅 AI 消息且含有思考/工具数据时显示小按钮
+                if (hasThinkOrTools) {
+                    Spacer(Modifier.width(6.dp))
+                    // 思考中按钮（紧凑胶囊）
+                    if (msg.think != null) {
+                        TinyChip(
+                            onClick = { showThink = !showThink },
+                            containerColor = Accent.copy(alpha = 0.12f),
+                        ) {
+                            LucideIcon("sparkles", null, Modifier.size(10.dp), tint = Accent)
+                            Spacer(Modifier.width(3.dp))
+                            // 生成中显示「思考中」，完成后显示「思考过程 · N 步」（此前恒为「思考中」，完成后文案误导）
+                            Text(if (streamingThink) stringResource(R.string.qk_00093) else stringResource(R.string.qk_00094, (msg.think.steps.size).toString()), fontSize = 9.sp, color = Accent)
+                        }
+                    }
+                    // 工具调用按钮（紧凑胶囊）
+                    if (!msg.tools.isNullOrEmpty()) {
+                        Spacer(Modifier.width(4.dp))
+                        // 🔴 执行中（结果尚未回填）时胶囊高亮，让用户知道 AI 还在动手
+                        val toolsRunning = msg.tools.any { it.result.isNullOrBlank() }
+                        TinyChip(
+                            onClick = { showTools = !showTools },
+                            containerColor = if (toolsRunning) Color(0xFF3B82F6).copy(alpha = 0.14f)
+                            else cs.primary.copy(alpha = 0.1f),
+                        ) {
+                            // 🔴 旧图标名 "wrench" 在本仓 drawable 里不存在 → 一直显示成 X
+                            LucideIcon(
+                                if (toolsRunning) "qic_running" else "qic_other",
+                                null,
+                                Modifier.size(10.dp),
+                                tint = if (toolsRunning) Color(0xFF3B82F6) else cs.primary.copy(alpha = 0.7f),
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                stringResource(R.string.qk_00095, msg.tools.size.toString()),
+                                fontSize = 9.sp,
+                                color = if (toolsRunning) Color(0xFF3B82F6) else cs.primary.copy(alpha = 0.7f),
+                            )
+                        }
+                    }
+                }
+            }
+            // 等待指示：「等等」动态小组件（内容区 loading，独立于头像/名字）。
+            // 仅在 AI 尚未产出首条内容（busy 占位）时出现，真实回复到达后该占位被移除。
+            if (msg.isWaiting) {
+                WaitingDots()
+                Spacer(Modifier.height(4.dp))
+            }
+            // 执行中指示：AI 正在执行工具（结果尚未回填）→ 显示「AI 正在执行工具…」工作小组件。
+            if (msg.isWorking) {
+                val intentLabel = when (msg.workingIntent) {
+                    "hot" -> stringResource(R.string.qk_04102)
+                    else -> if (msg.workingIntent?.startsWith("entity:") == true)
+                        stringResource(R.string.qk_04103, msg.workingIntent.removePrefix("entity:"))
+                    else null
+                }
+                WorkingIndicator(msg.workingTools, intentLabel)
+                Spacer(Modifier.height(4.dp))
+            }
+            // 展开的思考内容（在名字行下方，正文上方）
+            if (showThink && msg.think != null) {
+                ThinkInlineContent(msg.think, scaled)
+                Spacer(Modifier.height(6.dp))
+            }
+            // 展开的工具卡片
+            if (showTools && !msg.tools.isNullOrEmpty()) {
+                // 🔴 走新版 [ToolCallGroup]：族图标 + 目标物副标题 + 指标徽标 + 耗时 + 状态，
+                //    展开给全文。旧的 ToolsInlineContent 只显示 57 字符截断 JSON（已下线）。
+                ToolCallGroup(msg.tools) {
+                    // 执行轨迹沿用旧组件，保持行为不变
+                    if (embeddedTrace.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        HorizontalDivider(color = Line.copy(alpha = 0.25f))
+                        Spacer(Modifier.height(4.dp))
+                        Column {
+                            embeddedTrace.forEach { ev ->
+                                TraceRow(ev)
+                                Spacer(Modifier.height(2.dp))
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+            // ═══ 可视化弹窗/自定义弹窗小卡片：独立于工具区域显示 ═══
+            if (!msg.tools.isNullOrEmpty()) {
+                msg.tools.filter { it.name == "visual_popup" && it.args.isNotBlank() }.forEach { t ->
+                    Spacer(Modifier.height(6.dp))
+                    val popupCardInfo = remember(t.args) {
+                        runCatching {
+                            val json = org.json.JSONObject(t.args)
+                            val title = json.optString("title", qstr(R.string.qk_00096))
+                            val cardTitle = json.optString("card_title", title)
+                            val cardDescription = json.optString("card_description", qstr(R.string.qk_00097))
+                            Triple(title, cardTitle, cardDescription)
+                        }.getOrDefault(Triple(qstr(R.string.qk_00096), qstr(R.string.qk_00096), qstr(R.string.qk_00097)))
+                    }
+                    val (_, cardTitle, cardDescription) = popupCardInfo
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                runCatching {
+                                    val json = org.json.JSONObject(t.args)
+                                    val pTitle = json.optString("title", qstr(R.string.qk_00096))
+                                    val content = json.optString("content", "")
+                                    val btns = mutableListOf<PopupButton>()
+                                    json.optJSONArray("buttons")?.let { arr ->
+                                        for (i in 0 until arr.length()) {
+                                            val b = arr.optJSONObject(i) ?: continue
+                                            val txt = b.optString("text", "")
+                                            val v = b.optString("value", "")
+                                            if (txt.isNotBlank() && v.isNotBlank()) btns.add(PopupButton(txt, v, b.optString("style", "primary")))
+                                        }
+                                    }
+                                    val inps = mutableListOf<PopupInput>()
+                                    json.optJSONArray("inputs")?.let { arr ->
+                                        for (i in 0 until arr.length()) {
+                                            val inp = arr.optJSONObject(i) ?: continue
+                                            val id = inp.optString("id", "")
+                                            val lbl = inp.optString("label", "")
+                                            if (id.isNotBlank() && lbl.isNotBlank()) inps.add(PopupInput(id, lbl, inp.optString("placeholder", ""), inp.optString("default_value", ""), inp.optString("type", "text")))
+                                        }
+                                    }
+                                    val latch = java.util.concurrent.CountDownLatch(1)
+                                    val resultRef = java.util.concurrent.atomic.AtomicReference<PopupResult?>(null)
+                                    VisualPopupQueue.addPopup(com.ai.assistance.quro.core.tools.VisualPopupData(
+                                        id = "popup_${System.currentTimeMillis()}_${(Math.random() * 1000).toInt()}",
+                                        title = pTitle, content = content, buttons = btns, inputs = inps,
+                                        imageUrl = json.optString("image_url", "").ifBlank { null },
+                                        width = if (json.has("width")) json.optInt("width") else null,
+                                        height = if (json.has("height")) json.optInt("height") else null,
+                                        cardTitle = json.optString("card_title", pTitle),
+                                        cardDescription = json.optString("card_description", qstr(R.string.qk_00097)),
+                                        cancelable = json.optBoolean("cancelable", true),
+                                        timeout = json.optInt("timeout", 60),
+                                        latch = latch, result = resultRef
+                                    ))
+                                }
+                            },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = CardDefaults.cardColors(containerColor = cs.primaryContainer),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Language, null, tint = cs.primary, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(cardTitle, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = cs.onPrimaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (cardDescription.isNotBlank()) Text(cardDescription, fontSize = 10.sp, color = cs.onPrimaryContainer.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, qstr(R.string.qk_00098), tint = cs.primary, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+                msg.tools.filter { it.name == "visual_custom_popup" && it.args.isNotBlank() }.forEach { t ->
+                    Spacer(Modifier.height(6.dp))
+                    val popupCardInfo = remember(t.args) {
+                        runCatching {
+                            val json = org.json.JSONObject(t.args)
+                            val title = json.optString("title", qstr(R.string.qk_00099))
+                            val cardTitle = json.optString("card_title", title)
+                            val cardDescription = json.optString("card_description", qstr(R.string.qk_00097))
+                            Triple(title, cardTitle, cardDescription)
+                        }.getOrDefault(Triple(qstr(R.string.qk_00099), qstr(R.string.qk_00099), qstr(R.string.qk_00097)))
+                    }
+                    val (_, cardTitle, cardDescription) = popupCardInfo
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                runCatching {
+                                    val json = org.json.JSONObject(t.args)
+                                    val title = json.optString("title", qstr(R.string.qk_00099))
+                                    val html = json.optString("html", "")
+                                    if (html.isBlank()) return@runCatching
+                                    val cardTitle = json.optString("card_title", title)
+                                    val cardDescription = json.optString("card_description", qstr(R.string.qk_00097))
+                                    val width = if (json.has("width")) json.optInt("width") else null
+                                    val height = if (json.has("height")) json.optInt("height") else null
+                                    val cancelable = json.optBoolean("cancelable", true)
+                                    val timeout = json.optInt("timeout", 120)
+                                    val latch = java.util.concurrent.CountDownLatch(1)
+                                    val resultRef = java.util.concurrent.atomic.AtomicReference<String?>(null)
+                                    VisualCustomPopupQueue.addPopup(
+                                        com.ai.assistance.quro.core.tools.VisualCustomPopupData(
+                                            id = "popup_${System.currentTimeMillis()}_${(Math.random() * 1000).toInt()}",
+                                            title = title,
+                                            htmlContent = html,
+                                            cardTitle = cardTitle,
+                                            cardDescription = cardDescription,
+                                            width = width,
+                                            height = height,
+                                            cancelable = cancelable,
+                                            timeout = timeout,
+                                            latch = latch,
+                                            result = resultRef
+                                        )
+                                    )
+                                }
+                            },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = CardDefaults.cardColors(containerColor = cs.primaryContainer),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Language, null, tint = cs.primary, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(cardTitle, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = cs.onPrimaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (cardDescription.isNotBlank()) Text(cardDescription, fontSize = 10.sp, color = cs.onPrimaryContainer.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, qstr(R.string.qk_00098), tint = cs.primary, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+            // 附件：用户与 AI 消息通用，支持一条消息多个文件，图片/视频/文档发出来可直接预览
+            if (msg.attachments.isNotEmpty()) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    msg.attachments.forEach { att ->
+                        AttachmentBubble(
+                            att = att,
+                            scaled = scaled,
+                            onActivate = { onAttachmentActivate(att) },
+                            onDownload = { onAttachmentDownload(att) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+            // AIP 排版引擎（B 通道）解析前置：气泡内不再渲染 AIP，改在消息底部全宽内联
+            // （与动态 UI / 生成式 UI 同源机制，避免 280dp 气泡压窄、文字重叠一个盖一个），
+            // 故在此统一解析一次，供气泡过滤与内联渲染共用（blocks 声明已上提到消息 else 块作用域，见上方）。
+            // ── 正文（🔴 已删除聊天气泡，正文直接走 Markdown 渲染）─────────────
+            if (!msg.text.isNullOrBlank()) {
+                // 去掉 LLM 回复里的语音风格标记 (风格)，仅用于显示与复制，不影响朗读
+                val isMine = msg.mine
+                val textColor = if (isMine) Color(android.graphics.Color.parseColor("#5A3322")) else cs.onBackground
+                // 🔴 用户要求「删除气泡直接走 Markdown」：此前这里给每条消息套一层
+                //    `clip + border + background(AccentSoft)` 的圆角气泡壳，AI 侧虽在 v382
+                //    去掉了背景，但**壳本身还在**——它带来三个副作用：
+                //      1. 用户消息是浅粉底 + 边框，AI 消息是透明底，同屏两种视觉语言割裂；
+                //      2. 气泡内边距(narrow 10/非 12dp)在本来就窄的内容列里又吃掉 20~24dp
+                //         可用宽度，直接加剧「每行只排十几个字」；
+                //      3. 复制成功提示要靠 `align(BottomEnd)` 贴在气泡右下角，气泡没了
+                //         这个定位基准也就不成立了。
+                //    现在整层气泡壳移除：颜色只保留文字本身的区分（用户暖褐 / AI 主题色），
+                //    版式完全交给 [RichText] 的 Markdown 渲染，正文宽度按整列可用空间取满。
+                //自由复制修复：此前父 Box 挂了 combinedClickable(onClick=copyPlain)，
+                // 其长按手势会吞掉 SelectionContainer 的文本选区手势，且单击即整段复制，
+                // 导致「长按自由选词复制」失效。移除此点击处理，让 SelectionContainer 接管选区；
+                // 整段复制仍由下方「复制」操作按钮提供。
+                Box(Modifier.padding(top = bodyTopInset)) {
+                    // 开关为提示词级（主动/被动），渲染管线常开——用户提醒后 AI 输出的围栏仍渲染为卡片。
+                    // blocks 已前置解析（消息级），此处直接复用；气泡内仅渲染文本/图表等，
+                    // AIP 排版引擎移出到消息底部全宽内联渲染。
+                    SelectionContainer {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // 动态 UI 区块不在气泡内渲染（会被 280dp 压窄 / 输入条遮挡），改在消息底部全宽内联渲染。
+                        val bubbleRenderBlocks = blocks.filter { it !is MsgBlock.DynamicUi && it !is MsgBlock.SelfCard && it !is MsgBlock.Card }
+                        // v1089：每条块用稳定 key 渲染，避免流式/recomposition 时 Compose 按槽位复用
+                        // AndroidView/WebView，导致两条 html 预览被合并成一个框（两个渲染框融合成一）。
+                        for (bIdx in bubbleRenderBlocks.indices) {
+                            val blk = bubbleRenderBlocks[bIdx]
+                            key(bIdx, blk::class.simpleName ?: "blk") {
+                            when (blk) {
+                                is MsgBlock.Text -> {
+                                    // [D1] 接入项目统一富文本渲染器 RichText（ui/dialog/RichText.kt）：
+                                    // 原生支持加粗/斜体/行内代码/链接/标题/引用/代码块，主题色自适应，零第三方依赖。
+                                    RichText(
+                                        text = blk.text,
+                                        baseStyle = TextStyle(fontSize = scaled(15), color = textColor, lineHeight = scaled(23)),
+                                        onLinkClick = onOpenLink,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        // 🔴🔴 两侧正文**统一靠左**，与头像、名字行三者对齐。
+                                        //
+                                        // 这里是 #181 用户报的「用户名字、头像过去了发的消息还在右边」的真凶：
+                                        // 上一轮只把头像（TopEnd→TopStart）和名字行（Arrangement.End→Start）
+                                        // 挪到了左边，**唯独漏了这个 textAlign**，
+                                        // 于是同一条消息被劈成两半 —— 名字在左、正文在右，看起来像两个人在说话。
+                                        //
+                                        // 注释里当年写「不显式下发 textAlign 用户那条短消息就会贴左边（真机截图证实）」
+                        // 说的是**另一种排版**（气泡内右对齐的旧版式），那个版式连同气泡壳早已删除；
+                                        //    留着这条分支只会让三者的对齐互相矛盾。左右分栏靠 Column 排列实现，
+                                        //    不再由 textAlign 承担。
+                                        textAlign = TextAlign.Start,
+                                    )
+                                }
+                                is MsgBlock.Heading -> {
+                                    // 🔴 注意：这里的 Heading/Quote/Table **只来自 HTML 块**
+                                    // （RE_BLOCK 匹配 `<h1>`/`<blockquote>`/`<table>`），Markdown 的
+                                    // 标题/引用/表格已全部下放给 [RichText] 的块级解析处理。
+                                    // 所以这里保留旧 buildRich 是对的 —— 不要以为漏改了。
+                                    val size = when (blk.level) {
+                                        1 -> scaled(22); 2 -> scaled(19); 3 -> scaled(17)
+                                        4 -> scaled(16); 5 -> scaled(15); else -> scaled(14)
+                                    }
+                                    val rich = remember(blk.text, textColor) { buildRich(blk.text, TextStyle(fontSize = size, fontWeight = FontWeight.Bold, color = textColor, lineHeight = size),
+                                        boldColor = if (msg.mine) AccentPress else cs.primary, linkColor = cs.primary,
+                                        codeBackground = cs.surfaceVariant.copy(alpha = 0.5f)) }
+                                    ClickableText(text = rich, style = TextStyle(fontSize = size, color = textColor, lineHeight = size),
+                                        onClick = { offset -> rich.getStringAnnotations("link", offset, offset).firstOrNull()?.item?.let { onOpenLink(it) } },
+                                        modifier = Modifier.fillMaxWidth())
+                                }
+                                is MsgBlock.Quote -> {
+                                    Surface(
+                                        color = cs.surfaceVariant.copy(alpha = 0.5f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                    ) {
+                                        val rich = remember(blk.text, textColor) { buildRich(blk.text, TextStyle(fontSize = scaled(15), color = textColor, lineHeight = scaled(23), fontStyle = FontStyle.Italic),
+                                            boldColor = if (msg.mine) AccentPress else cs.primary, linkColor = cs.primary,
+                                            codeBackground = cs.surfaceVariant.copy(alpha = 0.5f)) }
+                                        ClickableText(text = rich, style = TextStyle(fontSize = scaled(15), color = textColor, lineHeight = scaled(23), fontStyle = FontStyle.Italic),
+                                            onClick = { offset -> rich.getStringAnnotations("link", offset, offset).firstOrNull()?.item?.let { onOpenLink(it) } },
+                                            modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 6.dp, bottom = 6.dp, end = 8.dp))
+                                    }
+                                }
+                                is MsgBlock.Rule -> HorizontalDivider(color = Line, modifier = Modifier.padding(vertical = 4.dp))
+                                is MsgBlock.Table -> RenderTable(blk.header, blk.rows, scaled, textColor, onOpenLink)
+                                is MsgBlock.Code -> CodeBlock(lang = blk.lang, code = blk.code, scaled = scaled, onSend = onSend)
+                                is MsgBlock.MiniApp -> {
+                                    // ```miniapp 围栏：HTML Web 应用（AI 自写 HTML+JS+CSS）→ WebView 渲染。
+                                    // 旧版还有第二种内容——`zorv-miniapp:<app_id>` 原生小程序标记（微信语法
+                                    // WXML/WXSS/JS，由自研引擎 miniapp-sdk 就地渲染）。该引擎与整套旧 GenUI
+                                    // 已一并删除，故这条分支（含 NATIVE_MINIAPP_PREFIX 标记解析）随之移除：
+                                    // 历史标记不再有引擎可拉，统一按 HTML 处理（空 HTML 时卡片自身给出提示）。
+                                    QuroChatCardView(
+                                        QuroChatCard.MiniAppCard(
+                                            id = "mini_" + blk.html.hashCode().toString(36).replace("-", "m"),
+                                            title = stringResource(R.string.qk_00022),
+                                            html = blk.html,
+                                            config = emptyMap(),
+                                        ),
+                                        onCommand = onCommand
+                                    )
+                                }
+                                is MsgBlock.Mermaid -> QuroChatCardView(
+                                    QuroChatCard.MermaidCard(
+                                        id = "mmd_" + blk.source.hashCode().toString(36).replace("-", "m"),
+                                        title = stringResource(R.string.qk_00100),
+                                        source = blk.source,
+                                        theme = "",
+                                    ),
+                                    onCommand = onCommand
+                                )
+                                // 动态 UI 区块已在消息底部全宽内联渲染，气泡内不再重复渲染。
+                                is MsgBlock.DynamicUi -> {}
+                                // AIP 排版引擎（Canvas，B 通道）：原生富排版，含四级降级兜底。
+                                // 不在气泡内渲染（会被 280dp 压窄 / 输入条遮挡），改在消息底部全宽内联渲染。
+                                is MsgBlock.Aip -> {}
+                                // 自研卡片围栏已在消息底部全宽内联渲染，气泡内不再重复渲染（与动态 UI 同源机制）。
+                                is MsgBlock.SelfCard -> {}
+                                // 可视化组件围栏（card / cards / cardui）已在消息底部全宽内联渲染，
+                                // 气泡里不重复渲染（280dp 会把它压窄）。
+                                is MsgBlock.Card -> {}
+                            }
+                            }
+                        }
+                        }
+                    }
+                    // 复制成功提示（浮在气泡内右下角）
+                    if (showCopyMenu && copiedText.isNotBlank()) {
+                        Surface(
+                            color = cs.primary.copy(alpha = 0.9f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(4.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                Icon(Icons.Filled.Check, null, Modifier.size(12.dp), tint = Color.White)
+                                Spacer(Modifier.width(4.dp))
+                                Text(stringResource(R.string.qk_00023), fontSize = 11.sp, color = Color.White)
+                            }
+                        }
+                        // 2 秒后自动隐藏
+                        androidx.compose.runtime.LaunchedEffect(showCopyMenu) {
+                            kotlinx.coroutines.delay(2000L)
+                            showCopyMenu = false
+                            copiedText = ""
+                        }
+                    }
+                }
+                // 气泡操作任务栏（仅 AI 消息）：复制 / 追问 / 分享 / 重试
+                if (!msg.mine) {
+                    Spacer(Modifier.height(6.dp))
+                    // 上下文超限错误气泡（issue #11 问题6）：识别稳定前缀，给「新建对话」一键入口——
+                    // 旧行为只有一句「请求失败」，用户既不知道原因、也没有自救办法。
+                    val isContextLimitError = msg.text
+                        ?.startsWith(com.ai.assistance.quro.core.network.QuroLlmErrors.CONTEXT_LIMIT_MESSAGE_PREFIX) == true
+                    val bubbleActions: @Composable () -> Unit = {
+                        BubbleActionButton(stringResource(R.string.qk_00088), Muted) { copyToClipboard(displayText) }
+                        BubbleActionButton(stringResource(R.string.qk_00089), cs.primary) { onAskFollowup(msg.text ?: "") }
+                        BubbleActionButton(stringResource(R.string.qk_00090), Muted) { onShare(msg.text ?: "") }
+                        BubbleActionButton(stringResource(R.string.qk_00091), Muted) { onDelete(msg.uids) }
+                        if (isContextLimitError) {
+                            BubbleActionButton(stringResource(R.string.qk_00062), cs.primary) { onNewConversation() }
+                        } else {
+                            BubbleActionButton(stringResource(R.string.qk_00092), Muted) { onRegenerate() }
+                        }
+                    }
+                    if (narrow) {
+                        FlowRow(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Start,
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) { bubbleActions() }
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Start,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) { bubbleActions() }
+                    }
+                }
+            }
+            // （AIP 全宽内联块已移出 280dp 内容列，在消息 else 块末尾按全宽渲染，见本函数下方）
+            // 注：原先此处渲染 :genui 模块的「生成式 UI 卡片」（AI 自写 JSX/HTML → WebView 内渲染）。
+            // 该模块已随「删除全部旧 GenUI + 内置新 GenUI-Agent」整体移除，卡片渲染随之取消；
+            // 消息上可能残留的历史 genUiCardIds 字段不再有对应渲染（字段本身保留以兼容持久化）。
+            // 🔧 Bug修复「简短回复（快捷回复卡片）不显示」：此前卡片只在「有正文气泡」分支内
+            //   渲染（见上方 bubbleCards）。AI 只下发卡片、没有正文时（如 quickreply 快捷回复建议、
+            //   attachCardToLastAssistant 兜底建的 content="" 纯卡片消息），整条消息什么都不渲染。
+            //   这里在无正文但带卡片时独立渲染卡片（有正文时仍走气泡内渲染，不重复）。
+            if (!msg.mine && msg.text.isNullOrBlank() && msg.cards.isNotEmpty()) {
+                // 自由排版：无正文的纯卡片消息同样用 FlowRow 流式排布（紧凑卡片并排、宽型独占一行）
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    maxItemsInEachRow = Int.MAX_VALUE,
+                ) {
+                    msg.cards.forEach { card ->
+                        key(card.id) {
+                            QuroChatCardView(
+                                card,
+                                onCommand,
+                                modifier = if (isCompactQuroCard(card)) Modifier.wrapContentWidth() else Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                    BubbleActionButton(stringResource(R.string.qk_00091), Muted) { onDelete(msg.uids) }
+                }
+            }
+        }
+        }   // 闭合内层 Box（悬浮头像 + 满宽内容列）
+        // ── zxwidget 动态交互界面：**直接内联渲染在对话框里**，撑满宽度。
+        //    不是弹窗、不进底部卡片栏、也不是气泡内小卡片（`cards` 槽位是那一类）。
+        //    用户 2026-10-13 拍板：「zxwidget 不是卡片方式，是直接渲染在对话框的」。
+        //    与上面 AIP 画布 / 卡片围栏同一套「全宽内联」机制——它们都不该被 280dp 气泡压窄。
+        if (!msg.mine && msg.zxWidgets.isNotEmpty()) {
+            // 暗色判定：zxwidget 页面靠这一位决定皮肤。这里**不**再穿一根 darkMode 参数——
+            // MessageRow / MessageList 都没有它，而 `MaterialTheme.colorScheme` 本身就是
+            // 由 darkMode 派生出来并作用于整棵 UI 树的，读它等价于读 darkMode，
+            // 且省掉两层转发（本仓既有写法：genui/aiapp/ui/RenderTypeBadge.kt）。
+            val zxDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+            Spacer(Modifier.height(8.dp))
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                msg.zxWidgets.forEachIndexed { i, zx ->
+                    key("zxw_${msg.id}_$i") {
+                        ZxWidgetInline(
+                            component = zx.component,
+                            dsl = zx.dsl,
+                            dark = zxDark,
+                            onInteract = { json ->
+                                // 交互即对话：把「用户做了什么」结构化喂回模型接着推理。
+                                // 两条回路必须分开，否则模型收到重复内容：
+                                // ① 有 zx_web_card 工具在等 → 作为**工具结果**回传，本轮直接继续；
+                                // ② 没有（历史重放 / 动态 UI 动作）→ 作为一条**用户消息**发出去。
+                                //
+                                // 🔴 ② 走 `onSend` 而不是 vm.send：MessageRow 是纯展示组件，
+                                //    参数表里没有 vm（写了编译不过）。onSend 在 ChatScreen 处
+                                //    接的就是同一个 send()。
+                                val text = ZxWebCard.summarize(zx.component, json)
+                                QuroDiag.log("ZXWIDGET", text)
+                                if (!ZxWebCardQueue.submitByComponent(zx.component, text)) onSend(text)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        // ── AIP 排版引擎（B 通道）全宽内联：已移出 280dp 内容列，撑满对话框宽度渲染，
+        //    与动态 UI / 生成式 UI / 富组件同源机制，避免 280dp 气泡压窄与"文字被覆盖一个盖一个"。
+        if (!msg.mine && blocks.any { it is MsgBlock.Aip }) {
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth().clipToBounds()) {
+                Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    blocks.filterIsInstance<MsgBlock.Aip>().forEach { blk ->
+                        com.ai.assistance.quro.ui.canvas.AipCanvas(
+                            source = blk.source,
+                            onLinkClick = onOpenLink,
+                        )
+                    }
+                }
+            }
+        }
+        // ── 可视化组件围栏（正文第二通道 ```card / ```cards / ```cardui）：全宽内联渲染。
+        //    与动态 UI / 自研卡片同源机制：不在 280dp 气泡里渲染，撑满对话框宽度。
+        //    围栏内容走 CardFence.toCards 单一解码层；流式未闭合、JSON 还没合法时暂不显示，
+        //    JSON 补全后下一帧重解析自然产出（不闪空卡、不落回源码代码块）。
+        // 按围栏分组保留（而不是直接 flatten）：theme/compact 是**组级**属性，
+        // flatten 之后卡片就不知道该跟哪一组的主题走了。
+        val fenceGroups = remember(blocks) {
+            blocks.filterIsInstance<MsgBlock.Card>().mapNotNull { blk ->
+                val groupTitle = CardFence.parseValueAttrs(blk.attrs)["title"].orEmpty()
+                // title= 要透传给 toCards：模型漏写 type 而被形状推断救回的卡来自「裸数组项」，
+                // 项本身没有标题位置，没有组标题兜底的话一排按钮卡全无标题、认不出是哪组的。
+                val cards = runCatching { CardFence.toCards(blk.fence, blk.source, groupTitle) }.getOrNull()
+                    // 流式防护：数据还没写完（表格/饼图/图表/热力图/雷达空数据）时不显示，
+                    // 下一帧数据到齐重解析就会产出完整卡片，避免闪一下「（无数据）」。
+                    ?.filter { c -> !cardHasNoData(c) }
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: return@mapNotNull null
+                CardFence.Grouped(
+                    cards = cards,
+                    title = groupTitle,
+                    theme = CardFence.parseValueAttrs(blk.attrs)["theme"]?.lowercase()?.takeIf { it in CardFence.THEME_PRESETS } ?: "accent",
+                    compact = CardFence.parseAttrs(blk.attrs).contains("compact"),
+                    // 逐行围栏流式时会反复重解析，标题只在闭合后给，避免每帧闪标题
+                    showTitle = blk.fence != CardFence.FENCE_CARDJSON || blk.closed,
+                )
+            }
+        }
+        if (fenceGroups.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            for (grp in fenceGroups) {
+                if (grp.showTitle && grp.title.isNotBlank()) {
+                    Text(
+                        grp.title,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+                    )
+                }
+                CompositionLocalProvider(
+                    LocalCardTheme provides grp.theme,
+                    LocalCardCompact provides grp.compact,
+                ) {
+                    Box(Modifier.fillMaxWidth().clipToBounds()) {
+                        FlowRow(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            maxItemsInEachRow = Int.MAX_VALUE,
+                        ) {
+                            for (c in grp.cards) {
+                                key(c.id) {
+                                    QuroChatCardView(
+                                        c,
+                                        onCommand,
+                                        modifier = if (isCompactQuroCard(c)) Modifier.wrapContentWidth() else Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // ── 消息富组件（ui_widget/ui_card 下发的卡片、AI 文本内联组件 JSON）：全宽内联在气泡下方渲染，
+        //    不再塞进 280dp 气泡被压窄、移动端看不全。与动态 UI 区块一致：撑满对话框、随对话滚动、无 X 关闭。
+        if (!msg.text.isNullOrBlank()) {
+            val bubbleCards = remember(msg.cards, inlineCards) { msg.cards + inlineCards }
+            if (bubbleCards.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                // 渲染区硬锁到屏幕宽度：任何比屏幕宽的子内容（宽表格/一排多元素/超宽组件）一律裁在屏内，
+                // 绝不溢出导致整屏横向滚动。移动端自适应屏幕、不超出。
+                Box(Modifier.fillMaxWidth().clipToBounds()) {
+                    FlowRow(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        maxItemsInEachRow = Int.MAX_VALUE,
+                    ) {
+                        // v1089：每张卡片用稳定 key（card.id）渲染，避免 WebView 列表按槽位复用
+                        // 导致两张 HtmlPreviewCard 融合成一个框。
+                        for (c in bubbleCards) {
+                            key(c.id) {
+                                QuroChatCardView(
+                                    c,
+                                    onCommand,
+                                    modifier = if (isCompactQuroCard(c)) Modifier.wrapContentWidth() else Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // ── 动态 UI：全宽内联渲染进对话框（原生、自适应屏幕、完整可见、不弹窗、不点卡片）──
+        // 仅在「非纯动态UI消息」时渲染（纯动态UI消息已在上面的 if 分支内作为对话框本身直接渲染）。
+        if (dynamicUiBlocks.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            for (d in dynamicUiBlocks) {
+                key(d.source.hashCode()) {
+                    Spacer(Modifier.height(6.dp))
+                    DynamicUiBlock(source = d.source, onCommand = onCommand, onOpenLink = onOpenLink)
+                }
+            }
+        }
+        // ── 自研卡片渲染（feat_self_card）：全宽内联渲染进对话框，独立功能，与动态 UI 不合并 ──
+        if (selfCardBlocks.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            for (s in selfCardBlocks) {
+                key(s.hashCode()) {
+                    Spacer(Modifier.height(6.dp))
+                    CardSurface(spec = s, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+        }   // 闭合 else（非纯动态UI消息，走原有气泡渲染）
+    }   // 闭合外层 Column
+}
+
+@Composable
+private fun AttachmentBubble(
+    att: Attachment,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    onActivate: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    val cs = MaterialTheme.colorScheme
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(cs.surfaceVariant)
+            .border(1.dp, Line, RoundedCornerShape(12.dp))
+            .padding(10.dp, 8.dp)
+    ) {
+        // 预览区（按类型）：点击触发 onActivate（图片全屏 / 视频播放 / 文档打开）
+        when (att.type) {
+            "image" -> AttachmentImagePreview(att, onActivate)
+            "video" -> AttachmentVideoPreview(att, onActivate)
+            else -> AttachmentFilePreview(att, onActivate)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LucideIcon(fileTypeIcon(att), null, Modifier.size(16.dp), tint = cs.primary)
+            Spacer(Modifier.width(6.dp))
+            Column(Modifier.weight(1f)) {
+                Text(att.name, fontSize = scaled(13), color = cs.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(att.meta, fontSize = scaled(11), color = Muted)
+            }
+            IconButton(onClick = onDownload, Modifier.size(32.dp)) {
+                LucideIcon("download", stringResource(R.string.qk_00101), Modifier.size(16.dp), tint = cs.primary)
+            }
+        }
+    }
+}
+
+/** 根据附件类型 / 扩展名返回 Lucide 图标名。 */
+private fun fileTypeIcon(att: Attachment): String {
+    if (att.type == "image") return "image"
+    if (att.type == "video") return "video"
+    val ext = att.name.substringAfterLast('.', "").lowercase()
+    return when (ext) {
+        "pdf" -> "file_text"
+        "doc", "docx" -> "file_text"
+        "xls", "xlsx" -> "table"
+        "ppt", "pptx" -> "presentation"
+        "txt", "md", "log", "csv", "json", "xml", "html", "htm" -> "file_text"
+        "zip", "rar", "7z" -> "archive"
+        "mp3", "wav", "flac", "aac", "ogg" -> "music"
+        "mp4", "avi", "mov", "mkv" -> "video"
+        else -> "paperclip"
+    }
+}
+
+/** 图片：缩略图（点击查看大图）。 */
+@Composable
+private fun AttachmentImagePreview(att: Attachment, onActivate: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val bmp = remember(att.path) {
+        runCatching { att.path?.let { BitmapFactory.decodeFile(it)?.asImageBitmap() } }.getOrNull()
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(max = 220.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(cs.surface)
+            .clickable { onActivate() },
+        contentAlignment = Alignment.Center
+    ) {
+        if (bmp != null) {
+            Image(
+                bitmap = bmp, contentDescription = att.name, contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+            )
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(6.dp)
+                    .background(Color.Black.copy(alpha = 0.4f), CircleShape).padding(4.dp)
+            ) {
+                LucideIcon("maximize", stringResource(R.string.qk_00102), Modifier.size(14.dp), tint = Color.White)
+            }
+        } else {
+            Text(stringResource(R.string.qk_00103), color = Muted, fontSize = 12.sp)
+        }
+    }
+}
+
+/** 视频：首帧 + 播放按钮（点击打开应用内播放器）。 */
+@Composable
+private fun AttachmentVideoPreview(att: Attachment, onActivate: () -> Unit) {
+    val frame = remember(att.path) {
+        runCatching {
+            att.path?.let { p ->
+                val retr = MediaMetadataRetriever()
+                retr.setDataSource(p)
+                val b = retr.frameAtTime ?: retr.getFrameAtTime(0)
+                retr.release()
+                b?.asImageBitmap()
+            }
+        }.getOrNull()
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(max = 220.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black)
+            .clickable { onActivate() },
+        contentAlignment = Alignment.Center
+    ) {
+        if (frame != null) {
+            Image(
+                bitmap = frame, contentDescription = att.name, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+            )
+        }
+        Box(
+            Modifier.size(48.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.PlayArrow, stringResource(R.string.qk_00104), Modifier.size(28.dp), tint = Color.White)
+        }
+    }
+}
+
+/** 文档 / 文件：类型图标 + 内容预览卡片 + 打开提示（点击打开应用内查看器）。 */
+@Composable
+private fun AttachmentFilePreview(att: Attachment, onActivate: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    val ctx = LocalContext.current
+    val ext = att.name.substringAfterLast('.', "").lowercase()
+    val isPreviewable = ext in setOf(
+        "docx", "xlsx", "pptx", "pdf",
+        "txt", "md", "markdown", "json", "csv", "xml",
+        "html", "htm", "log", "kt", "kts", "py", "js", "ts", "css", "java",
+    )
+    val isOfficeDoc = ext in setOf("docx", "xlsx", "pptx", "pdf")
+    // 尝试读取文件前几行作为预览
+    val previewText = remember(att.path) {
+        if (!isPreviewable || att.path == null) return@remember null
+        val f = File(att.path)
+        if (!f.exists() || f.length() > 2L * 1024 * 1024) return@remember null
+        runCatching {
+            if (isOfficeDoc) {
+                // Office 文档：提取纯文本前 120 字符作为预览
+                val text = extractOfficeText(f)
+                text.take(120).replace("\n", " ").ifBlank { null }
+            } else {
+                // 文本文件：直接读取前 120 字符
+                f.bufferedReader(Charsets.UTF_8).use { reader ->
+                    val buf = CharArray(256)
+                    val n = reader.read(buf, 0, 256)
+                    if (n > 0) String(buf, 0, n) else ""
+                }.take(120)
+            }
+        }.getOrNull()
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(cs.surface)
+            .border(1.dp, Line, RoundedCornerShape(10.dp))
+            .clickable { onActivate() }
+            .padding(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp).background(cs.primaryContainer, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                LucideIcon(fileTypeIcon(att), null, Modifier.size(22.dp), tint = cs.primary)
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    att.name,
+                    fontSize = 13.sp, color = cs.onSurface,
+                    fontWeight = FontWeight.SemiBold, maxLines = 1,
+                )
+                Text(
+                    if (isPreviewable) stringResource(R.string.qk_00105) else stringResource(R.string.qk_00106),
+                    fontSize = 11.sp, color = cs.primary,
+                )
+            }
+            // 类型徽标
+            if (isOfficeDoc) {
+                Text(
+                    ext.uppercase(),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = cs.primary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(cs.primaryContainer)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
+        // 文档内容预览卡（仅在有预览文本时显示）
+        if (!previewText.isNullOrBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Column(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(cs.surfaceVariant.copy(alpha = 0.6f))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Text(stringResource(R.string.qk_00107),
+                    fontSize = 10.sp,
+                    color = Muted,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    previewText + if (previewText.length >= 120) "…" else "",
+                    fontSize = 11.sp,
+                    color = cs.onSurface.copy(alpha = 0.8f),
+                    lineHeight = 15.sp,
+                    maxLines = 4,
+                )
+            }
+        }
+        // 对话框内直接渲染文档排版：可展开内联预览（复用 QuroDocumentViewer 进程内渲染引擎，
+        // docx/xlsx/pptx/pdf 走 mammoth/SheetJS/pdf.js，真正实现「对话框直接渲染文档排版」）。
+        if (isOfficeDoc && att.path != null) {
+            val docFile = remember(att.path) { File(att.path!!) }
+            var inlineExpanded by remember(att.path) { mutableStateOf(false) }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { inlineExpanded = !inlineExpanded }) {
+                    Text(
+                        if (inlineExpanded) stringResource(R.string.qk_00108) else stringResource(R.string.qk_00109),
+                        color = cs.primary,
+                        fontSize = 12.sp,
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onActivate) {
+                    Text(stringResource(R.string.qk_00110), color = cs.primary.copy(alpha = 0.8f), fontSize = 12.sp)
+                }
+            }
+            if (inlineExpanded && docFile.exists()) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 260.dp, max = 420.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(cs.surface)
+                        .border(1.dp, Line, RoundedCornerShape(8.dp))
+                ) {
+                    QuroDocumentViewer(
+                        file = docFile,
+                        onClose = { inlineExpanded = false },
+                        onExternal = {
+                            openFileWithSystemViewer(ctx, att)
+                            inlineExpanded = false
+                        },
+                        readOnly = true,
+                    )
+                }
+            } else if (inlineExpanded) {
+                Text(stringResource(R.string.qk_00111, (att.path).toString()),
+                    color = cs.error,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(8.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 全屏可缩放图片查看器（双击在 1x / 2.5x 间切换，支持双指捏合与拖动）。 */
+@Composable
+private fun FullScreenImageViewer(path: String, name: String, onClose: () -> Unit) {
+    val bmp = remember(path) { runCatching { BitmapFactory.decodeFile(path)?.asImageBitmap() }.getOrNull() }
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    val state = rememberTransformableState { zoom, pan, _ ->
+        scale = (scale * zoom).coerceIn(1f, 5f)
+        offset += pan
+    }
+    Box(Modifier.fillMaxSize().zIndex(130f).background(Color.Black)) {
+        IconButton(onClick = onClose, Modifier.align(Alignment.TopEnd).padding(8.dp).size(40.dp)) {
+            LucideIcon("x", stringResource(R.string.qk_00065), Modifier.size(22.dp), tint = Color.White)
+        }
+        if (bmp != null) {
+            Image(
+                bitmap = bmp,
+                contentDescription = name,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)
+                    .transformable(state)
+                    .clickable { scale = if (scale > 1f) 1f else 2.5f; offset = Offset.Zero },
+            )
+        } else {
+            Text(stringResource(R.string.qk_00112), color = Color.White, modifier = Modifier.align(Alignment.Center))
+        }
+    }
+}
+
+/** 用系统查看器打开文档 / 视频（FileProvider 共享，无需写权限）。 */
+private fun openFileWithSystemViewer(ctx: Context, att: Attachment) {
+    val file = att.path?.let { File(it) }?.takeIf { it.exists() } ?: run {
+        Toast.makeText(ctx, qstr(R.string.qk_00113), Toast.LENGTH_SHORT).show()
+        return
+    }
+    val mime = when (att.type) {
+        "image" -> "image/*"
+        "video" -> "video/*"
+        else -> fileMimeByExt(file.extension)
+    }
+    runCatching {
+        val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        ctx.startActivity(Intent.createChooser(intent, qstr(R.string.qk_00114)))
+    }.onFailure {
+        Toast.makeText(ctx, qstr(R.string.qk_00115, (it.message).toString()), Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun fileMimeByExt(ext: String): String = when (ext.lowercase()) {
+    "pdf" -> "application/pdf"
+    "txt", "log", "md", "json", "csv", "xml", "html", "htm" -> "text/plain"
+    "doc" -> "application/msword"
+    "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    "xls" -> "application/vnd.ms-excel"
+    "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    "ppt" -> "application/vnd.ms-powerpoint"
+    "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    "zip" -> "application/zip"
+    "apk" -> "application/vnd.android.package-archive"
+    else -> "*/*"
+}
+
+private fun formatJsonValue(v: String): String = when {
+    v.length > 60 -> "${v.take(57)}\u2026"
+    v.isEmpty() -> "\"\""
+    else -> v
+}
+
+@Composable
+private fun ThinkBubble(think: ThinkBlock, scaled: (Int) -> androidx.compose.ui.unit.TextUnit) {
+    val cs = MaterialTheme.colorScheme
+    var expanded by remember { mutableStateOf(false) }
+    // 🛡️ 过滤 reasoning 中的 HTML 标签（MiMO 等模型思考过程常输出 HTML 片段），
+    //   避免原始 <div style=...> 直接显示在思考气泡里。保留纯文本语义。
+    val cleanSteps = remember(think.steps) {
+        think.steps.map { s ->
+            // 去除 HTML 标签但保留文本内容；再将连续空白压缩为单空格
+            s.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+        }.filter { it.isNotBlank() }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(android.graphics.Color.parseColor("#FBF8F2")))
+            .border(1.dp, Line2, RoundedCornerShape(14.dp))
+            .then(
+                if (expanded) Modifier.padding(12.dp)
+                else Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+            )
+    ) {
+        // 标题栏：始终可见，点击切换展开/收起
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clickable { expanded = !expanded },
+        ) {
+            LucideIcon("sparkles", stringResource(R.string.qk_00082), Modifier.size(16.dp), tint = Accent)
+            Spacer(Modifier.width(6.dp))
+            Text(stringResource(R.string.qk_00093), fontSize = scaled(12), color = Accent, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            LucideIcon(if (expanded) "chevron_up" else "chevron_down", null, Modifier.size(15.dp), tint = Muted)
+        }
+        // 思考步骤（展开时显示，带 AnimatedVisibility 动画）
+        androidx.compose.animation.AnimatedVisibility(visible = expanded,
+            enter = androidx.compose.animation.expandVertically() + fadeIn(),
+            exit = androidx.compose.animation.shrinkVertically() + fadeOut()) {
+            Column {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = Line2.copy(alpha = 0.5f))
+                Spacer(Modifier.height(6.dp))
+                cleanSteps.forEachIndexed { i, s ->
+                    Row(Modifier.padding(vertical = 2.dp)) {
+                        Text("${i + 1}. ", fontSize = scaled(13), color = InkSoft)
+                        Text(s, fontSize = scaled(13), color = InkSoft)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 合体气泡：思考中 + 调用工具合并为单个卡片（解决"思考中/调用工具拆成两个独立气泡"的问题）。
+ * 外观与 ThinkBubble 一致（暖色背景 + 思考中标题），展开后先列思考步骤，再列工具调用。
+ */
+@Composable
+private fun ThinkingWithToolsBubble(
+    think: ThinkBlock,
+    tools: List<ToolCallUi>,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    withTrace: Boolean = false,
+    traceLines: SnapshotStateList<QuroAgentTrace.AgentTraceEvent> = mutableStateListOf(),
+) {
+    val cs = MaterialTheme.colorScheme
+    var expanded by remember { mutableStateOf(false) }
+    val cleanSteps = remember(think.steps) {
+        think.steps.map { s ->
+            s.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+        }.filter { it.isNotBlank() }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(android.graphics.Color.parseColor("#FBF8F2")))
+            .border(1.dp, Line2, RoundedCornerShape(14.dp))
+            .then(
+                if (expanded) Modifier.padding(12.dp)
+                else Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+            )
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clickable { expanded = !expanded },
+        ) {
+            LucideIcon("sparkles", stringResource(R.string.qk_00082), Modifier.size(16.dp), tint = Accent)
+            Spacer(Modifier.width(6.dp))
+            Text(stringResource(R.string.qk_00093), fontSize = scaled(12), color = Accent, fontWeight = FontWeight.SemiBold)
+            if (tools.isNotEmpty()) {
+                Spacer(Modifier.width(6.dp))
+                // 工具调用计数角标
+                Box(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(cs.primary.copy(alpha = 0.12f))
+                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                ) {
+                    Text(stringResource(R.string.qk_00151, (tools.size).toString()), fontSize = 9.sp, color = cs.primary.copy(alpha = 0.7f))
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            LucideIcon(if (expanded) "chevron_up" else "chevron_down", null, Modifier.size(15.dp), tint = Muted)
+        }
+        AnimatedVisibility(visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()) {
+            Column {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = Line2.copy(alpha = 0.5f))
+                Spacer(Modifier.height(6.dp))
+                // 思考步骤
+                cleanSteps.forEachIndexed { i, s ->
+                    Row(Modifier.padding(vertical = 2.dp)) {
+                        Text("${i + 1}. ", fontSize = scaled(13), color = InkSoft)
+                        Text(s, fontSize = scaled(13), color = InkSoft)
+                    }
+                }
+                // 工具调用（合体在思考步骤下方）
+                if (tools.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(color = Line2.copy(alpha = 0.3f))
+                    Spacer(Modifier.height(6.dp))
+                    // 🔴 走新版 [ToolCallGroup]（族图标 + 目标物 + 指标 + 耗时 + 状态）
+                    tools.forEach { t ->
+                        ToolCallRichCard(t, defaultExpanded = false)
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    // 执行轨迹（如果启用）
+                    if (withTrace) {
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider(color = Line2.copy(alpha = 0.25f))
+                        Spacer(Modifier.height(6.dp))
+                        var traceExpanded by remember { mutableStateOf(true) }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { traceExpanded = !traceExpanded }) {
+                            Text(stringResource(R.string.qk_00152), fontSize = scaled(10), color = Muted)
+                            Spacer(Modifier.weight(1f))
+                            LucideIcon(if (traceExpanded) "chevron_up" else "chevron_down", null,
+                                Modifier.size(12.dp), tint = Muted)
+                        }
+                        AnimatedVisibility(traceExpanded) {
+                            Column {
+                                traceLines.takeLast(30).forEach { ev ->
+                                    Text("  · [${ev.kind}] ${ev.tag}: ${ev.summary}",
+                                        fontSize = scaled(9), color = InkSoft.copy(alpha = 0.6f),
+                                        fontFamily = FontFamily.Monospace)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── 思考/工具内联展开组件（名字行小按钮点击后显示）───────────────────
+
+/**
+ * AI 尚未产出首条内容时的内容区 loading 指示（「等等」动态小组件）。
+ * 仅渲染三个跳动圆点，独立于头像/人格名字（头像名字由 MessageRow 的 persona 渲染，不在此处）。
+ * 使用 rememberInfiniteTransition 做错相位弹跳，纯 Compose 动画、无 emoji、无图片。
+ * 注：此前静态的「等等」文字已移除，保留动态跳动圆点；AI 消息上的「删除」按钮是独立的
+ * 气泡操作项（BubbleActionButton），不在本组件内，不受影响。
+ */
+@Composable
+private fun WaitingDots() {
+    val cs = MaterialTheme.colorScheme
+    val transition = rememberInfiniteTransition()
+    // 单一进度 0→1 无限循环；三个圆点按 1/3 相位错开，形成依次跳动效果。
+    // 用 tween + 相位偏移，避免 keyframes / StartOffset 在此 Compose 版本的 API 限制。
+    val progress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 6.dp),
+    ) {
+        Spacer(Modifier.width(8.dp))
+        repeat(3) { i ->
+            val t = (progress + i * (1f / 3f)) % 1f
+            val y = -(Math.abs(Math.sin(t * Math.PI)) * 5f)
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .offset(y = y.dp)
+                    .clip(CircleShape)
+                    .background(cs.primary),
+            )
+            if (i < 2) Spacer(Modifier.width(5.dp))
+        }
+    }
+}
+
+/**
+ * 「AI 正在执行工具…」工作指示：复用 [WaitingDots] 的跳动圆点动画 + 文案，
+ * 让多轮工具循环期间对话框明确显示「进行中」，而非静止空白或重复文本。
+ */
+@Composable
+private fun WorkingIndicator(tools: List<String>, label: String? = null) {
+    val cs = MaterialTheme.colorScheme
+    // 优先用意图标签（"正在获取今日热点新闻…" / "正在获取 ZorvAI 的官方信息…"）；
+    // 否则细化为"AI 正在执行工具：web_search · read_url …"；再否则回退笼统文案。
+    val text = label ?: if (tools.isNotEmpty()) {
+        stringResource(R.string.qk_04101, tools.joinToString(" · "))
+    } else {
+        stringResource(R.string.qk_00153)
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 4.dp),
+    ) {
+        Spacer(Modifier.width(8.dp))
+        WaitingDots()
+        Spacer(Modifier.width(6.dp))
+        Text(text,
+            fontSize = 12.sp, color = cs.primary, fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
+ * 名字行的超紧凑胶囊按钮（思考中 / 工具），高度 ~20dp、9sp，替代默认 32dp 的 AssistChip。
+ */
+@Composable
+private fun TinyChip(
+    onClick: () -> Unit,
+    containerColor: Color,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .height(20.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(containerColor)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) { content() }
+    }
+}
+
+/**
+ * 紧凑型思考内容展开区：点击名字行「✦思考中」按钮后显示在按钮下方。
+ * 比 ThinkBubble 更紧凑，适合嵌入消息头部区域。
+ */
+@Composable
+private fun ThinkInlineContent(think: ThinkBlock, scaled: (Int) -> androidx.compose.ui.unit.TextUnit) {
+    val cleanSteps = remember(think.steps) {
+        think.steps.map { s ->
+            s.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+        }.filter { it.isNotBlank() }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(android.graphics.Color.parseColor("#FBF8F2")))
+            .border(1.dp, Line2, RoundedCornerShape(10.dp))
+            .padding(10.dp, 8.dp)
+    ) {
+        cleanSteps.forEachIndexed { i, s ->
+            Row(Modifier.padding(vertical = 1.dp)) {
+                Text("${i + 1}. ", fontSize = scaled(11), color = InkSoft)
+                Text(s, fontSize = scaled(11), color = InkSoft, lineHeight = scaled(16))
+            }
+        }
+    }
+}
+
+
+// ---------------- 输入区 ----------------
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+/**
+ * 聊天输入框上方的「正在播放」内联指示卡：后台有音乐播放时显示，点击打开全屏播放器。
+ * 订阅 [QuroMediaController] 的全局播放状态（由 [QuroMediaService] 写入）。
+ */
+private fun QuroMusicPlayerCard(
+    onOpen: () -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+) {
+    val cs = MaterialTheme.colorScheme
+    val media by QuroMediaController.state.collectAsState()
+    if (media.uri.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(cs.surfaceVariant)
+            .border(1.dp, Line, RoundedCornerShape(12.dp))
+            .clickable { onOpen() }
+            .padding(10.dp, 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.MusicNote, null, Modifier.size(20.dp), tint = cs.primary)
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                media.title.ifEmpty { stringResource(R.string.qk_00156) },
+                fontSize = scaled(13), color = cs.onSurface, maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                if (media.isPlaying) stringResource(R.string.qk_00157) else stringResource(R.string.qk_00158),
+                fontSize = scaled(11), color = cs.onSurfaceVariant, maxLines = 1,
+            )
+        }
+        Icon(
+            if (media.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            null, Modifier.size(18.dp), tint = cs.onSurfaceVariant,
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun Composer(
+    deepThink: Boolean,
+    onToggleThink: () -> Unit,
+    attachments: List<QuroAttachment>,
+    onRemoveAttach: (QuroAttachment) -> Unit,
+    onAttach: () -> Unit,
+    onSend: (String) -> Unit,
+    autoSaveMemory: Boolean = true,
+    onToggleAutoSave: () -> Unit = {},
+    subAgentEnabled: Boolean = true,
+    onToggleSubAgent: () -> Unit = {},
+    text: TextFieldValue,
+    onTextChange: (TextFieldValue) -> Unit,
+    enterSend: Boolean,
+    busy: Boolean,
+    onStop: () -> Unit,
+    onOpenMusicPlayer: () -> Unit = {},
+    autoRead: Boolean = false,
+    onToggleAutoRead: () -> Unit = {},
+    visionEnabled: Boolean = false,
+    onToggleVision: () -> Unit = {},
+    /** 长按「看懂屏幕」开关时调用：发起 MediaProjection（媒体投影 / 屏幕捕获）系统授权。 */
+    onRequestMediaProjection: () -> Unit = {},
+    voiceInputEnabled: Boolean = false,
+    onVoiceInput: () -> Unit = {},
+    onOpenSkills: () -> Unit = {},
+    onOpenAciSelector: () -> Unit = {},
+    onOpenEditor: () -> Unit = {},
+    onSelectVisualPopup: () -> Unit = {},
+    onSelectVisualQuestion: () -> Unit = {},
+    pendingVisualPopup: Boolean = false,
+    pendingVisualQuestion: Boolean = false,
+    onSelectSelfCard: () -> Unit = {},
+    onSelectDynamicUi: () -> Unit = {},
+    onSelectAipDoc: () -> Unit = {},
+    onSelectZxWebCard: () -> Unit = {},
+    onToggleZxWidget: () -> Unit = {},
+    pendingSelfCard: Boolean = false,
+    pendingDynamicUi: Boolean = false,
+    pendingAipDoc: Boolean = false,
+    pendingZxWebCard: Boolean = false,
+    currentWorkspace: String? = null,
+    onOpenWorkspaceSelector: () -> Unit = {},
+    onOpenCodeBrowser: () -> Unit = {},
+    /** 打开多角色集群面板（主持编排 + 多角色分工）。 */
+    /** 🔴 集群模式是否开启（对话框的一种模式，与「深度思考」平级）。 */
+    clusterMode: Boolean = false,
+    /** 集群是否有任务在跑：发送键切成「停止」，并显示协作中状态。 */
+    clusterRunning: Boolean = false,
+    /** 🔴 #183：引擎正在后台安装中（建 Room 库 + 注册 258 个宿主工具），期间显示忙碌态并禁用连点。 */
+    clusterEnabling: Boolean = false,
+    onToggleClusterMode: () -> Unit = {},
+    onStopCluster: () -> Unit = {},
+    /** 集群配置面板（角色/工具/授权），纯配置。 */
+    onOpenClusterConfig: () -> Unit = {},
+    currentAciName: String? = null,
+    enabledSkillsCount: Int = 0,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit
+) {
+    val cs = MaterialTheme.colorScheme
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(cs.background)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        // 正在播放（内联指示卡）：当前有音乐在后台播放时显示，点击打开全屏播放器
+        QuroMusicPlayerCard(onOpen = onOpenMusicPlayer, scaled = scaled)
+        // 附件预览
+        if (attachments.isNotEmpty()) {
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                attachments.forEach { att ->
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(cs.surfaceVariant)
+                            .border(1.dp, Line, RoundedCornerShape(10.dp))
+                            .padding(8.dp, 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LucideIcon("file_text", null, Modifier.size(15.dp), tint = cs.primary)
+                        Spacer(Modifier.width(6.dp))
+                        Text(att.name, fontSize = scaled(12), color = cs.onSurface, maxLines = 1)
+                        Spacer(Modifier.width(6.dp))
+                        Box(Modifier.clickable { onRemoveAttach(att) }) {
+                            LucideIcon("x", qstr(R.string.qk_00159), Modifier.size(14.dp), tint = Muted)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        // ═══ 上下文标识栏：显示当前工作区 / ACI / 技能，让用户一眼看到 AI 能读到什么 ═══
+        val hasCtx = currentWorkspace != null || currentAciName != null || enabledSkillsCount > 0
+        if (hasCtx) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (currentWorkspace != null) {
+                    val wsLabel = currentWorkspace.substringAfterLast('/')
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(cs.primaryContainer.copy(alpha = 0.5f))
+                            .clickable { onOpenWorkspaceSelector() }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LucideIcon("folder", null, Modifier.size(12.dp), tint = cs.primary)
+                        Spacer(Modifier.width(4.dp))
+                        Text("📂 $wsLabel", fontSize = scaled(11), color = cs.onPrimaryContainer, maxLines = 1)
+                    }
+                }
+                if (currentAciName != null) {
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(cs.secondaryContainer.copy(alpha = 0.5f))
+                            .clickable { onOpenAciSelector() }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LucideIcon("link", null, Modifier.size(12.dp), tint = cs.secondary)
+                        Spacer(Modifier.width(4.dp))
+                        Text("🔗 $currentAciName", fontSize = scaled(11), color = cs.onSecondaryContainer, maxLines = 1)
+                    }
+                }
+                if (enabledSkillsCount > 0) {
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(cs.tertiaryContainer.copy(alpha = 0.5f))
+                            .clickable { onOpenSkills() }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        LucideIcon("sparkles", null, Modifier.size(12.dp), tint = cs.tertiary)
+                        Spacer(Modifier.width(4.dp))
+                        Text(stringResource(R.string.qk_00160, (enabledSkillsCount).toString()), fontSize = scaled(11), color = cs.onTertiaryContainer)
+                    }
+                }
+            }
+        }
+        // 🔴 集群模式横幅：模式开着、任务在跑，都必须在输入框附近明说。
+        // 否则用户在对话框里发了消息没回应，只能以为「集群是壳」——
+        // 这正是上一版最大的问题：开关开了却没有任何可见反馈。
+        // 放在**输入条之上**：输入条本身是 Row（横向排列控件），塞不进整行横幅。
+        if (clusterMode || clusterRunning || clusterEnabling) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 6.dp, end = 6.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (clusterRunning || clusterEnabling) {
+                    CircularProgressIndicator(
+                        Modifier.size(12.dp),
+                        strokeWidth = 2.dp,
+                        color = cs.primary,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(
+                    stringResource(
+                        // 🔴 #183：装引擎期间 enabled 还是 false，光靠 clusterMode 判不出来，
+                        // 不单独处理的话用户点了开关会看到「什么都没有」—— 那就是上一版的卡死观感来源。
+                        when {
+                            clusterEnabling -> R.string.qk_04064
+                            clusterRunning -> R.string.qk_04056
+                            else -> R.string.qk_04054
+                        }
+                    ),
+                    fontSize = scaled(11),
+                    color = cs.primary,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.weight(1f))
+                // 运行中给一个显式停止：任务卡住时用户不至于只能杀进程
+                if (clusterRunning) {
+                    TextButton(
+                        onClick = onStopCluster,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    ) {
+                        Text(stringResource(R.string.qk_04057), fontSize = scaled(11), color = cs.primary)
+                    }
+                }
+            }
+        }
+        // 输入条
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .border(1.dp, Line, RoundedCornerShape(18.dp))
+                .background(cs.surface)
+                .padding(6.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            val ctx = LocalContext.current
+            IconButton(onClick = onAttach, Modifier.size(44.dp).padding(2.dp)) {
+                Icon(Icons.Filled.Add, stringResource(R.string.qk_00161), Modifier.size(22.dp), tint = cs.onSurfaceVariant)
+            }
+            // 工具菜单按钮：合并技能选择、ACI 应用选择、编辑器、可视化交互工具
+            ChatToolMenu(
+                cs = cs,
+                pendingVisualPopup = pendingVisualPopup,
+                pendingVisualQuestion = pendingVisualQuestion,
+                pendingSelfCard = pendingSelfCard,
+                pendingDynamicUi = pendingDynamicUi,
+                pendingAipDoc = pendingAipDoc,
+                onOpenSkills = onOpenSkills,
+                onOpenAciSelector = onOpenAciSelector,
+                onOpenEditor = onOpenEditor,
+                onSelectVisualPopup = onSelectVisualPopup,
+                onSelectVisualQuestion = onSelectVisualQuestion,
+                onSelectSelfCard = onSelectSelfCard,
+                onSelectDynamicUi = onSelectDynamicUi,
+                onSelectAipDoc = onSelectAipDoc,
+                pendingZxWebCard = pendingZxWebCard,
+                onSelectZxWebCard = onSelectZxWebCard,
+                onToggleZxWidget = onToggleZxWidget,
+            )
+            if (voiceInputEnabled) {
+                IconButton(onClick = onVoiceInput, Modifier.size(44.dp).padding(2.dp)) {
+                    Icon(Icons.Filled.Mic, stringResource(R.string.qk_00162), Modifier.size(22.dp), tint = cs.onSurfaceVariant)
+                }
+            }
+            BasicTextField(
+                value = text,
+                onValueChange = { onTextChange(it) },
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 24.dp, max = 110.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 9.dp, horizontal = 4.dp),
+                textStyle = TextStyle(fontSize = scaled(15), color = cs.onSurface),
+                keyboardOptions = KeyboardOptions(imeAction = if (enterSend) ImeAction.Done else ImeAction.Default),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        if (enterSend) {
+                            onSend(text.text); onTextChange(TextFieldValue(""))
+                        }
+                    }
+                ),
+                decorationBox = { inner ->
+                        if (text.text.isEmpty()) {
+                            Text(stringResource(R.string.qk_00163), fontSize = scaled(15), color = Muted)
+                        }
+                    inner()
+                },
+                cursorBrush = SolidColor(cs.primary)
+            )
+            if (busy) {
+                // 生成中：发送按钮变身「停止生成」（红色实心方块），点击打断当前回复
+                IconButton(
+                    onClick = onStop,
+                    modifier = Modifier.size(44.dp).padding(2.dp)
+                ) {
+                    LucideIcon("square", stringResource(R.string.qk_00164), Modifier.size(22.dp), tint = cs.error)
+                }
+            } else {
+                IconButton(
+                    onClick = { onSend(text.text); onTextChange(TextFieldValue("")) },
+                    modifier = Modifier.size(44.dp).padding(2.dp),
+                    enabled = text.text.isNotBlank() || attachments.isNotEmpty()
+                ) {
+                    LucideIcon("arrow_up", stringResource(R.string.qk_00165), Modifier.size(22.dp),
+                        tint = if (text.text.isNotBlank() || attachments.isNotEmpty()) cs.primary else Muted)
+                }
+            }
+        }
+        // 深度思考 + 权限模式控制条：移到底部（输入框下方），符合「权限模式在下面」的布局要求
+        ChatPermissionModeBar(
+            deepThink = deepThink,
+            onToggleThink = onToggleThink,
+            autoSaveMemory = autoSaveMemory,
+            onToggleAutoSave = onToggleAutoSave,
+            subAgentEnabled = subAgentEnabled,
+            onToggleSubAgent = onToggleSubAgent,
+            autoRead = autoRead,
+            onToggleAutoRead = onToggleAutoRead,
+            visionEnabled = visionEnabled,
+            onToggleVision = onToggleVision,
+            onRequestMediaProjection = onRequestMediaProjection,
+            currentWorkspace = currentWorkspace,
+            onOpenWorkspaceSelector = onOpenWorkspaceSelector,
+            onOpenCodeBrowser = onOpenCodeBrowser,
+        )
+    }
+}
+
+/**
+ * 输入框「工具」下拉菜单（框内 Build 图标）：技能 / ACI 应用 / 编辑器，
+ * 以及可视化交互工具（可视化弹窗 / 询问 / 小卡片 / 动态UI / AIP文档排版）。
+ * 选中可视化项即置一次性强制标志，发送消息时由 ChatScreen 注入强制指令，确保 AI 当轮必用。
+ */
+@Composable
+private fun ChatToolMenu(
+    cs: androidx.compose.material3.ColorScheme,
+    pendingVisualPopup: Boolean,
+    pendingVisualQuestion: Boolean,
+    pendingSelfCard: Boolean,
+    pendingDynamicUi: Boolean,
+    pendingAipDoc: Boolean,
+    pendingZxWebCard: Boolean,
+    onOpenSkills: () -> Unit,
+    onOpenAciSelector: () -> Unit,
+    onOpenEditor: () -> Unit,
+    onSelectVisualPopup: () -> Unit,
+    onSelectVisualQuestion: () -> Unit,
+    onSelectSelfCard: () -> Unit,
+    onSelectDynamicUi: () -> Unit,
+    onSelectAipDoc: () -> Unit,
+    onSelectZxWebCard: () -> Unit,
+    onToggleZxWidget: () -> Unit,
+) {
+    var showToolMenu by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { showToolMenu = true }, Modifier.size(44.dp).padding(2.dp)) {
+            Icon(Icons.Filled.Build, stringResource(R.string.qk_00135), Modifier.size(22.dp), tint = cs.onSurfaceVariant)
+        }
+        DropdownMenu(
+            expanded = showToolMenu,
+            onDismissRequest = { showToolMenu = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.qk_00166)) },
+                onClick = {
+                    showToolMenu = false
+                    onOpenSkills()
+                },
+                leadingIcon = {
+                    LucideIcon("sparkles", null, Modifier.size(18.dp), tint = cs.primary)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.qk_00001)) },
+                onClick = {
+                    showToolMenu = false
+                    onOpenAciSelector()
+                },
+                leadingIcon = {
+                    Icon(Icons.Filled.Public, null, Modifier.size(18.dp), tint = cs.primary)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.qk_00167)) },
+                onClick = {
+                    showToolMenu = false
+                    onOpenEditor()
+                },
+                leadingIcon = {
+                    Icon(Icons.Filled.Edit, null, Modifier.size(18.dp), tint = cs.primary)
+                },
+            )
+            HorizontalDivider()
+            // 可视化交互工具（支持切换选择/取消选择）
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.DesktopWindows, null, Modifier.size(18.dp), tint = cs.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.qk_00096))
+                        if (pendingVisualPopup) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.Check, stringResource(R.string.qk_00168), Modifier.size(16.dp), tint = cs.primary)
+                        }
+                    }
+                },
+                onClick = {
+                    showToolMenu = false
+                    onSelectVisualPopup()
+                },
+            )
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.TouchApp, null, Modifier.size(18.dp), tint = cs.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.qk_00169))
+                        if (pendingVisualQuestion) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.Check, stringResource(R.string.qk_00168), Modifier.size(16.dp), tint = cs.primary)
+                        }
+                    }
+                },
+                onClick = {
+                    showToolMenu = false
+                    onSelectVisualQuestion()
+                },
+            )
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LucideIcon("credit_card", null, Modifier.size(18.dp), tint = cs.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.qk_00170))
+                        if (pendingSelfCard) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.Check, stringResource(R.string.qk_00168), Modifier.size(16.dp), tint = cs.primary)
+                        }
+                    }
+                },
+                onClick = {
+                    showToolMenu = false
+                    onSelectSelfCard()
+                },
+            )
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LucideIcon("layout-dashboard", null, Modifier.size(18.dp), tint = cs.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.qk_00171))
+                        if (pendingDynamicUi) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.Check, stringResource(R.string.qk_00168), Modifier.size(16.dp), tint = cs.primary)
+                        }
+                    }
+                },
+                onClick = {
+                    showToolMenu = false
+                    onSelectDynamicUi()
+                },
+            )
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LucideIcon("file-text", null, Modifier.size(18.dp), tint = cs.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.qk_00172))
+                        if (pendingAipDoc) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.Check, stringResource(R.string.qk_00168), Modifier.size(16.dp), tint = cs.primary)
+                        }
+                    }
+                },
+                onClick = {
+                    showToolMenu = false
+                    onSelectAipDoc()
+                },
+            )
+            // Web UI 的**设置入口**（开关 / 地址 / 复制）。
+            // 🔴 它**不再**在应用内打开那个界面：Web UI 的定位是「在手机以外的屏幕上
+            //    用同一个对话框」，应用内嵌一个浏览器既没必要，也把服务寿命绑在了
+            //    那个界面上（一关就断链）。真正的界面在别的设备的浏览器里。
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 必须是 iconRes() 里登记过的名字：写不存在的名字会静默
+                        // 落到 else -> ic_x，那一行就显示成一个大叉（这里踩过）
+                        LucideIcon("maximize", null, Modifier.size(18.dp), tint = cs.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.qk_04088))
+                    }
+                },
+                onClick = {
+                    showToolMenu = false
+                    onSelectZxWebCard()
+                },
+            )
+            // zxwidget 能力开关 —— 与上一条是**两件事**：
+            // 上面那条是「打开 Web UI 对话框（只读的 Web 复制品）」，
+            // 这条才是「本轮让模型用 zxwidget 动态交互界面作答」。
+            // 曾经两者焊在一个 onClick 里，于是「打开一个界面」顺手改掉了主对话框的模型行为。
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LucideIcon("blocks", null, Modifier.size(18.dp), tint = cs.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.qk_04076))
+                        if (pendingZxWebCard) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(Icons.Filled.Check, stringResource(R.string.qk_00168), Modifier.size(16.dp), tint = cs.primary)
+                        }
+                    }
+                },
+                onClick = {
+                    showToolMenu = false
+                    onToggleZxWidget()
+                },
+            )
+        }
+    }
+}
+
+// ---------------- 历史抽屉 ----------------
+
+@Composable
+fun HistoryDrawer(
+    history: List<HistoryItem>,
+    onClose: () -> Unit,
+    onNew: () -> Unit,
+    onNewGenUi: () -> Unit,
+    onPick: (String) -> Unit,
+    onCopyAll: () -> Unit = {},
+    onDelete: (String) -> Unit,
+    onDeleteAll: () -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    generatingIds: Set<String> = emptySet(),
+) {
+    val cs = MaterialTheme.colorScheme
+    var lastGroup by remember { mutableStateOf("") }
+    var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var showDeleteAllConfirm by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxHeight()
+            .width(300.dp)
+            .background(cs.surface)
+            .border(1.dp, Line, RoundedCornerShape(0.dp))
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp, 16.dp, 16.dp, 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(stringResource(R.string.qk_00173), fontSize = scaled(18), fontWeight = FontWeight.SemiBold, color = cs.onSurface,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Serif)
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onCopyAll, Modifier.size(36.dp)) {
+                Icon(Icons.Filled.ContentCopy, stringResource(R.string.qk_00174), Modifier.size(20.dp), tint = cs.onSurface)
+            }
+            IconButton(onClick = { showDeleteAllConfirm = true }, Modifier.size(36.dp)) {
+                Icon(Icons.Filled.Delete, qstr(R.string.qk_00175), Modifier.size(20.dp), tint = cs.error)
+            }
+            IconButton(onClick = onClose, Modifier.size(36.dp)) {
+                LucideIcon("x", stringResource(R.string.qk_00065), Modifier.size(20.dp), tint = cs.onSurface)
+            }
+        }
+        Column(
+            Modifier
+                .padding(horizontal = 16.dp)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AccentSoft)
+                    .clickable(onClick = onNew)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LucideIcon("square_pen", null, Modifier.size(18.dp), tint = Accent)
+                Spacer(Modifier.width(10.dp))
+                Text(stringResource(R.string.qk_00062), fontSize = scaled(14), color = AccentPress, fontWeight = FontWeight.SemiBold)
+            }
+            // 内置 GenUI Agent 入口：拉起独立的生成式界面智能体应用
+            // （完整内置开源项目 GenUI-Agent，AI 产出 GenUI JSON DSL → 原生 Compose 组件）。
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(cs.primaryContainer)
+                    .clickable(onClick = onNewGenUi)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LucideIcon("layout_dashboard", null, Modifier.size(18.dp), tint = cs.primary)
+                Spacer(Modifier.width(10.dp))
+                Text("GenUI Agent", fontSize = scaled(14), color = cs.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                Text(stringResource(R.string.qk_00176), fontSize = scaled(11), color = cs.onPrimaryContainer.copy(alpha = 0.7f))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            history.forEach { item ->
+                if (item.group != lastGroup) {
+                    lastGroup = item.group
+                    Text(item.group, fontSize = scaled(12), color = Muted,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (item.active) AccentSoft else cs.surface)
+                        .clickable(onClick = { onPick(item.id) })
+                        .padding(12.dp, 10.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(item.title, fontSize = scaled(14), color = cs.onSurface, fontWeight = if (item.active) FontWeight.SemiBold else FontWeight.Normal)
+                        }
+                        Text(item.sub, fontSize = scaled(12), color = Muted,
+                            maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+                    }
+                    // #862：该会话仍在后台生成时显示「生成中」徽标，让切走后续跑可见
+                    if (item.id in generatingIds) {
+                        Surface(
+                            color = AccentSoft,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) {
+                            Text(qstr(R.string.qk_00177), fontSize = scaled(11), color = AccentPress,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                        }
+                    }
+                    Text(item.time, fontSize = scaled(11), color = Muted, modifier = Modifier.padding(start = 8.dp))
+                    IconButton(onClick = { pendingDeleteId = item.id }, Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Delete, qstr(R.string.qk_00091), Modifier.size(18.dp), tint = cs.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+
+    if (pendingDeleteId != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDeleteId = null },
+            title = { Text(stringResource(R.string.qk_00178)) },
+            text = { Text(stringResource(R.string.qk_00179)) },
+            confirmButton = {
+                TextButton(onClick = { onDelete(pendingDeleteId!!); pendingDeleteId = null }) {
+                    Text(qstr(R.string.qk_00091), color = cs.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteId = null }) { Text(qstr(R.string.qk_00011)) }
+            }
+        )
+    }
+    if (showDeleteAllConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAllConfirm = false },
+            title = { Text(stringResource(R.string.qk_00180)) },
+            text = { Text(stringResource(R.string.qk_00181)) },
+            confirmButton = {
+                TextButton(onClick = { onDeleteAll(); showDeleteAllConfirm = false }) {
+                    Text(qstr(R.string.qk_00182), color = cs.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAllConfirm = false }) { Text(stringResource(R.string.qk_00011)) }
+            }
+        )
+    }
+}
+
+// ---------------- 底部弹层（统一遮罩 + 上滑） ----------------
+
+@Composable
+private fun SheetOverlay(
+    sheet: SheetType?,
+    lastSheet: SheetType?,
+    onDismiss: () -> Unit,
+    backEnabled: Boolean = true,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    modelGroups: List<ModelGroup>,
+    selectedModel: ChatModel,
+    onSelectModel: (ChatModel) -> Unit,
+    onAddModel: (String, String) -> Unit,
+    isFetchingModels: Boolean = false,
+    modelFetchError: String? = null,
+    onFetchModels: () -> Unit = {},
+    personaList: List<Persona>,
+    selectedPersona: Persona,
+    onSelectPersona: (Persona) -> Unit,
+    onAddPersona: (String, String) -> Unit,
+    onPickFile: (String) -> Unit,
+    onExport: () -> Unit,
+    onClear: () -> Unit,
+    onOpenBrowser: (String) -> Unit,
+    // 设置底部弹层（UI 结构来自 MoWenApp，功能保留 Zorv AI 现有设置项）
+    settingsDarkMode: Boolean,
+    onSettingsToggleDark: () -> Unit,
+    settingsSoundOn: Boolean,
+    onSettingsToggleSound: () -> Unit,
+    settingsEnterSend: Boolean,
+    onSettingsToggleEnter: () -> Unit,
+    settingsFontName: String,
+    onSettingsCycleFont: () -> Unit,
+    onOpenModelConfig: () -> Unit,
+    onOpenFeatureModelConfig: () -> Unit,
+    onOpenPermission: () -> Unit,
+    onOpenLspose: () -> Unit,
+    onOpenUsbDebug: () -> Unit,
+    onOpenDefaultApp: () -> Unit,
+    onOpenCms: () -> Unit,
+    onOpenToolbox: () -> Unit,
+    onOpenKnowledge: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onOpenPlugins: () -> Unit,
+    onOpenSkills: () -> Unit,
+    onOpenBots: () -> Unit,
+    onManagePersona: () -> Unit,
+    onOpenVoice: () -> Unit,
+    onOpenTts: () -> Unit,
+    onOpenStt: () -> Unit,
+    onOpenOnlyOffice: () -> Unit,
+    onOpenVoiceService: () -> Unit,
+    onClearChat: () -> Unit,
+    settingsVoiceBallEnabled: Boolean,
+    onSettingsToggleVoiceBall: (Boolean) -> Unit,
+    settingsAiReplyNotify: Boolean,
+    onSettingsToggleAiReplyNotify: () -> Unit,
+    onOpenAbout: () -> Unit,
+    onOpenCleanup: () -> Unit,
+    onOpenFileManager: () -> Unit,
+    onOpenAci: () -> Unit,
+    onOpenMcp: () -> Unit,
+    onOpenCluster: () -> Unit,
+    onOpenSystemStatus: () -> Unit,
+    onOpenComponentGallery: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    vm: QuroChatViewModel,
+    onSendText: (String) -> Unit,
+    onOpenSchedule: () -> Unit = {},
+    onOpenGitHub: () -> Unit = {},
+    onOpenModelHub: () -> Unit = {},
+) {
+    val shown = sheet ?: lastSheet
+    // 设置底部弹层：系统返回键关闭弹层。关键修复——当任意「设置子页」浮层开着时禁用本回调，
+    // 保证返回键永远由最上层子页先处理（子页关 → 回到设置 → 再关设置），实现逐级返回而非跳层。
+    BackHandler(enabled = backEnabled) { onDismiss() }
+    val sheetShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+
+    Box(Modifier.fillMaxSize().zIndex(50f)) {
+        // 遮罩：仅当 sheet 打开时可见且可点击关闭
+        AnimatedVisibility(
+            visible = sheet != null,
+            enter = fadeIn(tween(220)),
+            exit = fadeOut(tween(200)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.42f))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = onDismiss
+                    )
+            )
+        }
+        // 弹层主体：从底部滑入
+        AnimatedVisibility(
+            visible = sheet != null,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it }),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            val surfaceColor = Card
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .shadow(8.dp, sheetShape)
+                    .clip(sheetShape)
+                    .background(surfaceColor)
+                    .border(1.dp, Line, sheetShape)
+            ) {
+                val settingsCtx = LocalContext.current
+                when (shown) {
+                    SheetType.Model -> ModelSheetContent(modelGroups, selectedModel, onSelectModel, onAddModel, scaled, isFetchingModels, modelFetchError, onFetch = onFetchModels)
+                    SheetType.Persona -> PersonaSheetContent(personaList, selectedPersona, onSelectPersona, onAddPersona, scaled)
+                    SheetType.Upload -> UploadSheetContent(
+                        onPickFile, onOpenBrowser, onClear,
+                        onOpenVoiceService, onOpenToolbox, onOpenCms, onOpenSkills, onOpenKnowledge, onOpenTerminal,
+                        onOpenStt,
+                        { q -> onSendText(q) },
+                        scaled,
+                        onOpenSchedule = onOpenSchedule,
+                        onOpenBots = onOpenBots
+                    )
+                    SheetType.Voice -> VoiceSheetContent(onOpenTts, onOpenStt, onOpenVoice, scaled)
+                    SheetType.Settings -> SettingsSheetContent(
+                        settingsDarkMode, onSettingsToggleDark,
+                        settingsSoundOn, onSettingsToggleSound,
+                        settingsEnterSend, onSettingsToggleEnter,
+                        settingsFontName, onSettingsCycleFont,
+                        onOpenModelConfig, onOpenFeatureModelConfig, onOpenPermission, onOpenLspose, onOpenUsbDebug, onOpenDefaultApp, onOpenCms, onOpenToolbox, onOpenKnowledge, onOpenTerminal, onOpenPlugins, onOpenSkills,
+                        onManagePersona, onOpenVoiceService,
+                        onClearChat, settingsVoiceBallEnabled, onSettingsToggleVoiceBall,
+                    settingsAiReplyNotify, onSettingsToggleAiReplyNotify,
+                        onOpenAbout, onOpenAci, onOpenMcp, onOpenCluster, onOpenSystemStatus, onOpenComponentGallery, onOpenAppearance, onExport, onClear, onOpenCleanup, onOpenFileManager,
+                        onOpenGitHub = onOpenGitHub, onOpenModelHub = onOpenModelHub, scaled
+                    )
+                    else -> {}
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SheetHeader(title: String, sub: String, scaled: (Int) -> androidx.compose.ui.unit.TextUnit) {
+    val cs = MaterialTheme.colorScheme
+    Box(Modifier.fillMaxWidth().padding(top = 10.dp), contentAlignment = Alignment.TopCenter) {
+        Box(Modifier.size(38.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(Line2))
+    }
+    Column(Modifier.fillMaxWidth().padding(20.dp, 12.dp, 20.dp, 4.dp)) {
+        Text(title, fontSize = scaled(18), fontWeight = FontWeight.SemiBold, color = cs.onSurface,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Serif)
+        Text(sub, fontSize = scaled(12), color = Muted, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+// ---------------- 设置底部弹层（UI 结构照搬 MoWenApp，功能保留 Zorv AI 现有设置项） ----------------
+
+@Composable
+private fun SettingsSheetContent(
+    darkMode: Boolean, onToggleDark: () -> Unit,
+    soundOn: Boolean, onToggleSound: () -> Unit,
+    enterSend: Boolean, onToggleEnter: () -> Unit,
+    fontName: String, onCycleFont: () -> Unit,
+    onOpenModelConfig: () -> Unit,
+    onOpenFeatureModelConfig: () -> Unit,
+    onOpenPermission: () -> Unit,
+    onOpenLspose: () -> Unit,
+    onOpenUsbDebug: () -> Unit,
+    onOpenDefaultApp: () -> Unit,
+    onOpenCms: () -> Unit,
+    onOpenToolbox: () -> Unit,
+    onOpenKnowledge: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onOpenPlugins: () -> Unit,
+    onOpenSkills: () -> Unit,
+    onManagePersona: () -> Unit,
+    onOpenVoiceService: () -> Unit,
+    onClearChat: () -> Unit,
+    voiceBallEnabled: Boolean, onToggleVoiceBall: (Boolean) -> Unit,
+    settingsAiReplyNotify: Boolean, onSettingsToggleAiReplyNotify: () -> Unit,
+    onOpenAbout: () -> Unit,
+    onOpenAci: () -> Unit,
+    onOpenMcp: () -> Unit,
+    onOpenCluster: () -> Unit,
+    onOpenSystemStatus: () -> Unit,
+    onOpenComponentGallery: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    onExport: () -> Unit, onClear: () -> Unit,
+    onOpenCleanup: () -> Unit,
+    onOpenFileManager: () -> Unit,
+    onOpenGitHub: () -> Unit,
+    onOpenModelHub: () -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit
+) {
+    val cs = MaterialTheme.colorScheme
+    var usePty by remember { mutableStateOf(QuroTerminalPrefs.usePty) }
+    var requireDestructiveConfirm by remember { mutableStateOf(QuroTerminalPrefs.requireDestructiveConfirm) }
+    Column(
+        Modifier.fillMaxWidth().heightIn(max = 480.dp)
+            .verticalScroll(rememberScrollState()).padding(bottom = 20.dp)
+    ) {
+        SheetHeader(stringResource(R.string.qk_01760), stringResource(R.string.qk_03852), scaled)
+        GroupCaption(stringResource(R.string.qk_03838))
+        SetGroup {
+            SetRowClickable(Icons.Filled.ColorLens, stringResource(R.string.qk_03838), stringResource(R.string.qk_03864), "", onOpenAppearance, scaled)
+        }
+        GroupCaption(stringResource(R.string.qk_00485))
+        SetGroup {
+            SetRowClickable(Icons.Filled.VolumeUp, stringResource(R.string.qk_03057), stringResource(R.string.qk_03846), "", onOpenVoiceService, scaled)
+        }
+        GroupCaption(stringResource(R.string.qk_03831))
+        SetGroup {
+            SetRowClickable(Icons.Filled.Tune, stringResource(R.string.qk_02103), stringResource(R.string.qk_03847), "", onOpenModelConfig, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.AutoAwesome, stringResource(R.string.qk_03835), stringResource(R.string.qk_03863), "", onOpenSkills, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Build, stringResource(R.string.qk_03764), stringResource(R.string.qk_03862), "", onOpenFeatureModelConfig, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Security, stringResource(R.string.qk_03833), stringResource(R.string.qk_03867), "", onOpenPermission, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Extension, stringResource(R.string.qk_02024), stringResource(R.string.qk_03848), "", onOpenLspose, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Usb, stringResource(R.string.qk_03845), stringResource(R.string.qk_03860), "", onOpenUsbDebug, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Apps, stringResource(R.string.qk_01687), stringResource(R.string.qk_03869), "", onOpenDefaultApp, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Public, stringResource(R.string.qk_03844), stringResource(R.string.qk_03870), "", onOpenGitHub, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Download, stringResource(R.string.qk_03841), stringResource(R.string.qk_03861), "", onOpenModelHub, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Info, stringResource(R.string.qk_02642), stringResource(R.string.qk_03859), "", onOpenSystemStatus, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Info, stringResource(R.string.qk_03837), stringResource(R.string.qk_03865), "", onOpenComponentGallery, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Extension, stringResource(R.string.qk_00491), stringResource(R.string.qk_03851), "", onOpenPlugins, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Person, stringResource(R.string.qk_02449), stringResource(R.string.qk_03854), "", onManagePersona, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Hub, stringResource(R.string.qk_02058), stringResource(R.string.qk_03858), "", onOpenMcp, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.AccountTree, stringResource(R.string.qk_03946), stringResource(R.string.qk_04065), "", onOpenCluster, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.Public, stringResource(R.string.qk_03843), stringResource(R.string.qk_03866), "", onOpenAci, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRow(
+                Icons.Filled.Code, stringResource(R.string.qk_03849),
+                stringResource(R.string.qk_03868), usePty,
+                onToggle = { usePty = !usePty; QuroTerminalPrefs.usePty = usePty },
+            )
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRow(
+                Icons.Filled.Warning, stringResource(R.string.qk_03850),
+                stringResource(R.string.qk_03871), requireDestructiveConfirm,
+                onToggle = {
+                    requireDestructiveConfirm = !requireDestructiveConfirm
+                    QuroTerminalPrefs.requireDestructiveConfirm = requireDestructiveConfirm
+                },
+            )
+        }
+        GroupCaption(stringResource(R.string.qk_01945))
+        SetGroup {
+            SetRow(Icons.Filled.Notifications, stringResource(R.string.qk_03842), stringResource(R.string.qk_03856), settingsAiReplyNotify, onSettingsToggleAiReplyNotify, scaled)
+        }
+        GroupCaption(stringResource(R.string.qk_03832))
+        SetGroup {
+            SetRowClickable(Icons.Filled.Download, stringResource(R.string.qk_03834), "", stringResource(R.string.qk_03839), onExport, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.DeleteSweep, stringResource(R.string.qk_03836), stringResource(R.string.qk_03853), "", onOpenCleanup, scaled)
+            SetRowClickable(Icons.Filled.FolderOpen, stringResource(R.string.qk_02669), stringResource(R.string.qk_03857), "", onOpenFileManager, scaled)
+            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+            SetRowClickable(Icons.Filled.DeleteSweep, stringResource(R.string.qk_03840), "", "", onClear, scaled, danger = true)
+        }
+        GroupCaption(stringResource(R.string.qk_03830))
+        SetGroup {
+            SetRowClickable(Icons.Filled.Info, stringResource(R.string.qk_00497), stringResource(R.string.qk_03855), "", onOpenAbout, scaled)
+        }
+        Text("Zorv AI · v${BuildConfig.VERSION_NAME}",
+            fontSize = scaled(11), color = Muted, modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+    }
+
+}
+
+/**
+ * 外观与对话设置子页（从设置「外观与对话」进入，仍在设置体系内）。
+ * 合并原「外观」与「对话」两个分区：深色模式 / 字号 / 回复提示音 / 回车发送 / 悬浮语音球。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QuroAppearanceSettingsScreen(
+    darkMode: Boolean, onToggleDark: () -> Unit,
+    soundOn: Boolean, onToggleSound: () -> Unit,
+    enterSend: Boolean, onToggleEnter: () -> Unit,
+    fontName: String, onCycleFont: () -> Unit,
+    voiceBallEnabled: Boolean, onToggleVoiceBall: (Boolean) -> Unit,
+    followSystemLang: Boolean, onToggleFollowSystemLang: () -> Unit,
+    appLanguage: String, onSetAppLanguage: (String) -> Unit,
+    historyRounds: Int? = null, onSetHistoryRounds: (Int?) -> Unit = {},
+    userProfile: QuroChatViewModel.UserProfile,
+    onSaveProfile: (QuroChatViewModel.UserProfile) -> Unit,
+    onClose: () -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+) {
+    val cs = MaterialTheme.colorScheme
+    // 视频通话入口需要 context 启动前台服务
+    val vcCtx = LocalContext.current
+    // 视频通话权限 launcher：与本页入口同一套（先授权 → 检查悬浮窗 → 拉起服务）
+    val videoCallPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        val cam = result[android.Manifest.permission.CAMERA] == true
+        val mic = result[android.Manifest.permission.RECORD_AUDIO] == true
+        if (cam && mic) startVideoCall(vcCtx)
+        else Toast.makeText(vcCtx, qstr(R.string.qk_03901), Toast.LENGTH_LONG).show()
+    }
+    var showUserProfileEditor by remember { mutableStateOf(false) }
+    var showHistoryPicker by remember { mutableStateOf(false) }
+    var showLangPicker by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().background(cs.background)) {
+        TopAppBar(
+            title = { Text(stringResource(R.string.settings_appearance)) },
+            navigationIcon = {
+                IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = cs.background),
+        )
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 20.dp)
+        ) {
+            GroupCaption(stringResource(R.string.appearance_group_appearance))
+            SetGroup {
+                SetRow(Icons.Filled.DarkMode, stringResource(R.string.appearance_dark_mode), stringResource(R.string.appearance_dark_mode_desc), darkMode, onToggleDark, scaled)
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                SetRowClickable(Icons.Filled.FormatSize, stringResource(R.string.appearance_font_size), "", fontName, onCycleFont, scaled)
+            }
+            GroupCaption(stringResource(R.string.appearance_group_conversation))
+            SetGroup {
+                SetRow(Icons.Filled.Notifications, stringResource(R.string.appearance_sound), "", soundOn, onToggleSound, scaled)
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                SetRow(Icons.Filled.Keyboard, stringResource(R.string.appearance_enter_send), stringResource(R.string.appearance_enter_send_desc), enterSend, onToggleEnter, scaled)
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                SetRow(Icons.Filled.Mic, stringResource(R.string.appearance_voice_ball), stringResource(R.string.appearance_voice_ball_desc), voiceBallEnabled, { onToggleVoiceBall(!voiceBallEnabled) }, scaled)
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                // 视频通话入口：拉起 QuroVideoCallService（相机 + 麦克风前台服务，
+                // 叠加「实时画面注入当前多模态模型」与 VIDEO_RECOGNITION 两层理解）。
+                SetRow(
+                    Icons.Filled.Videocam, stringResource(R.string.qk_00183), stringResource(R.string.qk_03743),
+                    false,
+                    {
+                        val cam = ContextCompat.checkSelfPermission(vcCtx, android.Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        val mic = ContextCompat.checkSelfPermission(vcCtx, android.Manifest.permission.RECORD_AUDIO) ==
+                            PackageManager.PERMISSION_GRANTED
+                        if (cam && mic) startVideoCall(vcCtx)
+                        else videoCallPermLauncher.launch(
+                            arrayOf(android.Manifest.permission.CAMERA, android.Manifest.permission.RECORD_AUDIO)
+                        )
+                    },
+                    scaled,
+                )
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                SetRowClickable(
+                    Icons.Filled.History, stringResource(R.string.appearance_history_rounds), stringResource(R.string.appearance_history_rounds_desc),
+                    value = when (historyRounds) {
+                        null -> stringResource(R.string.qk_00185)
+                        else -> stringResource(R.string.qk_00186, (historyRounds).toString())
+                    },
+                    onClick = { showHistoryPicker = true },
+                    scaled = scaled,
+                )
+            }
+            GroupCaption(stringResource(R.string.appearance_group_language))
+            SetGroup {
+                SetRow(
+                    Icons.Filled.Language, stringResource(R.string.appearance_follow_system), stringResource(R.string.appearance_follow_system_desc),
+                    followSystemLang, onToggleFollowSystemLang, scaled,
+                )
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                SetRowClickable(
+                    Icons.Filled.Language, stringResource(R.string.appearance_app_language),
+                    com.ai.assistance.quro.util.QuroLocale.LANGUAGE_NAMES[appLanguage] ?: appLanguage,
+                    onClick = { showLangPicker = !showLangPicker }, scaled = scaled,
+                )
+                if (showLangPicker) {
+                    val langs = com.ai.assistance.quro.util.QuroLocale.MAJOR_LANGUAGES.filter { it.first != "system" }
+                    langs.forEach { (code, name) ->
+                        val selected = appLanguage == code
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onSetAppLanguage(code); showLangPicker = false }
+                                .padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (selected) Icon(Icons.Filled.Check, null, Modifier.size(18.dp), tint = cs.primary)
+                            else Spacer(Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(name, fontSize = scaled(14), color = cs.onSurface)
+                        }
+                    }
+                }
+            }
+            GroupCaption(stringResource(R.string.appearance_group_profile))
+            SetGroup {
+                SetRowClickable(Icons.Filled.Person, stringResource(R.string.appearance_profile),
+                    if (userProfile.name.isNotBlank()) userProfile.name else stringResource(R.string.appearance_profile_desc),
+                    "", { showUserProfileEditor = true }, scaled)
+            }
+        }
+        // 用户资料编辑弹窗
+        if (showUserProfileEditor) {
+            UserProfileEditDialog(
+                initial = userProfile,
+                onSave = {
+                    onSaveProfile(it)
+                    showUserProfileEditor = false
+                },
+                onDismiss = { showUserProfileEditor = false },
+                scaled = scaled,
+            )
+        }
+        // 保留对话轮数选择器：预设 10 / 20 / 50 轮，或「全部」(null = 跟随模型默认)
+        if (showHistoryPicker) {
+            AlertDialog(
+                onDismissRequest = { showHistoryPicker = false },
+                confirmButton = {},
+                title = { Text(stringResource(R.string.qk_00187)) },
+                text = {
+                    Column {
+                        val presets = listOf(
+                            10 to stringResource(R.string.qk_00188),
+                            20 to stringResource(R.string.qk_00189),
+                            50 to stringResource(R.string.qk_00190),
+                            null to stringResource(R.string.qk_00191),
+                        )
+                        presets.forEach { (n, label) ->
+                            val selected = historyRounds == n
+                            Row(
+                                Modifier.fillMaxWidth().clickable { onSetHistoryRounds(n); showHistoryPicker = false }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (selected) Icon(Icons.Filled.Check, null, Modifier.size(18.dp), tint = cs.primary)
+                                else Spacer(Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(label, fontSize = scaled(14), color = cs.onSurface)
+                            }
+                        }
+                    }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 用户资料编辑弹窗（名字 / 头像路径 / 签名）。
+ * 头像暂支持输入 URI 路径（后续可扩展为相册选取/拍照）。
+ */
+@Composable
+private fun UserProfileEditDialog(
+    initial: QuroChatViewModel.UserProfile,
+    onSave: (QuroChatViewModel.UserProfile) -> Unit,
+    onDismiss: () -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+) {
+    val cs = MaterialTheme.colorScheme
+    var name by remember(initial.name) { mutableStateOf(initial.name) }
+    var avatarUri by remember(initial.avatarUri) { mutableStateOf(initial.avatarUri) }
+    var bio by remember(initial.bio) { mutableStateOf(initial.bio) }
+
+    val ctx = LocalContext.current
+    val cropLauncher = rememberLauncherForActivityResult(CropImageContract()) { result ->
+        if (result.isSuccessful) {
+            result.uriContent?.let { cropped ->
+                runCatching {
+                    val dir = File(ctx.filesDir, "avatars")
+                    dir.mkdirs()
+                    val dest = File(dir, "user_avatar.jpg")
+                    ctx.contentResolver.openInputStream(cropped)?.use { input ->
+                        dest.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    avatarUri = dest.absolutePath
+                }
+            }
+        }
+    }
+    val pickAvatar = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        cropLauncher.launch(
+            CropImageContractOptions(
+                uri,
+                CropImageOptions(guidelines = CropImageView.Guidelines.ON, cropShape = CropImageView.CropShape.OVAL)
+            )
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = cs.surface,
+        shape = RoundedCornerShape(20.dp),
+        title = { Text(stringResource(R.string.qk_00192), fontSize = scaled(18), fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 头像预览 + 导入（复制进应用私有目录，路径稳定可持久）
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AvatarContent(avatarUri, name.ifBlank { "U" }, 56)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Button(onClick = { pickAvatar.launch("image/*") }) {
+                            Text(qstr(R.string.qk_00193), fontSize = scaled(13))
+                        }
+                        if (avatarUri.isNotBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            TextButton(onClick = { avatarUri = "" }) {
+                                Text(stringResource(R.string.qk_00194), fontSize = scaled(12))
+                            }
+                        }
+                    }
+                }
+                // 名字
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.qk_00195), fontSize = scaled(12)) },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    placeholder = { Text(stringResource(R.string.qk_00196), fontSize = scaled(12), color = cs.onSurfaceVariant) },
+                )
+                // 签名/简介
+                OutlinedTextField(
+                    value = bio,
+                    onValueChange = { bio = it },
+                    label = { Text(stringResource(R.string.qk_00197), fontSize = scaled(12)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 80.dp),
+                    minLines = 2, maxLines = 3,
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(QuroChatViewModel.UserProfile(name, avatarUri, bio)) }) {
+                Text(qstr(R.string.qk_00198))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.qk_00011)) }
+        },
+    )
+}
+
+
+@Composable
+private fun ModelSheetContent(
+    groups: List<ModelGroup>,
+    selected: ChatModel,
+    onSelect: (ChatModel) -> Unit,
+    onAdd: (String, String) -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    isFetching: Boolean = false,
+    fetchError: String? = null,
+    onFetch: () -> Unit = {},
+) {
+    val cs = MaterialTheme.colorScheme
+
+    Column(
+        Modifier.fillMaxWidth().heightIn(max = 480.dp)
+            .verticalScroll(rememberScrollState()).padding(bottom = 20.dp)
+    ) {
+        SheetHeader(stringResource(R.string.qk_00199), stringResource(R.string.qk_00200), scaled)
+        // 手动拉取入口：v396 起进入不再自动联网，需用户点此按钮才拉取，结果会本地缓存
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(AccentSoft)
+                .clickable(enabled = !isFetching) { onFetch() }
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            LucideIcon(if (isFetching) "loader" else "refresh_cw", null, Modifier.size(18.dp), tint = Accent)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (isFetching) stringResource(R.string.qk_00201) else stringResource(R.string.qk_00202),
+                fontSize = scaled(13), color = AccentPress, fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.weight(1f))
+            LucideIcon("chevron_right", null, Modifier.size(15.dp), tint = Muted)
+        }
+        // 拉取状态：失败 / 仅当前配置（无可用预设）
+        if (fetchError != null) {
+            Text(stringResource(R.string.qk_00203, (fetchError).toString()),
+                fontSize = scaled(12), color = Color(android.graphics.Color.parseColor("#C0432F")),
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        }
+        if (!isFetching && fetchError == null && groups.size <= 1) {
+            Text(stringResource(R.string.qk_00204),
+                fontSize = scaled(12), color = Muted,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+        }
+        groups.forEach { g ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(
+                    if (g.provider == qstr(R.string.qk_00034)) Accent else Sage
+                ))
+                Spacer(Modifier.width(8.dp))
+                Text(g.provider, fontSize = scaled(13), fontWeight = FontWeight.SemiBold,
+                    color = if (g.provider == qstr(R.string.qk_00034)) AccentPress else cs.onSurface)
+            }
+            g.models.forEach { m ->
+                val sel = m.id == selected.id || (m.id.isNotBlank() && m.id == selected.id)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (sel) AccentSoft else cs.surface)
+                        .border(1.dp, if (sel) Accent else Line, RoundedCornerShape(14.dp))
+                        .clickable { onSelect(m) }
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(cs.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) { Text(m.mark, fontSize = scaled(15), color = cs.primary, fontWeight = FontWeight.SemiBold) }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(m.name, fontSize = scaled(14), color = cs.onSurface, fontWeight = FontWeight.SemiBold)
+                        Text(m.desc, fontSize = scaled(11), color = Muted, modifier = Modifier.padding(top = 2.dp), maxLines = 2)
+                    }
+                    Box(Modifier.size(18.dp).clip(CircleShape).border(2.dp, if (sel) Accent else Line2, CircleShape),
+                        contentAlignment = Alignment.Center) {
+                        if (sel) Box(Modifier.size(10.dp).clip(CircleShape).background(Accent))
+                    }
+                }
+            }
+        }
+        // 前往完整模型配置（替代内联 provider+id 表单）
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                .border(1.dp, Line2, RoundedCornerShape(12.dp))
+                .clickable { onAdd("", "") }
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            LucideIcon("settings", stringResource(R.string.qk_02103), Modifier.size(20.dp), tint = Accent)
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.qk_00205), fontSize = scaled(13), color = AccentPress, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            LucideIcon("chevron_right", null, Modifier.size(15.dp), tint = Muted)
+        }
+        Text(stringResource(R.string.qk_00206, (selected.name).toString()),
+            fontSize = scaled(11), color = Muted, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+    }
+}
+
+// 注：原「功能开关」两行（动态 UI 组件 / 可视化小卡片）已迁至 QuroSoulUi.PersonaEditDialog
+// （灵魂注入 · 灵魂编辑对话框），语义改为提示词级：开=百分百主动使用，关=用户提醒才使用。
+
+@Composable
+private fun PersonaSheetContent(
+    list: List<Persona>,
+    selected: Persona,
+    onSelect: (Persona) -> Unit,
+    onAdd: (String, String) -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit
+) {
+    val cs = MaterialTheme.colorScheme
+    val ctx = LocalContext.current
+
+    Column(
+        Modifier.fillMaxWidth().heightIn(max = 480.dp)
+            .verticalScroll(rememberScrollState()).padding(bottom = 20.dp)
+    ) {
+        // ── 两个独立功能开关已迁至「灵魂注入 · 灵魂编辑」对话框（QuroSoulUi.PersonaEditDialog）──
+        // 语义：开 = 提示词带完整功能章节（AI 百分百主动使用）；关 = 仅用户提醒才使用（渲染管线常开）。
+
+        SheetHeader(stringResource(R.string.qk_00207), stringResource(R.string.qk_00208), scaled)
+        list.forEach { p ->
+            val sel = p.name == selected.name
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (sel) AccentSoft else cs.surface)
+                    .border(1.dp, if (sel) Accent else Line, RoundedCornerShape(14.dp))
+                    .clickable { onSelect(p) }
+                    .padding(14.dp)
+            ) {
+                AvatarContent(p.avatarUri, p.name, 42)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.fillMaxWidth()) {
+                    Text("${p.name} · ${p.role}", fontSize = scaled(15), color = cs.onSurface, fontWeight = FontWeight.SemiBold)
+                    Text(p.desc, fontSize = scaled(12), color = Muted, modifier = Modifier.padding(top = 3.dp))
+                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        p.tags.forEach { tag ->
+                            Box(Modifier.clip(RoundedCornerShape(6.dp)).background(cs.surfaceVariant).padding(4.dp, 2.dp)) {
+                                Text(tag, fontSize = scaled(11), color = cs.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // 新建人格（打开完整 Zorv AI 人格创建对话框：头像/描述/角色设定/开场白/聊天设定/标签/AI孵化）
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                .border(1.dp, Line2, RoundedCornerShape(12.dp))
+                .clickable { onAdd("", "") }
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(Modifier.size(20.dp).clip(CircleShape).background(Accent), contentAlignment = Alignment.Center) {
+                Text("+", fontSize = scaled(16), color = Color.White, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.qk_00209), fontSize = scaled(13), color = AccentPress, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            LucideIcon("chevron_right", null, Modifier.size(15.dp), tint = Muted)
+        }
+        Text(stringResource(R.string.qk_00210),
+            fontSize = scaled(11), color = Muted, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+    }
+}
+
+// 注：底部快捷设置（深色模式/字号/提示音/回车发送/悬浮语音球）已合并进设置底部弹层，
+// 通过 SheetType.Settings 呈现，UI 结构取自 MoWenApp，功能保留 Zorv AI 现有设置项。
+
+@Composable
+private fun UploadSheetContent(
+    onPickFile: (String) -> Unit,
+    onOpenBrowser: (String) -> Unit,
+    onClearChat: () -> Unit,
+    onOpenVoiceService: () -> Unit,
+    onOpenToolbox: () -> Unit,
+    onOpenCms: () -> Unit,
+    onOpenSkills: () -> Unit,
+    onOpenKnowledge: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onOpenStt: () -> Unit,
+    onAiSearch: (String) -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    onOpenSchedule: () -> Unit = {},
+    onOpenBots: () -> Unit = {},
+) {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    var showUploadChooser by remember { mutableStateOf(false) }
+    var showAiSearch by remember { mutableStateOf(false) }
+
+    // 应用内媒体浏览器（QuroMediaBrowser）覆盖层状态
+    var showMediaBrowser by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        Modifier.fillMaxWidth().heightIn(max = 480.dp)
+            .verticalScroll(rememberScrollState()).padding(bottom = 20.dp)
+    ) {
+        SheetHeader(stringResource(R.string.qk_00135), stringResource(R.string.qk_00211), scaled)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ToolTile({ Icon(Icons.Filled.Add, stringResource(R.string.qk_00212), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00212), { showUploadChooser = true }, scaled)
+            ToolTile({ Icon(Icons.Filled.Public, stringResource(R.string.qk_00213), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00213), { showAiSearch = true }, scaled)
+            ToolTile({ Icon(Icons.Filled.VolumeUp, stringResource(R.string.qk_03057), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_03057), onOpenVoiceService, scaled)
+            ToolTile({ Icon(Icons.Filled.Build, stringResource(R.string.qk_00214), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00214), onOpenToolbox, scaled)
+            ToolTile({ Icon(Icons.Filled.Extension, "CMS v2", Modifier.size(22.dp), tint = cs.primary) }, "CMS v2", onOpenCms, scaled)
+            ToolTile({ Icon(Icons.Filled.Description, stringResource(R.string.qk_00215), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00215), onOpenKnowledge, scaled)
+            ToolTile({ Icon(Icons.Filled.Terminal, stringResource(R.string.qk_00216), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00216), onOpenTerminal, scaled)
+            ToolTile({ LucideIcon("trash_2", stringResource(R.string.qk_00217), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00217), onClearChat, scaled)
+            ToolTile({ LucideIcon("sparkles", stringResource(R.string.qk_00218), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00218), onOpenSkills, scaled)
+            ToolTile({ Icon(Icons.Filled.Schedule, stringResource(R.string.qk_00219), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00219), onOpenSchedule, scaled)
+            ToolTile({ LucideIcon("bot", stringResource(R.string.qk_00220), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00220), onOpenBots, scaled)
+        }
+    }
+    showMediaBrowser?.let { k ->
+        QuroMediaBrowser(
+            kind = k,
+            onPick = { uri, title ->
+                showMediaBrowser = null
+                if (k == "music") {
+                    val intent = Intent(ctx, QuroMediaService::class.java)
+                        .putExtra(QuroMediaService.EXTRA_URI, uri.toString())
+                        .putExtra(QuroMediaService.EXTRA_TITLE, title)
+                    runCatching { ctx.startForegroundService(intent) }
+                    QuroMusicLauncher.request()
+                } else {
+                    QuroVideoLauncher.open(uri.toString(), title)
+                }
+            },
+            onClose = { showMediaBrowser = null },
+        )
+    }
+    if (showUploadChooser) {
+        AlertDialog(
+            onDismissRequest = { showUploadChooser = false },
+            confirmButton = {},
+            title = { Text(stringResource(R.string.qk_00221), color = cs.onSurface) },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    listOf("图片" to "image/*", "文件" to "*/*", "视频" to "video/*").forEach { (label, mime) ->
+                        TextButton(onClick = { showUploadChooser = false; onPickFile(mime) }, Modifier.fillMaxWidth()) {
+                            Text(label, color = cs.onSurface, fontSize = scaled(14))
+                        }
+                    }
+                }
+            }
+        )
+    }
+    if (showAiSearch) {
+        var q by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAiSearch = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val text = q.trim()
+                    if (text.isNotEmpty()) {
+                        if (text.startsWith("http://") || text.startsWith("https://")) {
+                            onOpenBrowser(text)
+                        } else {
+                            onAiSearch(qstr(R.string.qk_00224, (text).toString()))
+                        }
+                    }
+                    showAiSearch = false
+                    q = ""
+                }) { Text(qstr(R.string.qk_00225)) }
+            },
+            dismissButton = { TextButton(onClick = { showAiSearch = false }) { Text(stringResource(R.string.qk_00011)) } },
+            title = { Text(stringResource(R.string.qk_00226)) },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        q, { q = it },
+                        label = { Text(stringResource(R.string.qk_00227)) },
+                        singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text(stringResource(R.string.qk_00228)) },
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(stringResource(R.string.qk_00229), fontSize = scaled(11), color = Muted)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun VoiceSheetContent(
+    onOpenTts: () -> Unit,
+    onOpenStt: () -> Unit,
+    onOpenVoice: () -> Unit = {},
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit
+) {
+    val cs = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxWidth().heightIn(max = 420.dp)
+            .verticalScroll(rememberScrollState()).padding(bottom = 20.dp)
+    ) {
+        SheetHeader(stringResource(R.string.qk_03057), stringResource(R.string.qk_00230), scaled)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            ToolTile({ Icon(Icons.Filled.VolumeUp, stringResource(R.string.qk_00231), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00232), onOpenTts, scaled)
+            ToolTile({ Icon(Icons.Filled.Mic, stringResource(R.string.qk_00233), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00234), onOpenStt, scaled)
+            ToolTile({ Icon(Icons.Filled.Settings, stringResource(R.string.qk_00235), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00235), onOpenVoice, scaled)
+        }
+    }
+}
+
+@Composable
+private fun ToolTile(
+    icon: @Composable () -> Unit,
+    title: String,
+    onClick: () -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit
+) {
+    val cs = MaterialTheme.colorScheme
+    Column(
+        Modifier.widthIn(min = 72.dp, max = 96.dp).clip(RoundedCornerShape(12.dp)).background(cs.surfaceVariant)
+            .border(1.dp, Line, RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        icon()
+        Spacer(Modifier.height(6.dp))
+        Text(title, fontSize = scaled(11), color = cs.onSurface, maxLines = 1)
+    }
+}
+
+// ---------------- 富文本（**加粗**） ----------------
+
+private fun buildRich(text: String, base: TextStyle, boldColor: Color, linkColor: Color, codeBackground: Color): AnnotatedString {
+    val parts = text.split("**")
+    return buildAnnotatedString {
+        parts.forEachIndexed { i, p ->
+            if (p.isEmpty()) return@forEachIndexed
+            if (i % 2 == 1) {
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = boldColor)) { append(p) }
+            } else {
+                // 普通文本段内检测 HTML 标签并渲染
+                val htmlParsed = parseInlineHtml(p, base.color, linkColor, codeBackground)
+                append(htmlParsed)
+            }
+        }
+    }
+}
+
+/** 解析行内 HTML 标签为 AnnotatedString，并把 <a> 链接标注为 "link" 注解（由上层 Text.onClick 接管打开内置浏览器）。 */
+private fun parseInlineHtml(raw: String, defaultColor: Color, linkColor: Color, codeBackground: Color): AnnotatedString {
+    // 1) HTML 实体解码（&amp; &lt; &nbsp; …），避免模型输出原样显示
+    val decoded = decodeHtmlEntities(raw)
+    // 2) 块级标签转换行
+    val text = decoded
+        .replace(RE_INLINE_BR, "\n")
+        .replace(RE_INLINE_P, "\n")
+        .replace(RE_INLINE_DIV, "\n")
+        .replace(RE_INLINE_H, "\n")
+        .replace(RE_INLINE_LI_OPEN, "\n• ")
+        .replace(RE_INLINE_LI_CLOSE, "")
+        .replace(RE_INLINE_LIST_CLOSE, "\n")
+        .replace(RE_INLINE_PRE, "\n")
+        .replace(RE_INLINE_BLOCKQUOTE, "\n")
+
+    return buildAnnotatedString {
+        // 用正则拆分：HTML标签 + 文本交替处理（含 u / s / del）
+        val matches = RE_INLINE_TAG.findAll(text)
+
+        data class Seg(val isTag: Boolean, val text: String)
+        val segs = matches.map { m ->
+            val g1 = m.groupValues[1]
+            val g2 = m.groupValues[2]
+            when {
+                g1.isNotBlank() -> Seg(true, g1.trim())
+                else -> Seg(false, g2)
+            }
+        }.toList()
+
+        // 栈式解析格式标签
+        data class FmtState(
+            val bold: Boolean = false,
+            val italic: Boolean = false,
+            val strike: Boolean = false,
+            val underline: Boolean = false,
+            val code: Boolean = false,
+            val link: String? = null,
+            val color: Color? = null,
+        )
+
+        fun styleFor(state: FmtState) = SpanStyle(
+            fontWeight = if (state.bold || state.code) FontWeight.SemiBold else FontWeight.Normal,
+            fontStyle = if (state.italic) FontStyle.Italic else FontStyle.Normal,
+            fontFamily = if (state.code) FontFamily.Monospace else null,
+            background = if (state.code) codeBackground else Color.Unspecified,
+            color = state.color ?: (if (state.link != null) linkColor else defaultColor),
+            textDecoration = when {
+                state.link != null -> TextDecoration.Underline
+                state.underline -> TextDecoration.Underline
+                state.strike -> TextDecoration.LineThrough
+                else -> null
+            },
+        )
+
+        var state = FmtState()
+        val stack = ArrayDeque<FmtState>()
+
+        segs.forEach { seg ->
+            if (!seg.isTag) {
+                if (seg.text.isNotEmpty()) {
+                    val url = state.link
+                    if (url != null) {
+                        val mark = pushStringAnnotation("link", url)
+                        withStyle(styleFor(state)) { append(seg.text) }
+                        pop(mark)
+                    } else {
+                        withStyle(styleFor(state)) { append(seg.text) }
+                    }
+                }
+            } else {
+                val tag = seg.text.lowercase()
+                when {
+                    tag in listOf("<b>", "<strong>") -> { stack.addLast(state); state = state.copy(bold = true) }
+                    tag in listOf("</b>", "</strong>") -> { state = stack.removeLastOrNull() ?: FmtState() }
+                    tag in listOf("<i>", "<em>") -> { stack.addLast(state); state = state.copy(italic = true) }
+                    tag in listOf("</i>", "</em>") -> { state = stack.removeLastOrNull() ?: FmtState() }
+                    tag == "<u>" -> { stack.addLast(state); state = state.copy(underline = true) }
+                    tag == "</u>" -> { state = stack.removeLastOrNull() ?: FmtState() }
+                    tag in listOf("<s>", "<del>") -> { stack.addLast(state); state = state.copy(strike = true) }
+                    tag in listOf("</s>", "</del>") -> { state = stack.removeLastOrNull() ?: FmtState() }
+                    tag == "<code>" -> { stack.addLast(state); state = state.copy(code = true) }
+                    tag == "</code>" -> { state = stack.removeLastOrNull() ?: FmtState() }
+                    tag.startsWith("<a ") || tag == "<a>" -> {
+                        val href = RE_HREF.find(tag)?.groupValues?.get(1)
+                        stack.addLast(state); state = state.copy(link = href)
+                    }
+                    tag == "</a>" -> { state = stack.removeLastOrNull() ?: FmtState() }
+                    tag.startsWith("<span") -> {
+                        val c = RE_SPAN_COLOR.find(tag)?.groupValues?.get(1)?.let { parseColorOrNull(it) }
+                        stack.addLast(state); state = state.copy(color = c ?: state.color)
+                    }
+                    tag == "</span>" -> { state = stack.removeLastOrNull() ?: FmtState() }
+                    // <pre> / <h1-6> / 未知标签忽略（块级换行已处理）
+                }
+            }
+        }
+    }
+}
+
+/** 解码常见 HTML 实体，避免模型输出里的 &amp; &lt; &nbsp; 等原样显示。 */
+private fun decodeHtmlEntities(s: String): String {
+    return s
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&copy;", "©")
+        .replace("&reg;", "®")
+        .replace("&trade;", "™")
+        .replace("&hellip;", "…")
+        .replace("&mdash;", "—")
+        .replace("&ndash;", "–")
+        .replace("&raquo;", "»")
+        .replace("&laquo;", "«")
+        .replace("&bull;", "•")
+}
+
+/** 解析 HTML 颜色（仅支持 #rrggbb / #rgb），失败返回 null。供 <span style="color"> 使用。 */
+private fun parseColorOrNull(s: String): Color? = try {
+    if (s.startsWith("#")) Color(android.graphics.Color.parseColor(s)) else null
+} catch (_: Exception) { null }
+
+// ---------------- 消息分块（文本 / 代码块 / 块级 HTML / Markdown） ----------------
+
+/**
+ * 对话消息的**块模型**：原生对话框渲染的最小单元。
+ *
+ * 🔴 `internal` 而不是 `private`：Web UI 是 ZorvAI 对话框的**投影**，它必须复用
+ * 同一份块解析结果，而不是自己另写一套 Markdown/围栏解析。改成 internal 就是为了
+ * 让 `ui/webui/WebUiProjection.kt` 能调用同一个 [parseBlocks]。两侧同源 = 投影不会漂移。
+ */
+internal sealed class MsgBlock {
+    data class Text(val text: String) : MsgBlock()
+    data class Code(val lang: String, val code: String) : MsgBlock()
+    data class Mermaid(val source: String) : MsgBlock()
+    /** Web 应用（MiniApp）：```miniapp 围栏或含 bridge 运行时的 HTML，渲染为可交互 Web 应用页面（WebView 运行时）。 */
+    data class MiniApp(val html: String) : MsgBlock()
+    /** 动态 UI：```quro-ui 围栏，渲染为原生可交互控件（非 WebView）。 */
+    data class DynamicUi(val source: String) : MsgBlock()
+    // 自研卡片渲染（feat_self_card）围栏：与 DynamicUi 完全独立的另一种 block，不合并。
+    // 同样从气泡剔除、改在消息底部全宽内联渲染 CardSurface。
+    data class SelfCard(val source: String) : MsgBlock()
+    /** AIP 排版引擎（Canvas，B 通道）：```aip 围栏或裸信封 JSON → 原生富排版（长文档/导图/PPT）。 */
+    data class Aip(val source: String) : MsgBlock()
+    /**
+     * 可视化组件围栏（正文第二通道）：```card（单组件）/ ```cards（多组件）/ ```cardui（A2UI 邻接表）。
+     * 与 DynamicUi / SelfCard 同源机制——从气泡剔除，改在消息底部全宽内联渲染。
+     * @param fence 围栏头（card / cards / cardui / cardjson），交给 [CardFence.toCards] 复用同一解码层
+     * @param source 围栏内容（未 trim）
+     * @param closed 是否已闭合。false = 流式中间态，JSON 合法即自动出现
+     * @param attrs 围栏属性串（`compact scroll title=季度 theme=accent`），渲染层据此调外观。
+     *   存原始串而不是解析好的集合：解析规则只存在于 [CardFence]，这里不重复实现一遍。
+     */
+    data class Card(
+        val fence: String = CardFence.FENCE_CARD,
+        val source: String = "",
+        val closed: Boolean = true,
+        val attrs: String = "",
+    ) : MsgBlock()
+    data class Heading(val level: Int, val text: String) : MsgBlock()
+    data class Quote(val text: String) : MsgBlock()
+    data class Rule(val text: String = "") : MsgBlock()
+    data class Table(val header: List<String>, val rows: List<List<String>>) : MsgBlock()
+}
+
+/**
+ * 数据型卡片（表格/饼图/图表/热力图/雷达）数据为空时返回 true。
+ * 用于流式防护：避免未写完/空模板的组件 JSON 在气泡里闪「（无数据）」。
+ */
+private fun cardHasNoData(card: QuroChatCard): Boolean = when (card) {
+    is QuroChatCard.TableCard -> card.headers.isEmpty() && card.rows.isEmpty()
+    is QuroChatCard.PieCard -> card.segments.isEmpty()
+    is RankingCard -> card.items.isEmpty()
+    is QuroChatCard.ChartCard -> card.series.isEmpty()
+    is QuroChatCard.HeatmapCard -> card.values.isEmpty()
+    is QuroChatCard.RadarCard -> card.axes.isEmpty()
+    else -> false
+}
+
+/**
+ * 从 AI 文本消息里抽离「内联组件 JSON」：形如 {"type":"info","body":"..."} 的结构化组件。
+ * 返回「去掉组件 JSON 后的干净文本」与「解析成功的组件列表」。
+ * - 只有 type 属于已知组件类型才会被抽离并渲染，其它 JSON（如代码块里的 schema）原样保留；
+ * - 抽离时连同 JSON 前后的多余空行一起裁掉，避免气泡里留下大段空白。
+ *
+ * 🔴 `internal` 的理由同 [MsgBlock] / [parseBlocks]：Web UI 投影必须走**同一个**清洗入口，
+ * 否则网页会把内联组件 JSON 当正文裸露出来（页面上就是一坨 JSON），与原生不一致。
+ */
+internal fun extractInlineComponents(text: String, protected: List<IntRange> = emptyList()): Pair<String, List<QuroChatCard>> {
+    if (text.isBlank()) return text to emptyList()
+    // 受保护区间（可视化组件围栏 ```card / ```cards / ```cardui）内的花括号就地抹成空格。
+    // 长度与下标完全不变 —— 下面所有扫描逻辑一行都不用改；效果是围栏里的 JSON 不会被
+    // 再当成「内联组件」抽走，否则围栏通道与内联通道会把同一张卡渲染两遍。
+    val scan = CardFence.blankBraces(text, protected)
+    val cards = mutableListOf<QuroChatCard>()
+    val sb = StringBuilder()
+    var i = 0
+    while (i < text.length) {
+        val brace = scan.indexOf('{', i)
+        if (brace < 0) { sb.append(scan.substring(i)); break }
+        sb.append(scan.substring(i, brace))
+        val end = findBalancedBrace(scan, brace)
+        if (end < 0) { sb.append(scan.substring(brace)); break }
+        val candidate = scan.substring(brace, end + 1)
+        // v1.0.81 修复：动态 UI 的 JSON 节点树绝不能被当成「内联组件」抽走。
+        // 否则根节点类型与内联卡片类型同名（button/form/list/tabs/slider/progress/badge…）时，
+        // 动态 UI 会被劫持成内联卡片、原围栏被拆烂，表现为「围栏残留气泡里 / 动态 UI 不渲染」。
+        if (isQuroUiNodeJson(candidate)) {
+            sb.append(candidate)
+            i = end + 1
+            continue
+        }
+        // 与动态 UI 同款防护：自研卡片的 JSON（data.kind 结构）绝不能被当成「内联组件」抽走，
+        // 否则围栏被拆烂、自研卡片不渲染。仅认 ```quro-card 围栏路径，这里兜底拦截内联 JSON。
+        if (isSelfCardNodeJson(candidate)) {
+            sb.append(candidate)
+            i = end + 1
+            continue
+        }
+        val card = runCatching { parseComponentSpec(candidate) }.getOrNull()
+        if (card != null) {
+            // ★ 流式防护：流式生成每帧重解析增长文本，数据型卡片（表格/饼图/图表/热力图/雷达）
+            // 常因 JSON 未写完或 AI 先发空模板再调 ui_widget 下发真数据，而被解析成空数据卡 →
+            // 气泡闪「（无数据）」。此处丢弃空数据型卡，数据到齐后下一帧重解析自然产出有数据的卡；
+            // 若 AI 仅用内联 JSON 且确为空，丢弃也不损失信息。
+            if (cardHasNoData(card)) {
+                i = end + 1
+                while (i < text.length && text[i].isWhitespace()) i++
+                continue
+            }
+            cards.add(card)
+            i = end + 1
+            // 跳过紧随其后的空白与换行，避免残留空行
+            while (i < text.length && text[i].isWhitespace()) i++
+        } else {
+            sb.append(candidate)
+            i = end + 1
+        }
+    }
+    // v150：链接回答 → 气泡内预览卡（原生安卓点击查看体验）。
+    // 仅该域名走预览卡；其余外链保留既有内联 ClickableText 行为。
+    val yuanbaoRe = RE_YUANBAO
+    val seen = mutableSetOf<String>()
+    val out = StringBuilder()
+    var last = 0
+    for (m in yuanbaoRe.findAll(sb)) {
+        out.append(sb.substring(last, m.range.first))
+        val url = m.value.trimEnd(')', ']', '}', '.', ',', ';', '"', '\'')
+        if (seen.add(url)) {
+            cards.add(
+                QuroChatCard.YuanbaoCard(
+                    id = "yb_" + url.hashCode().toString(36).replace("-", "m"),
+                    title = qstr(R.string.qk_00236),
+                    url = url,
+                )
+            )
+        }
+        last = m.range.last + 1
+    }
+    out.append(sb.substring(last))
+    return out.toString() to cards
+}
+
+/**
+ * 从 [start]（'{' 下标）起，按括号深度匹配到配对的 '}'，返回其下标；
+ * 字符串字面量（含转义）内的括号不参与计数。匹配失败返回 -1。
+ */
+private fun findBalancedBrace(text: String, start: Int): Int {
+    if (start < 0 || start >= text.length || text[start] != '{') return -1
+    var depth = 0
+    var inStr = false
+    var esc = false
+    for (j in start until text.length) {
+        val c = text[j]
+        if (inStr) {
+            if (esc) esc = false
+            else if (c == '\\') esc = true
+            else if (c == '"') inStr = false
+            continue
+        }
+        when (c) {
+            '"' -> inStr = true
+            '{' -> depth++
+            '}' -> {
+                depth--
+                if (depth == 0) return j
+            }
+        }
+    }
+    return -1
+}
+
+// ── ANR 修复（v384）：以下正则全部预编译为文件级常量，只编译一次。
+//    原实现在各解析函数内 `Regex(...)` / `.toRegex()`，每次 Compose 重组都重新编译，
+//    走 ICU native PatternNative.compileImpl；几百消息 × 多正则 × 每帧重组 → 主线程卡死（见 ANR 报告）。
+// 代码围栏：仅认「行首」的 ``` 作开围栏（(?m)+^ 行首锚定）。
+// 修复：AI 在正文里用反引号内联代码引用围栏语法（如「我用 ` ```aip ` 围栏」）时，
+// 若无行首锚定，RE_FENCE 会从内联代码的 ``` 开始匹配、非贪婪吞到真正围栏起始的 ``` 即停，
+// 导致真正的 AIP/quro-ui/mermaid 信封围栏被吞掉、code 变成说明文字 → 该渲染的块全部降级为纯文本。
+private val RE_FENCE = Regex("(?m)^```([^\\n`]*)\\n?([\\s\\S]*?)```")
+private val RE_BLOCK = Regex("(?is)<h([1-6])>(.*?)</h\\1>|<blockquote>(.*?)</blockquote>|<hr\\s*/?>|<table>(.*?)</table>|<(ul|ol)>(.*?)</\\6>")
+private val RE_HR = Regex("(?i)<hr")
+private val RE_LI = Regex("(?is)<li>(.*?)</li>")
+private val RE_P = Regex("(?i)</?p>")
+private val RE_BR = Regex("(?i)<br\\s*/?>")
+private val RE_HEADING_LINE = Regex("^\\s*#{1,6}\\s+.+")
+private val RE_HEADING_STRIP = Regex("^\\s*#{1,6}\\s+")
+private val RE_QUOTE_LINE = Regex("^\\s*>\\s?.+")
+private val RE_QUOTE_STRIP = Regex("^\\s*>\\s?")
+private val RE_LIST_LINE = Regex("^\\s*[-*]\\s+.+")
+private val RE_LIST_STRIP = Regex("^\\s*[-*]\\s+")
+private val RE_TR = Regex("(?is)<tr>(.*?)</tr>")
+private val RE_TD = Regex("(?is)<t[hd]>(.*?)</t[hd]>")
+private val RE_INLINE_BR = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_P = Regex("</?p>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_DIV = Regex("</?div>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_H = Regex("</(h[1-6])>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_LI_OPEN = Regex("<li>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_LI_CLOSE = Regex("</li>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_LIST_CLOSE = Regex("</(ul|ol)>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_PRE = Regex("</pre>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_BLOCKQUOTE = Regex("</blockquote>", RegexOption.IGNORE_CASE)
+private val RE_INLINE_TAG = Regex("(</?(?:b|strong|em|i|u|s|del|code|a|span|pre|h[1-6])[^>]*>)|([^<]+)")
+private val RE_HREF = Regex("href=\"([^\"]+)\"")
+private val RE_SPAN_COLOR = Regex("(?i)color:\\s*([#\\w]+)")
+// 以下为消息渲染/卡片热路径中残留的逐次编译正则，同样预编译（同一条 ANR 根因）。
+private val RE_RISK_LEVEL = Regex("""风险级别[：:]\s*(\S+)""")
+private val RE_BRACKET = Regex("""\[([^\]]+)\]\s*(.*)""")
+private val RE_YUANBAO = Regex("""https?://(?:yb|yuanbao)\.tencent\.com/\S+""")
+private val RE_HTML_HEAD_BODY = Regex("""<(head|body)\b""", RegexOption.IGNORE_CASE)
+private val RE_HTML_TAG = Regex("""<(html|head|body|div|span|p|a|button|h1|h2|h3|ul|ol|li|table|form|style|script|img|section|header|footer|main|nav)\b""", RegexOption.IGNORE_CASE)
+
+/** 判断整段文本是否为「完整独立的 HTML 文档」（无围栏时也应走预览代码块）。 */
+// v404 诊断：ChatScreen 内诊断上下文与去重键（供 parseBlocks 记录 AI 回复 HTML 判定）
+private var quroDiagCtx: android.content.Context? = null
+private var lastDiagHtmlKey: String? = null
+
+private fun isFullHtmlDocument(text: String): Boolean {
+    val t = text.trim()
+    if (!t.startsWith("<!DOCTYPE html", ignoreCase = true) && !t.startsWith("<html", ignoreCase = true)) return false
+    return t.contains("</html>", ignoreCase = true) || RE_HTML_HEAD_BODY.containsMatchIn(t)
+}
+
+/** 仅匹配「开围栏」（` ```lang ` 行首），用于流式生成中围栏尚未闭合的情况。 */
+private val RE_FENCE_OPEN = Regex("""(?m)^```([^\n`]*?)[ \t]*\n""")
+
+/**
+ * 把围栏头切成「语言标签」与「属性串」。
+ *
+ * ## 为什么必须切
+ *
+ * 历史正则 `^```([\w+#-]*)` 只吃非空白字符，于是 ` ```card compact title=季度 ` 的
+ * `lang` 只匹配到 `card`，`" compact title=季度\n{...}"` 整段被当成**围栏体**。
+ * 结果是带属性的卡片围栏一律解析失败（body 不是合法 JSON）→ **整组卡片不显示**。
+ * 也就是说围栏属性在这条路径上从来没生效过，且症状是「卡片凭空消失」，极难归因。
+ *
+ * 切分点取**首个空白或行尾**：语言标签是围栏头里唯一不允许含空白的部分（语言名本来就没有空格），
+ * 其后的一切都归属性，与 [CardFence] 的属性语法一致。
+ */
+private fun splitFenceHead(raw: String): Pair<String, String> {
+    val t = raw.trim()
+    if (t.isEmpty()) return "" to ""
+    val i = t.indexOfFirst { it == ' ' || it == '\t' || it == '\n' || it == '\r' }
+    return if (i < 0) t to "" else t.substring(0, i) to t.substring(i + 1).trim()
+}
+
+/**
+ * 解析 ```lang ... ``` 围栏代码块；其余文本走 HTML/Markdown 块级解析。
+ *
+ * 🔴 `internal` 的理由同 [MsgBlock]：Web UI 投影必须复用**同一个**解析入口，
+ * 否则「网页看到的块」与「原生看到的块」是两套实现，一定会漂移（这正是
+ * 上一轮 Web UI「像另一个应用」的根因之一）。
+ */
+internal fun parseBlocks(text: String, selfCard: Boolean = true): List<MsgBlock> {
+    // v404 诊断：记录 AI 回复是否含 HTML 及其判定结果（排查「HTML 裸文本」问题）
+    val trimmed = text.trim()
+    if (quroDiagCtx != null && (trimmed.startsWith("<") || trimmed.contains("```html") || isFullHtmlDocument(text) || looksLikeHtmlStrict(trimmed))) {
+        val key = trimmed.take(200)
+        if (key != lastDiagHtmlKey) {
+            lastDiagHtmlKey = key
+            val detected = isFullHtmlDocument(text) || looksLikeHtmlStrict(trimmed)
+            QuroCrashLogger.logEvent(
+                quroDiagCtx!!, "HTML",
+                "startsWith< =${trimmed.startsWith("<")} fenceHtml=${trimmed.contains("```html")} fullDoc=${isFullHtmlDocument(text)} segHtml=${looksLikeHtmlStrict(trimmed)} detected=$detected | head=${trimmed.take(180).replace("\n", "\\n")}",
+            )
+        }
+    }
+    // 整段完整 HTML 文档（AI 未加围栏直接贴源码）也路由到预览代码块，避免裸 HTML 当纯文本
+    if (isFullHtmlDocument(text)) return listOf(MsgBlock.Code("html", text))
+
+    // AIP 排版引擎（Canvas）：裸信封 JSON（{"v":1,"kind":...,"blocks":[...]}）不经围栏直接输出时，
+    // 整段走 B 通道。流式期间截断的残缺信封也放行——AipCanvas 内部做截断修复 + 分块渲染 + 四级降级。
+    if (com.ai.assistance.quro.core.canvas.Aip.looksLikeAip(text)) return listOf(MsgBlock.Aip(text))
+
+    // Agent 模式：检测 <!-- FILE: filename --> 标记，提取多文件
+    val fileMarkerRegex = Regex("<!--\\s*FILE:\\s*(\\S+)\\s*-->")
+    if (fileMarkerRegex.containsMatchIn(text)) {
+        val blocks = mutableListOf<MsgBlock>()
+        val parts = text.split(fileMarkerRegex)
+        var i = 1
+        while (i < parts.size) {
+            val filename = parts[i]
+            val content = if (i + 1 < parts.size) parts[i + 1].trim() else ""
+            if (content.isNotBlank()) {
+                // 根据文件扩展名确定语言
+                val lang = when {
+                    filename.endsWith(".html", true) || filename.endsWith(".htm", true) -> "html"
+                    filename.endsWith(".css", true) -> "css"
+                    filename.endsWith(".js", true) || filename.endsWith(".ts", true) -> "javascript"
+                    filename.endsWith(".json", true) -> "json"
+                    filename.endsWith(".py", true) -> "python"
+                    filename.endsWith(".xml", true) -> "xml"
+                    filename.endsWith(".java", true) -> "java"
+                    filename.endsWith(".kt", true) -> "kotlin"
+                    filename.endsWith(".c", true) || filename.endsWith(".cpp", true) -> "cpp"
+                    filename.endsWith(".sh", true) || filename.endsWith(".bash", true) -> "shell"
+                    else -> "text"
+                }
+                blocks.add(MsgBlock.Code(lang, content))
+            }
+            i += 2
+        }
+        if (blocks.isNotEmpty()) return blocks
+    }
+    val blocks = mutableListOf<MsgBlock>()
+    var last = 0
+    val fences = RE_FENCE.findAll(text).toList()
+    for (m in fences) {
+        if (m.range.first > last) blocks.addAll(parseTail(text.substring(last, m.range.first)))
+        val (langRaw, fenceAttrs) = splitFenceHead(m.groupValues[1])
+        val lang = langRaw
+        val code = m.groupValues[2].removeSuffix("\n")
+        when {
+            // 可视化组件围栏（正文第二通道）：card / cards / cardui / cardjson → MsgBlock.Card，
+            // 内容交给 CardFence 单一解码层，气泡里不再当代码块显示源码。
+            isCardFenceLang(lang) -> blocks.add(MsgBlock.Card(lang.lowercase(), code, true, fenceAttrs))
+            // 自研卡片渲染（feat_self_card）：独立围栏 ```quro-card，先于动态 UI 判定，避免被劫持。
+            // 内容转成 MsgBlock.SelfCard 从气泡剔除，交给消息底部 CardSurface 全宽内联渲染。
+            // 开关关闭（selfCard=false）时降级为普通代码块，内容不丢。
+            isSelfCardLang(lang) ->
+                if (selfCard) blocks.add(MsgBlock.SelfCard(code)) else blocks.add(MsgBlock.Code(lang, code))
+            // 旧 GenUI（AI 自写 JSX/HTML → :genui WebView 管线）已整体删除，:genui 模块不存在，
+            // 判定函数恒为 false，此分支保留仅为让改动面最小（永不会命中）。
+            isGenUiLang(lang) -> { /* skip — 旧 GenUI WebView 路径，模块已删除 */ }
+            // 可视化编程：原始 mermaid / mmd 围栏直接渲染成离线矢量图（AI 或用户均可作者）
+            lang.equals("mermaid", true) || lang.equals("mmd", true) ->
+                blocks.add(MsgBlock.Mermaid(code))
+            // AIP 排版引擎（Canvas / B 通道）：结构化信封 → 原生富排版（长文档 / 导图 / PPT）
+            lang.equals("aip", true) || lang.equals("aip+json", true) || lang.equals("canvas", true) ->
+                blocks.add(MsgBlock.Aip(code))
+            // A2UI JSONL 信封（application/a2ui+json）：流式声明式数据，由原生 A2UI 解释器增量渲染
+            lang.equals("a2ui", true) || lang.equals("a2ui+json", true) ->
+                blocks.add(MsgBlock.DynamicUi(code))
+            // Web 应用：```miniapp 围栏直接渲染为可交互 Web 应用页面（bridge.js 运行时）
+            lang.equals("miniapp", true) || lang.equals("mini", true) ->
+                blocks.add(MsgBlock.MiniApp(code))
+            // 动态 UI（quro-ui 固定 DSL）：AI 写的 UI DSL 渲染为原生可交互控件（可回传表单值给模型）
+            // 内容兜底：语言标签写错/没写时，只要内容是合法动态 UI 节点树也照样渲染。
+            isDynamicUiLang(lang) || looksLikeQuroUiDsl(code) ->
+                blocks.add(MsgBlock.DynamicUi(code))
+            // 兜底：AI 把 Web 应用 HTML 写成 ```html 围栏却带了 bridge 运行时标记，也按 Web 应用渲染
+            isMiniAppHtml(lang, code) ->
+                blocks.add(MsgBlock.MiniApp(code))
+            else ->
+                blocks.add(MsgBlock.Code(lang, code))
+        }
+        last = m.range.last + 1
+    }
+    if (last < text.length) blocks.addAll(parseTail(text.substring(last)))
+    return if (blocks.isEmpty()) listOf(MsgBlock.Text(text)) else blocks
+}
+
+/**
+ * 判断是否动态 UI 围栏语言。
+ *
+ * 兼容三种写法：`quro-ui`（现行）、`quro_ui`（部分模型会把连字符写成下划线）、
+ * `zorv-ui`（历史前缀）。与 [com.ai.assistance.quro.core.ui.dynamicui.QuroUiDslParser]
+ * 的围栏识别保持一致，否则解析器认得、渲染层却不认，会出现「明明写了却当普通代码块显示」。
+ */
+/**
+ * 判定是否为「生成式 UI 围栏」（已废弃的 :genui WebView 代码执行路径）。
+ *
+ * 按 A2UI 铁律「模型输出永远是数据不是代码，绝不在端上执行 AI 生成的代码」，
+ * 该 WebView 路径已废弃，且承载它的 :genui 模块也已随旧 GenUI 一并删除，恒为 false。
+ * 此处恒返回 false，使任何 zorv* / quro* 围栏都不再被截留给 WebView，
+ * 而是统一走原生 A2UI 解释器（QuroUiDslParser + A2uiInterpreter → QuroUiRenderer）。
+ */
+private fun isGenUiLang(lang: String): Boolean = false
+
+/**
+ * 判定是否为「原生动态 UI 围栏」：quro-ui / zorv/ui 组合式 JSON DSL，由 QuroUiRenderer 原生渲染。
+ * 覆盖 quro-ui（现行）、quro_ui、zorv/ui、zorv-ui、zorv_ui 及含 quro/zorv 的标签——
+ * 即两种历史前缀都并入同一套 A2UI 原生解释器（组合实现，AI 任意嵌套基础节点成树）。
+ */
+private fun isDynamicUiLang(lang: String): Boolean {
+    val l = lang.trim().lowercase()
+    return l == "quro-ui" || l == "quro_ui" || l == "zorv/ui" || l == "zorv-ui" || l == "zorv_ui" ||
+            l.contains("quro") || l.contains("zorv")
+}
+
+/**
+ * 判定是否为「自研卡片渲染」围栏（feat_self_card）：quro-card / quro_card / zorv-card / zorv_card。
+ * 必须**先于** [isDynamicUiLang] 判定——后者对含 "quro"/"zorv" 的任意 lang 都返回 true，
+ * 若不先行拦截，```quro-card 会被动态 UI 路径劫持成 quro-ui 节点树，导致自研卡片不渲染、围栏残留。
+ * 与动态 UI 严格两条独立路径，不合并。
+ */
+private fun isSelfCardLang(lang: String): Boolean {
+    val l = lang.trim().lowercase()
+    return l == "quro-card" || l == "quro_card" || l == "zorv-card" || l == "zorv_card"
+}
+
+/**
+ * 判定是否为「可视化组件围栏」（正文第二通道）：card / cards / cardui。
+ * 直接复用 [CardFence.ALL_FENCES] 单一真源：围栏头改名时解析层与渲染层不会各改各的
+ * （历史教训：quro-ui / quro-card 都曾因两边判定不一致，出现「能解析却渲染成代码块」）。
+ */
+private fun isCardFenceLang(lang: String): Boolean {
+    val l = lang.trim().lowercase()
+    return CardFence.ALL_FENCES.any { l == it || l == it.replace('-', '_') }
+}
+
+/** 判断一段 JSON 是否为自研卡片节点（含 data.kind 结构，与内联组件 JSON 区分）。 */
+private fun isSelfCardNodeJson(json: String): Boolean {
+    return runCatching {
+        val o = JSONObject(json)
+        o.has("data") && o.optJSONObject("data")?.has("kind") == true
+    }.getOrDefault(false)
+}
+
+/**
+ * 从 AI 文本里抽离所有 ```quro-card 围栏并解析为完整 [CardSpec]（含 data）。
+ * 与动态 UI 的 quro-ui 解析完全独立、不合并：只认 ```quro-card 围栏，其余不动。
+ *
+ * - 开关关闭（调用方不调用本函数）时不进入此路径；
+ * - 围栏内 JSON 非法 / 缺 type / 不在白名单 → 解析失败跳过该围栏（降级为普通代码块，绝不崩）；
+ * - 渲染器注册由 [CardModule.init] 幂等保证（即便开关已持久化为开、启动时未走切换逻辑也能渲染）。
+ */
+private fun extractSelfCardSpecs(text: String): List<CardSpec> {
+    if (text.isBlank()) return emptyList()
+    // 幂等初始化：确保 CardRegistry 已注册自研渲染器（metric/line_chart/button_group/skeleton…）。
+    CardModule.init()
+    val out = mutableListOf<CardSpec>()
+    val seen = mutableSetOf<String>()
+    for (m in RE_FENCE.findAll(text)) {
+        val lang = m.groupValues[1].trim().lowercase()
+        if (!isSelfCardLang(lang)) continue
+        val code = m.groupValues[2].removeSuffix("\n")
+        val spec = parseCardSpec(code) ?: continue
+        if (!seen.add(spec.id)) continue
+        out.add(spec)
+    }
+    return out
+}
+
+/**
+ * 动态 UI 节点类型集合（与 [QuroUiDslParser] 一致）。
+ * 用于 [extractInlineComponents] 识别「动态 UI 的 JSON 节点树」，避免被当成内联卡片劫持。
+ */
+private val QURO_UI_NODE_TYPES = setOf(
+    "column", "row", "box", "card", "text", "image", "icon", "badge", "progress",
+    "divider", "spacer", "button", "text_input", "checkbox", "switch", "select",
+    "slider", "list", "tabs", "markdown", "video", "audio", "browser", "code"
+)
+
+/** 判断一段 JSON 是否为动态 UI 节点（根节点 type 在 [QURO_UI_NODE_TYPES] 内）。 */
+private fun isQuroUiNodeJson(json: String): Boolean {
+    return runCatching {
+        val t = JSONObject(json).optString("type", "").trim().lowercase()
+        t in QURO_UI_NODE_TYPES
+    }.getOrDefault(false)
+}
+
+/**
+ * 判断一段代码块内容是否为「合法动态 UI DSL」。用于 [parseBlocks]/[parseTail] 的内容兜底：
+ * 即使 AI 写错/没写语言标签，只要内容是合法动态 UI 节点树，就渲染为原生动态 UI（内联、不弹窗），
+ * 而不是退化成裸代码块显示在气泡里。
+ */
+private fun looksLikeQuroUiDsl(code: String): Boolean {
+    val t = code.trim()
+    if (!t.startsWith("{") || !t.contains("\"type\"")) return false
+    return QuroUiDslParser.parseBlock(t) is QuroUiParseResult.Success
+}
+
+/**
+ * 判断一段「HTML 围栏代码」是否为 Web 应用（MiniApp）源码、应走 Web 应用渲染而非纯代码块。
+ * 触发条件（同时满足，避免误伤普通网页）：
+ *  - 语言是 html/htm/markup（或为空，即 ``` 裸围栏里是 HTML）；
+ *  - 内容含 bridge 运行时入口 `Page(` 且至少带一个 MiniApp 绑定标记（data-bind / data-action / setData）。
+ * `data-bind` / `data-action` / `setData` 是 assets/bridge/bridge.js Web 应用运行时专属语法，普通网页几乎不会同时出现。
+ */
+private fun isMiniAppHtml(lang: String, code: String): Boolean {
+    val l = lang.trim().lowercase()
+    val htmlish = l == "html" || l == "htm" || l == "markup" || l.isBlank()
+    if (!htmlish) return false
+    val hasRuntime = code.contains("Page(")
+    val hasBinding = code.contains("data-bind") || code.contains("data-action") || code.contains("setData")
+    return hasRuntime && hasBinding
+}
+
+/**
+ * 处理围栏之间的尾段：若含「未闭合的开围栏」（流式生成中常见），
+ * 把开围栏之后的内容直接当代码块渲染（带边框），实现「边写边出框」；
+ * 否则走原 HTML 片段嗅探 / Markdown 解析。
+ */
+private fun parseTail(seg: String): List<MsgBlock> {
+    val open = RE_FENCE_OPEN.find(seg)
+    if (open != null) {
+        val before = seg.substring(0, open.range.first)
+        val after = seg.substring(open.range.last + 1)
+        val (langRaw, fenceAttrs) = splitFenceHead(open.groupValues[1])
+        val lang = langRaw
+        // 语言非空，或虽为空但有后续内容 → 视为开围栏（流式未闭合，而非孤立的闭合围栏）
+        if (lang.isNotBlank() || after.trim().isNotEmpty()) {
+            val out = mutableListOf<MsgBlock>()
+            if (before.isNotBlank()) out.addAll(parseSegments(before))
+            when {
+                // 可视化组件围栏流式未闭合：闭口前就当卡片解析（边写边出卡，JSON 合法即显示）
+                isCardFenceLang(lang) -> out.add(MsgBlock.Card(lang.lowercase(), after, false, fenceAttrs))
+                // 自研卡片渲染（feat_self_card）流式未闭合围栏：同样转 SelfCard 块（边写边出卡片）
+                isSelfCardLang(lang) -> out.add(MsgBlock.SelfCard(after))
+                // 生成式 UI 流式未闭合围栏：已废弃的 GenUI WebView 路径，跳过
+                isGenUiLang(lang) -> { /* skip — 已废弃的 GenUI WebView 路径 */ }
+                // 流式输出中 mermaid 围栏还没闭合时，也实时渲染（边写边出图）
+                lang.equals("mermaid", true) || lang.equals("mmd", true) ->
+                    out.add(MsgBlock.Mermaid(after))
+                // 流式输出中 a2ui 信封围栏还没闭合时，也实时渲染（边写边出界面）
+                lang.equals("a2ui", true) || lang.equals("a2ui+json", true) ->
+                    out.add(MsgBlock.DynamicUi(after))
+                // 流式输出中 miniapp 围栏还没闭合时，也实时渲染（边写边出 Web 应用）
+                lang.equals("miniapp", true) || lang.equals("mini", true) ->
+                    out.add(MsgBlock.MiniApp(after))
+                // 流式输出中 quro-ui 围栏还没闭合时，也实时渲染（边写边出界面）
+                isDynamicUiLang(lang) || looksLikeQuroUiDsl(after) ->
+                    out.add(MsgBlock.DynamicUi(after))
+                else ->
+                    out.add(MsgBlock.Code(lang.ifBlank { "text" }, after))
+            }
+            return out
+        }
+    }
+    return parseSegments(seg)
+}
+
+/**
+ * 把一段非围栏文本拆成块：若整段明显是「独立 HTML 片段」（非行内/散文），
+ * 整体作为 html 预览代码块（点「预览」即可 WebView 渲染）；否则走原 Markdown/HTML 块级解析。
+ * 判定需以 < 开头 + 含块级标签且标签总数较多，避免把散文里的 <b> 也误判成代码块。
+ */
+private fun parseSegments(seg: String): List<MsgBlock> {
+    val t = seg.trim()
+    if (t.isNotEmpty() && t.startsWith("<") && looksLikeHtmlStrict(t)) {
+        return listOf(MsgBlock.Code("html", seg.trim()))
+    }
+    return parseRichBlocks(seg)
+}
+
+/** 判定整段是否为「独立 HTML 片段」而非行内/散文：需以 < 开头，且含块级标签且标签总数较多。 */
+private fun looksLikeHtmlStrict(s: String): Boolean {
+    val t = s.trim()
+    if (t.startsWith("<!DOCTYPE html", ignoreCase = true)) return true
+    if (t.startsWith("<html", ignoreCase = true)) return true
+    if (RE_HTML_HEAD_BODY.containsMatchIn(t)) return true
+    val blockTags = Regex("(?i)<(div|section|article|table|form|ul|ol|header|footer|main|nav|body|html|style|script|iframe|head)\\b").findAll(t).count()
+    val totalTags = RE_HTML_TAG.findAll(t).count()
+    return blockTags >= 1 && totalTags >= 4
+}
+
+/** 识别块级 HTML（h1-6 / blockquote / hr / table / ul-ol）与 Markdown 块（# 标题、> 引用），其余按段落切分。 */
+private fun parseRichBlocks(seg: String): List<MsgBlock> {
+    val out = mutableListOf<MsgBlock>()
+    var pos = 0
+    for (m in RE_BLOCK.findAll(seg)) {
+        if (m.range.first > pos) out.addAll(parseParagraphs(seg.substring(pos, m.range.first)))
+        when {
+            m.groupValues[1].isNotBlank() ->
+                out.add(MsgBlock.Heading(m.groupValues[1].toInt(), m.groupValues[2].trim()))
+            m.groupValues[3].isNotBlank() ->
+                out.add(MsgBlock.Quote(m.groupValues[3].trim()))
+            m.groupValues[4].matches(RE_HR) ->
+                out.add(MsgBlock.Rule())
+            m.groupValues[5].isNotBlank() ->
+                out.add(parseTable(m.groupValues[5]))
+            m.groupValues[6].isNotBlank() -> {
+                val items = RE_LI.findAll(m.groupValues[7])
+                    .map { it.groupValues[1].trim() }.toList()
+                if (items.isNotEmpty()) out.add(MsgBlock.Text(items.joinToString("\n") { "• $it" }))
+            }
+        }
+        pos = m.range.last + 1
+    }
+    if (pos < seg.length) out.addAll(parseParagraphs(seg.substring(pos)))
+    return out.ifEmpty { listOf(MsgBlock.Text(seg)) }
+}
+
+/**
+ * 把一段非围栏文本作为**单个** [MsgBlock.Text] 交出去，不再在此处预先切碎 Markdown。
+ *
+ * ## 🔴 为什么取消预切分（本轮修复的核心）
+ * 旧实现在这里就把 `#` 标题 / `>` 引用 / 列表**提前吃掉并降级**：
+ *  - 标题 → [MsgBlock.Heading]，丢掉了行内 `**粗体**` 与列表嵌套
+ *  - 引用 → [MsgBlock.Quote]，多行被拍平成一行
+ *  - 列表 → `joinToString("\n") { "• $it" }`，**有序列表序号、任务列表 `[ ]`、缩进层级全部丢失**，
+ *    还会把同一列表里的项和上下文段落粘在一起
+ * 更糟的是切完之后传给渲染器的是**单行文本**，
+ * 于是渲染器自己的块级分支（标题/围栏/引用/分隔线/列表）永远命中不到 —— 结构性地成为死代码。
+ *
+ * 现在整段原样下传，由 [com.ai.assistance.quro.ui.dialog.RichText] 的
+ * [com.ai.assistance.quro.ui.dialog.parseMarkdown] 一次性完成块级 + 行内解析：
+ * 空行断段、行内换行作为软换行保留，这才是 Markdown 的真实语义
+ * （用户反馈的"排版被限制死"正是段落语义塌陷成行语义造成的）。
+ *
+ * 仍然保留的预处理只有两项**非 Markdown** 的历史包袱：
+ *  - `</?p>` / `<br>` → 换行（AI 有时仍会输出 HTML 段落标签）
+ *  - 去掉行尾空白
+ *
+ * 注意：围栏代码 / mermaid / AIP / 动态 UI / 卡片都在 [parseBlocks] 更早的分支里已被摘走，
+ * 走到这里的都是纯正文，交给 Markdown 渲染器是安全的。
+ */
+private fun parseParagraphs(s: String): List<MsgBlock> {
+    val normalized = s.replace(RE_P, "\n").replace(RE_BR, "\n")
+    val t = normalized.trim()
+    if (t.isEmpty()) return emptyList()
+    return listOf(MsgBlock.Text(t))
+}
+
+/** 解析 <table>：每行 <tr>，单元格 <td>/<th>；首行作为表头。 */
+private fun parseTable(html: String): MsgBlock.Table {
+    val rows = RE_TR.findAll(html)
+        .map { tr ->
+            RE_TD.findAll(tr.groupValues[1])
+                .map { it.groupValues[1].trim() }.toList()
+        }.toList()
+    val header = rows.firstOrNull() ?: emptyList()
+    val body = if (rows.size > 1) rows.subList(1, rows.size) else emptyList()
+    return MsgBlock.Table(header, body)
+}
+
+/** 渲染 <table>：首行为表头（primary 色），单元格内联 HTML 由 buildRich 渲染；横向滚动防溢出。 */
+@Composable
+private fun RenderTable(
+    header: List<String>,
+    rows: List<List<String>>,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    textColor: Color,
+    onOpenLink: (String) -> Unit,
+) {
+    // #213：委托给统一的表格实现（排序 / 折叠 / 复制 CSV / 斑马纹 / 列宽自适应）。
+    // 这里原来自己画了一遍「只能横滚的裸文本」，与 RichText 那份重复且都缺功能。
+    MarkdownTableView(
+        header = header,
+        rows = rows,
+        base = TextStyle(fontSize = scaled(15), color = textColor, lineHeight = scaled(23)),
+        onLinkClick = onOpenLink,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/** 嗅探代码内容是否像 HTML（兼容 AI 把语言标签写成空 / xml / markup / htm 等情况）。 */
+private fun looksLikeHtml(code: String): Boolean {
+    val t = code.trim()
+    if (t.startsWith("<!DOCTYPE html", ignoreCase = true)) return true
+    if (t.startsWith("<html", ignoreCase = true)) return true
+    if (RE_HTML_HEAD_BODY.containsMatchIn(t)) return true
+    // 含 2 个以上常见 HTML 标签即判定为 HTML
+    val tagCount = RE_HTML_TAG.findAll(t).count()
+    return tagCount >= 2
+}
+
+/** HTML 转义（用于在 WebView 中安全展示非 HTML 代码）。 */
+private fun escapeHtml(text: String): String {
+    return text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;")
+}
+
+/**
+ * 动态 UI 内联渲染块（v1.0.81 当前方案）：直接在对话框消息流里、气泡下方以「全宽原生区块」呈现，
+ * 撑满对话框内容区、自适应屏幕宽度、随对话框一起滚动、完整可见——不弹窗、不点卡片、不压窄。
+ * 交互动作经 [handleDynamicUiAction] 直连 ZorvAI 内部能力（复制/打开应用/打开链接/调工具/激活技能…）。
+ */
+@Composable
+private fun DynamicUiBlock(
+    source: String,
+    onCommand: (String) -> Unit,
+    onOpenLink: (String) -> Unit,
+) {
+    // 动态 UI 交互要真调用 ZorvAI 内部功能（复制/打开应用/调用工具/执行技能），
+    // 需要应用 Context 与协程作用域，从可组合作用域直接取。
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // 只在 source 变化时重新解析：流式输出期间每来一个字都会重组，
+    // 若把解析写在重组体内会导致每帧重解析一次（白白烧 CPU）。
+    // 统一走 A2UI 多语言解释器：quro-ui DSL → Catalog 校验 →（可选 JSONL 信封）；zorv/ui 同路原生渲染。
+    val parsed = remember(source) { A2uiInterpreter.interpret(source) }
+
+    // 直接在对话框原生层内联渲染：不包 Surface、不另起一层卡片。AI 用 quro-ui DSL 自写 UI，
+    // 原生 Compose 直接渲染进对话框；clipToBounds 硬锁屏幕宽度，移动端任何内容都不超出屏幕。
+    // 不再加 horizontal padding：动态 UI 就是对话框本身，要撑满消息列宽（避免之前 12dp×2 把内容挤窄）。
+    when (parsed) {
+        is QuroUiParseResult.Success -> Column(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp).clipToBounds(),
+        ) {
+            // SurfaceHost：动态 UI 的 surface 根部封装 —— 把「LocalDensity 等比映射（360dp 设计稿→列宽，不溢出）」
+            // 与「容器尺寸档位（类 WindowSizeClass，作结构信号下发）」合二为一。
+            // 手机/平板/折叠/分屏/横竖屏全自适应，数学上不可能横向溢出（根因级方案，替代此前的换行/滚动/限高兜底）。
+            SurfaceHost(designWidthDp = 360f) {
+                QuroUiRenderer(
+                    root = parsed.root,
+                    modifier = Modifier.fillMaxWidth(),
+                    onAction = { action, values ->
+                        handleDynamicUiAction(action, values, ctx, scope, onCommand, onOpenLink)
+                    },
+                )
+            }
+        }
+
+        is QuroUiParseResult.Failure -> Column(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp).clipToBounds(),
+        ) {
+            Text(text = stringResource(R.string.qk_00238, (parsed.reason).toString()),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = parsed.rawJson.take(600),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * 动态 UI 交互事件回发的**命令前缀**。
+ *
+ * 🔴 这不是随意的命名，而是一条链路的生死线：
+ * 组件点击 → [QuroUiRenderer] `dispatch` → [handleDynamicUiAction] → `onCommand(prefix+payload)`
+ * → ChatScreen 的 `handleCardCommand` 老 `when` 链路 → `send()`。
+ *
+ * 历史上这里发的是**裸串**（`【ttt_move】\nrow: 0...`），而老链路只认
+ * `reply:` / `ai:` / `ui_` 等固定前缀，于是每一次点击都被静默丢弃 ——
+ * 用户看到的就是「组件点不了、互动游戏玩不下去」。
+ * 前缀化既复用了零新增结构的老链路，又保证不会与内部控制串（`__edit_soul_card__`）混淆。
+ */
+private const val UI_REPLY_PREFIX = "ui_reply:"
+
+/**
+ * 把动态 UI 的交互动作翻译成「ZorvAI 内部功能」的真实调用。
+ *
+ * 此前这里是「假动作」——所有动作都只是把一句提示文本发回模型、让模型二次解析再 tool_call，
+ * 既多一轮往返又依赖模型正确解读指令。现在改为客户端直连 ZorvAI 能力：
+ *  - copy        → 真写系统剪贴板（[copyPlain]）
+ *  - open_app    → 真启动应用（[LaunchAppTool]，支持包名精确 / 应用名模糊）
+ *  - open_url    → 已是真打开（应用内浏览器）
+ *  - tool_call   → 真执行 ZorvAI 工具（[QuroToolRegistry]，对接全部内置功能），结果回传模型继续对话
+ *  - skill       → 真激活技能（技能本质是「指令回灌」，把技能提示词发回模型）
+ *  - callback    → 回传用户填写的值给模型（设计如此，让模型继续对话）
+ *  - toggle      → 纯本地展开/收起，渲染器内部已处理
+ */
+fun handleDynamicUiAction(
+    action: QuroUiAction,
+    values: Map<String, String>,
+    ctx: Context,
+    scope: CoroutineScope,
+    onCommand: (String) -> Unit,
+    onOpenLink: (String) -> Unit,
+) {
+    when (action) {
+        // 回传事件给模型：把用户填的值 + data 作为一条用户消息发回，让模型继续对话。
+        //
+        // 🔴🔴 必须带 `ui_reply:` 前缀走onCommand（见 [UI_REPLY_PREFIX] 说明）：
+        // 旧实现发的是裸串 `【ttt_move】\nrow: 0...`，而 onCommand 终端是
+        // handleCardCommand 的 `when { cmd.startsWith(...) }` 老链路 ——
+        // 裸串**一个分支都不匹配**，于是用户的每一次点击都被静默丢弃，
+        // 表现就是「组件点不了 / 互动游戏玩不下去 / AI 收不到操作」。
+        is QuroCallbackAction -> {
+            val merged = LinkedHashMap<String, String>(values).apply { putAll(action.data) }
+            val body = if (merged.isNotEmpty()) {
+                merged.entries.joinToString("\n") { "${it.key}: ${it.value}" }
+            } else {
+                action.event
+            }
+            val payload = if (action.event.isNotBlank()) {
+                "【${action.event}】\n$body"
+            } else {
+                body
+            }
+            onCommand(UI_REPLY_PREFIX + payload)
+        }
+
+        // 复制文本：真写系统剪贴板（ZorvAI 自带能力）。
+        is QuroCopyAction -> {
+            val text = action.text.ifBlank { values.values.firstOrNull() ?: "" }
+            if (text.isNotBlank()) {
+                copyPlain(ctx, text)
+            } else {
+                Toast.makeText(ctx, qstr(R.string.qk_00239), Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // 打开应用：真启动（支持包名精确启动，或应用名模糊匹配）。
+        is QuroOpenAppAction -> {
+            val target = action.packageName.ifBlank { values.values.firstOrNull() ?: "" }
+            if (target.isBlank()) {
+                Toast.makeText(ctx, qstr(R.string.qk_00240), Toast.LENGTH_SHORT).show()
+                return
+            }
+            scope.launch(Dispatchers.Main) {
+                val result = runCatching {
+                    LaunchAppTool().run(ctx, JSONObject().apply {
+                        if (target.contains(".")) put("package", target) else put("name", target)
+                    }.toString())
+                }.getOrDefault(qstr(R.string.qk_00241))
+                Toast.makeText(ctx, result.take(120), Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // 打开网页：已是真打开（应用内浏览器）。
+        is QuroOpenUrlAction -> if (action.url.isNotBlank()) onOpenLink(action.url)
+
+        // ─── 多层渲染 / 深链导航（v1.0.82 新增）───
+
+        // 打开 ZorvAI 内置界面（终端/模型配置/可视化编程/Web 应用/工具中心等）：经 UI 控制总线打开。
+        is QuroOpenScreenAction -> {
+            val target = action.target.ifBlank { values["target"] ?: "" }
+            if (target.isBlank()) {
+                Toast.makeText(ctx, qstr(R.string.qk_00242), Toast.LENGTH_SHORT).show()
+                return
+            }
+            UiNavigationBus.navEvent = UiNavigationEvent.OpenScreen(target)
+        }
+
+        // 直接渲染 HTML 到对话气泡（第一层渲染，复用 MiniAppCard 运行时）。
+        is QuroRenderHtmlAction -> {
+            val html = action.html.ifBlank { values.values.firstOrNull() ?: "" }
+            if (html.isBlank()) {
+                Toast.makeText(ctx, qstr(R.string.qk_00243), Toast.LENGTH_SHORT).show()
+                return
+            }
+            UiNavigationBus.navEvent = UiNavigationEvent.RenderWidget(
+                type = "miniapp",
+                // 修复：System.currentTimeMillis() 连点两次同毫秒 → 卡片 id 重复。改用 nanoTime。
+                id = "dyn_html_${System.nanoTime()}",
+                label = qstr(R.string.qk_00244),
+                value = html,
+            )
+        }
+
+        // 直接渲染可视化编程（mermaid）到对话气泡（第一层渲染，复用 MermaidCard 运行时）。
+        is QuroRenderVisproAction -> {
+            val source = action.source.ifBlank { values.values.firstOrNull() ?: "" }
+            if (source.isBlank()) {
+                Toast.makeText(ctx, qstr(R.string.qk_00245), Toast.LENGTH_SHORT).show()
+                return
+            }
+            UiNavigationBus.navEvent = UiNavigationEvent.RenderWidget(
+                type = "mermaid",
+                // 修复：同上，防同毫秒 id 重复
+                id = "dyn_mermaid_${System.nanoTime()}",
+                label = qstr(R.string.qk_00021),
+                value = source,
+            )
+        }
+
+        // 可视化弹窗：经 UI 控制总线上报，ChatScreen 用 AlertDialog 弹出（纯展示）。
+        is QuroVisualPopupAction -> UiNavigationBus.navEvent = UiNavigationEvent.VisualPopup(
+            title = action.title,
+            content = action.content,
+        )
+
+        // 可视化询问：经 UI 控制总线上报，ChatScreen 用 AlertDialog 让用户选择，选中项回发模型。
+        is QuroVisualAskAction -> {
+            val options = action.options.ifEmpty { values.values.toList() }
+            UiNavigationBus.navEvent = UiNavigationEvent.VisualAsk(
+                prompt = action.prompt,
+                options = options,
+            )
+        }
+
+        // zxwidget 卡片（第三个对话框）：WebView 承载 zx 交互式卡片，
+        // 卡片内交互由 ZxWebCard.summarize 整理成结构化描述回发模型。
+        is QuroZxWebCardAction -> {
+            val component = action.component.ifBlank { values["component"] ?: "" }
+            val dsl = action.dsl.ifBlank { values["dsl"] ?: "" }
+            if (component.isBlank() || dsl.isBlank()) {
+                Toast.makeText(ctx, qstr(R.string.qk_04073), Toast.LENGTH_SHORT).show()
+                return
+            }
+            // zxwidget **直接渲染在对话框里**（不是弹窗、不是卡片）。
+            // 这条分支是「模型写 DSL 节点而不是调工具」的来源：它没有可挂的消息，
+            // 需要由 vm 造一条「只给用户看、不喂 LLM」的消息，落进消息流后同样内联渲染。
+            //
+            // 🔴 这里**只能发导航事件，不能直接调 vm**：本函数（handleDynamicUiAction）
+            //    是顶层函数，参数里没有 vm，写了编译不过（第一次改就栽在这）。
+            //    [UiNavigationBus] 存在的意义正是这条桥——ChatScreen 里消费该事件时才拿得到 vm。
+            UiNavigationBus.navEvent = UiNavigationEvent.ZxWebCard(
+                title = action.title.ifBlank { values["title"] ?: "" },
+                component = component,
+                dsl = dsl,
+            )
+        }
+
+        // 调用内置工具：真执行 ZorvAI 工具（对接全部内部功能），结果回传模型继续对话。
+        is QuroToolCallAction -> {
+            val args = LinkedHashMap(action.arguments).apply { putAll(values) }
+            val toolName = action.tool.ifBlank { values["tool"] ?: "" }
+            if (toolName.isBlank()) {
+                Toast.makeText(ctx, qstr(R.string.qk_00246), Toast.LENGTH_SHORT).show()
+                return
+            }
+            scope.launch(Dispatchers.IO) {
+                val tool = QuroToolRegistry.active?.get(toolName)
+                if (tool == null) {
+                    // 兜底：走模型二次解析
+                    withContext(Dispatchers.Main) { onCommand(qstr(R.string.qk_00247, (toolName).toString())) }
+                    return@launch
+                }
+                // 需要危险权限的工具（如手电筒/蓝牙）从 UI 点击直接执行无法弹授权框，
+                // 回退到「模型二次解析」路径（引擎会在 Activity 上下文里申请权限）。
+                if (tool.requiredPermissions.isNotEmpty()) {
+                    // 修复：原拼「请调用工具 X，参数：k=v」普通文本直接出现在用户气泡里（用户困惑），
+                    // 参数经字符串拼接含引号/换行即失真。改为结构化 JSON 前缀，模型可正确解析参数。
+                    val argsJson = JSONObject().apply { args.forEach { (k, v) -> put(k, v) } }.toString()
+                    withContext(Dispatchers.Main) {
+                        onCommand("[ui_tool_request] {\"tool\":\"$toolName\",\"args\":$argsJson}")
+                    }
+                    return@launch
+                }
+                val argsJson = JSONObject().apply { args.forEach { (k, v) -> put(k, v) } }.toString()
+                val result = runCatching { tool.run(ctx, argsJson) }.getOrDefault(qstr(R.string.qk_00248))
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, qstr(R.string.qk_00249, (toolName).toString()), Toast.LENGTH_SHORT).show()
+                    // 工具返回的文本（如 get_battery / run_code / http_request 的结果）回传模型，
+                    // 让 AI 把结果组织成自然语言回复给用户。超长结果截断，避免刷屏。
+                    val feedback = if (result.length > 2000) result.take(2000) + qstr(R.string.qk_00250) else result
+                    onCommand(qstr(R.string.qk_00251, (toolName).toString(), (feedback).toString()))
+                }
+            }
+        }
+
+        // 执行技能：技能本质是「指令回灌」，把技能提示词作为用户消息发回模型激活。
+        is QuroSkillAction -> {
+            // 修复：模型从工具列表复制全名 "skill__xxx" 作为 skill 名传入时，
+            // 拼成 "skill__skill__xxx" 查不到 → 误报「技能未启用」。先去掉重复前缀。
+            val skillName = (action.skill.ifBlank { values["skill"] ?: "" }).removePrefix("skill__")
+            if (skillName.isBlank()) {
+                Toast.makeText(ctx, qstr(R.string.qk_00252), Toast.LENGTH_SHORT).show()
+                return
+            }
+            val input = action.input?.takeIf { it.isNotBlank() }
+                ?: values.values.joinToString("，")
+            scope.launch(Dispatchers.IO) {
+                val directive = runCatching {
+                    (QuroToolRegistry.active?.get("skill__$skillName") ?: QuroSkillTool(skillName, ctx))
+                        .run(ctx, JSONObject().apply { put("input", input) }.toString())
+                }.getOrDefault(qstr(R.string.qk_00253, (skillName).toString()))
+                withContext(Dispatchers.Main) { onCommand(directive) }
+            }
+        }
+
+        // 纯本地行为（展开/收起节点），渲染器内部已切换可见性，无需惊动模型
+        is QuroToggleAction -> Unit
+    }
+}
+
+/** 对话内代码块：可复制、可直接运行（IDE 能力）；HTML 代码块额外支持「代码 / 预览」双 Tab 渲染。 */
+@Composable
+private fun CodeBlock(lang: String, code: String, scaled: (Int) -> androidx.compose.ui.unit.TextUnit, onSend: (String) -> Unit = {}) {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    var output by remember { mutableStateOf<String?>(null) }
+    var isRunning by remember { mutableStateOf(false) }
+    val isHtml = lang.equals("html", ignoreCase = true) ||
+        lang.equals("htm", ignoreCase = true) ||
+        lang.equals("markup", ignoreCase = true) ||
+        lang.equals("svg", ignoreCase = true) ||
+        lang.equals("xml", ignoreCase = true) ||
+        looksLikeHtml(code) ||
+        code.contains("<svg") ||
+        code.contains("<svg ")
+    val isJs = lang.equals("javascript", ignoreCase = true) ||
+        lang.equals("js", ignoreCase = true) ||
+        lang.equals("typescript", ignoreCase = true) ||
+        lang.equals("ts", ignoreCase = true)
+    var showPreview by remember { mutableStateOf(true) }
+    var showFullscreen by remember { mutableStateOf(false) }
+
+    // 错误检测辅助函数
+    fun isErrorCode(result: String): Boolean {
+        return result.startsWith(qstr(R.string.qk_00254)) ||
+            result.contains("错误") ||
+            result.contains("error", ignoreCase = true) ||
+            result.contains("Traceback") ||
+            result.contains("not found", ignoreCase = true) ||
+            result.contains("command not found", ignoreCase = true) ||
+            result.contains("Exception") ||
+            result.contains("SyntaxError") ||
+            result.contains("TypeError") ||
+            result.contains("ReferenceError") ||
+            result.contains("NameError") ||
+            result.contains("ValueError") ||
+            result.contains("IndexError") ||
+            result.contains("KeyError") ||
+            result.contains("ImportError") ||
+            result.contains("ModuleNotFoundError") ||
+            result.contains("FileNotFoundError") ||
+            result.contains("PermissionError") ||
+            result.contains("TimeoutError") ||
+            result.contains("ConnectionError") ||
+            result.contains("RuntimeError") ||
+            result.contains("IOError") ||
+            result.contains("OSError") ||
+            result.contains("AttributeError") ||
+            result.contains("ZeroDivisionError") ||
+            result.contains("OverflowError") ||
+            result.contains("MemoryError")
+    }
+
+    // Agent 模式：自动运行 HTML/JS 代码
+    LaunchedEffect(code, lang) {
+        if ((isHtml || isJs) && code.isNotBlank() && output == null && !isRunning) {
+            isRunning = true
+            try {
+                val r = withContext(Dispatchers.IO) {
+                    RunCodeTool().run(
+                        ctx,
+                        JSONObject().put("code", code).put("lang", lang.ifBlank { "html" }).toString(),
+                    )
+                }
+                output = r
+            } catch (e: Exception) {
+                output = qstr(R.string.qk_00256, (e.message).toString())
+            } finally {
+                isRunning = false
+            }
+        }
+    }
+    // v405：WebView 在 AndroidView + WRAP_CONTENT 下高度不随内容展开，预览常空白。
+    // 用状态高度：初始固定值，onPageFinished 读实际内容高度动态扩容（上限 640dp）。
+    var webHeight by remember { mutableStateOf(220.dp) }
+
+    Surface(
+        color = cs.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth().border(1.dp, cs.outlineVariant, RoundedCornerShape(10.dp)),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            // 头部：语言标签 + 操作按钮（HTML 时多一个 代码/预览 切换）
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Text(lang.ifBlank { "code" }, fontSize = 11.sp, color = cs.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                // [代码|预览] 切换 + 复制 + 运行（始终显示）
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier
+                            .background(cs.surface, RoundedCornerShape(6.dp))
+                            .padding(2.dp)
+                    ) {
+                        val tabs = listOf("代码" to false, "预览" to true)
+                        tabs.forEach { (label, isPrev) ->
+                            val selected = (showPreview == isPrev)
+                            Surface(
+                                color = if (selected) cs.primary else Color.Transparent,
+                                shape = RoundedCornerShape(4.dp),
+                                onClick = { showPreview = isPrev },
+                            ) {
+                                Text(label, fontSize = 10.sp, color = if (selected) cs.onPrimary else cs.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(4.dp))
+                IconButton(onClick = { showFullscreen = true }, Modifier.size(28.dp)) {
+                    LucideIcon("maximize", stringResource(R.string.qk_00110), Modifier.size(16.dp), tint = Muted)
+                }
+                Spacer(Modifier.width(2.dp))
+                IconButton(onClick = { copyPlain(ctx, code) }, Modifier.size(28.dp)) {
+                    LucideIcon("corner_down_left", stringResource(R.string.qk_00258), Modifier.size(14.dp), tint = Muted)
+                }
+                IconButton(onClick = {
+                    val extension = when (lang.lowercase()) {
+                        "javascript", "js" -> ".js"
+                        "python", "py" -> ".py"
+                        "html", "htm" -> ".html"
+                        "json" -> ".json"
+                        "css" -> ".css"
+                        "xml", "svg" -> ".xml"
+                        "java" -> ".java"
+                        "kotlin", "kt" -> ".kt"
+                        "c", "cpp", "c++" -> ".cpp"
+                        "shell", "sh", "bash" -> ".sh"
+                        else -> ".txt"
+                    }
+                    val fileName = "quro_code_${System.currentTimeMillis()}$extension"
+                    saveCodeToDownloads(ctx, fileName, code)
+                }, Modifier.size(28.dp)) {
+                    LucideIcon("download", stringResource(R.string.qk_00259), Modifier.size(14.dp), tint = Muted)
+                }
+                // 自动修复按钮：仅在有错误输出时显示
+                if (output != null && isErrorCode(output!!)) {
+                    Spacer(Modifier.width(2.dp))
+                    IconButton(onClick = {
+                        val fixPrompt = buildString {
+                            appendLine(qstr(R.string.qk_00260))
+                            appendLine()
+                            appendLine(qstr(R.string.qk_00261, (lang).toString()))
+                            appendLine(qstr(R.string.qk_00262))
+                            appendLine("```$lang")
+                            appendLine(code)
+                            appendLine("```")
+                            appendLine()
+                            appendLine(qstr(R.string.qk_00263))
+                            appendLine(output)
+                            appendLine()
+                            appendLine(qstr(R.string.qk_00264))
+                        }
+                        onSend(fixPrompt)
+                    }, Modifier.size(28.dp)) {
+                        LucideIcon("sparkles", stringResource(R.string.qk_00265), Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error)
+                    }
+                }
+                IconButton(onClick = {
+                    if (!isRunning) {
+                        scope.launch(Dispatchers.IO) {
+                            isRunning = true
+                            output = null
+                            try {
+                                val r = RunCodeTool().run(
+                                    ctx,
+                                    JSONObject().put("code", code).put("lang", lang.ifBlank { "python" }).toString(),
+                                )
+                                withContext(Dispatchers.Main) { output = r }
+                            } catch (e: Exception) {
+                                withContext(Dispatchers.Main) { output = qstr(R.string.qk_00256, (e.message).toString()) }
+                            } finally {
+                                withContext(Dispatchers.Main) { isRunning = false }
+                            }
+                        }
+                    }
+                }, Modifier.size(28.dp)) {
+                    if (isRunning) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = cs.primary)
+                    } else {
+                        Icon(Icons.Filled.PlayArrow, stringResource(R.string.qk_00266), Modifier.size(16.dp), tint = cs.primary)
+                    }
+                }
+                }  // end of inner action row
+            }
+
+            // 内容区：源码 or 预览（HTML 默认直接渲染，无需手动点「预览」）
+            if (showPreview) {
+                // 预览模式：WebView 渲染（高度由 webHeight 状态驱动，避免空白）
+                // Python/JS 等代码需要 JS 来执行语法高亮，HTML/SVG/JSON 预览也需要 JS
+                val needsJs = true // 所有语言都启用JS以支持交互性
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(webHeight)
+                        .clip(RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
+                        .background(Color.White)
+                ) {
+                    AndroidView(factory = { context ->
+                            WebView(context).apply {
+                            settings.javaScriptEnabled = needsJs
+                            settings.domStorageEnabled = true
+                            settings.databaseEnabled = true
+                            settings.allowContentAccess = true
+                            settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                            settings.setSupportZoom(true)
+                            settings.builtInZoomControls = false
+                            settings.setSupportMultipleWindows(false)
+                            settings.setSupportZoom(true)
+                            settings.builtInZoomControls = true
+                            settings.displayZoomControls = false
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                                settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            }
+                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            webViewClient = object : WebViewClient() {
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    super.onPageFinished(view, url)
+                                    val density = view?.context?.resources?.displayMetrics?.density ?: return
+                                    view.evaluateJavascript("document.documentElement.scrollHeight") { value ->
+                                        val px = value?.replace("\"", "")?.toIntOrNull() ?: return@evaluateJavascript
+                                        val dp = (px / density).toInt().coerceIn(120, 640)
+                                        webHeight = dp.dp
+                                    }
+                                }
+                            }
+                            // 调试：把 JS console 输出打到诊断日志，方便定位 canvas/脚本问题
+                            webChromeClient = object : android.webkit.WebChromeClient() {
+                                override fun onConsoleMessage(cm: android.webkit.ConsoleMessage?): Boolean {
+                                    cm ?: return super.onConsoleMessage(cm)
+                                    QuroDiag.log("WebView", "[${cm.sourceId()}:${cm.lineNumber()}] ${cm.message()}")
+                                    return true
+                                }
+                            }
+                            // 初始加载（流式时后续由 update 跟随重载，避免预览冻结在首帧）
+                            val html = buildPreviewHtml(code, isHtml, lang)
+                            tag = html
+                            loadDataWithBaseURL("https://localhost/", html, "text/html", "UTF-8", null)
+                        }
+                    }, modifier = Modifier.fillMaxSize(), update = { wv ->
+                        // 流式生成：code 变化时重新加载，预览随写随更新
+                        val html = buildPreviewHtml(code, isHtml, lang)
+                        if (wv.tag != html) {
+                            wv.tag = html
+                            wv.loadDataWithBaseURL("https://localhost/", html, "text/html", "UTF-8", null)
+                        }
+                    })
+                }
+            } else {
+                // #213：改用统一代码视图 —— 语法高亮 / 行号 / 长代码折叠 / diff 着色 / 横向滚动。
+                //
+                // 旧实现是「纯文本 + softWrap=false」：没有层次、没有行号，
+                // 想改其中一行只能整段手抄；两百行的代码还会把消息顶到屏幕外。
+                // 🔴 外层气泡已在 SelectionContainer 内（见消息体最外层），这里不再嵌套，
+                //    嵌套 SelectionContainer 会让两侧的选区互相截断。
+                CodeSourceView(
+                    code = code,
+                    lang = lang,
+                    showHeader = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp)
+                        .padding(bottom = 8.dp),
+                )
+            }
+
+            output?.let { result ->
+                HorizontalDivider(color = Line)
+                // 如果结果是HTML，用WebView渲染；否则用纯文本
+                val resultIsHtml = result.trimStart().startsWith("<!DOCTYPE html") ||
+                    result.trimStart().startsWith("<html") ||
+                    result.contains("<html", ignoreCase = true) ||
+                    result.contains("<body", ignoreCase = true)
+                if (resultIsHtml && !isErrorCode(result)) {
+                    // HTML结果用WebView渲染（交互式）
+                    var resultHeight by remember { mutableStateOf(200.dp) }
+                    Surface(
+                        color = cs.surface,
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Column(Modifier.padding(4.dp)) {
+                            val context = LocalContext.current
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(qstr(R.string.qk_00267),
+                                    fontSize = 11.sp,
+                                    color = Muted,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Row {
+                                    // 下载按钮
+                                    IconButton(onClick = {
+                                        val fileName = "quro_html_${System.currentTimeMillis()}.html"
+                                        saveCodeToDownloads(context, fileName, result)
+                                    }, modifier = Modifier.size(24.dp)) {
+                                        LucideIcon("download", qstr(R.string.qk_00268), Modifier.size(14.dp), tint = Muted)
+                                    }
+                                    // 全屏按钮
+                                    IconButton(onClick = { showFullscreen = true }, modifier = Modifier.size(24.dp)) {
+                                        LucideIcon("maximize", qstr(R.string.qk_00110), Modifier.size(14.dp), tint = Muted)
+                                    }
+                                }
+                            }
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(resultHeight)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color.White)
+                            ) {
+                                AndroidView(factory = { context ->
+                                    WebView(context).apply {
+                                        settings.javaScriptEnabled = true
+                                        settings.domStorageEnabled = true
+                                        settings.databaseEnabled = true
+                                        settings.allowContentAccess = true
+                                        settings.allowFileAccess = true
+                                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                                        settings.setSupportMultipleWindows(false)
+                                        settings.setSupportZoom(true)
+                                        settings.builtInZoomControls = true
+                                        settings.displayZoomControls = false
+                                        settings.useWideViewPort = true
+                                        settings.loadWithOverviewMode = true
+                                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                        layoutParams = ViewGroup.LayoutParams(
+                                            ViewGroup.LayoutParams.MATCH_PARENT,
+                                            ViewGroup.LayoutParams.MATCH_PARENT
+                                        )
+                                        webViewClient = object : WebViewClient() {
+                                            override fun onPageFinished(view: WebView?, url: String?) {
+                                                super.onPageFinished(view, url)
+                                                val density = view?.context?.resources?.displayMetrics?.density ?: return
+                                                view.evaluateJavascript("document.documentElement.scrollHeight") { value ->
+                                                    val px = value?.replace("\"", "")?.toIntOrNull() ?: return@evaluateJavascript
+                                                    val dp = (px / density).toInt().coerceIn(120, 640)
+                                                    resultHeight = dp.dp
+                                                }
+                                            }
+                                        }
+                                        webChromeClient = object : android.webkit.WebChromeClient() {
+                                            override fun onConsoleMessage(cm: android.webkit.ConsoleMessage?): Boolean {
+                                                cm ?: return super.onConsoleMessage(cm)
+                                                QuroDiag.log("WebView", "[${cm.sourceId()}:${cm.lineNumber()}] ${cm.message()}")
+                                                return true
+                                            }
+                                        }
+                                        loadDataWithBaseURL("https://localhost/", result, "text/html", "UTF-8", null)
+                                    }
+                                }, modifier = Modifier.fillMaxSize())
+                            }
+                        }
+                    }
+                } else {
+                    // 纯文本结果
+                    val context = LocalContext.current
+                    Surface(
+                        color = if (isErrorCode(result))
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                        else
+                            cs.surface,
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Column(Modifier.padding(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    if (isErrorCode(result))
+                                        qstr(R.string.qk_00269) else qstr(R.string.qk_00270),
+                                    fontSize = 11.sp,
+                                    color = if (isErrorCode(result))
+                                        MaterialTheme.colorScheme.error else Muted,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                // 下载按钮（仅成功结果）
+                                if (!isErrorCode(result)) {
+                                    IconButton(onClick = {
+                                        val fileName = "quro_result_${System.currentTimeMillis()}.txt"
+                                        saveCodeToDownloads(context, fileName, result)
+                                    }, modifier = Modifier.size(24.dp)) {
+                                        LucideIcon("download", qstr(R.string.qk_00271), Modifier.size(14.dp), tint = Muted)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            SelectionContainer {
+                                Text(
+                                    result,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    color = cs.onSurface,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 全屏预览覆盖层
+    if (showFullscreen) {
+        FullscreenPreview(code = code, isHtml = isHtml, lang = lang, onDismiss = { showFullscreen = false })
+    }
+}
+
+// 全屏预览覆盖层（CodeBlock 内点击 🔲 全屏按钮触发）—— 用 Dialog 真正覆盖全屏
+@Composable
+private fun FullscreenPreview(code: String, isHtml: Boolean, lang: String = "", onDismiss: () -> Unit) {
+    // #877 修复全屏白屏：Compose Dialog 是 overlay window，内部 WebView 在多 ROM 上无法正确
+    // 合成 → 白屏。改用挂在真实 Activity window 上的传统 Dialog，WebView 用 Activity context
+    // 创建，能稳定渲染。若取不到 Activity（极端），兜底仍用 Compose Dialog。
+    val ctx = LocalContext.current
+    val activity = ctx.findActivity()
+    val finalHtml = if (isHtml || code.contains("<svg") || code.contains("<svg ")) {
+        val t = code.trim()
+        val isFullDoc = t.startsWith("<!DOCTYPE html", ignoreCase = true) || t.startsWith("<html", ignoreCase = true)
+        if (isFullDoc) code else buildString {
+            append("<!DOCTYPE html><html><head><meta charset=\"UTF-8\">")
+            append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+            append("<style>body{margin:0;padding:16px;font-family:sans-serif;word-wrap:break-word;}img{max-width:100%;height:auto;}</style>")
+            append("</head><body>").append(code).append("</body></html>")
+        }
+    } else {
+        // 代码块全屏预览：使用 Highlight.js 语法高亮
+        buildString {
+            append("<!DOCTYPE html><html><head><meta charset=\"UTF-8\">")
+            append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+            // Highlight.js CDN
+            append("<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css\">")
+            append("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js\"></script>")
+            append("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js\"></script>")
+            append("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js\"></script>")
+            append("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js\"></script>")
+            append("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js\"></script>")
+            append("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js\"></script>")
+            append("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js\"></script>")
+            append("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js\"></script>")
+            append("<style>")
+            append("body{margin:0;padding:16px;background:#1e1e1e;}")
+            append("pre{margin:0;padding:0;overflow-x:auto;font-family:'Fira Code',Consolas,Monaco,'Courier New',monospace;font-size:14px;line-height:1.6;}")
+            append("code{background:transparent;padding:0;}")
+            append("</style></head><body><pre><code class=\"language-${lang.ifBlank { "plaintext" }}\">")
+            append(escapeHtml(code))
+            append("</code></pre>")
+            append("<script>hljs.highlightAll();</script>")
+            append("</body></html>")
+        }
+    }
+
+    if (activity == null) {
+        // 兜底路径（理论上 ChatScreen 必在 Activity 内，不会走到）
+        Dialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(Modifier.fillMaxSize().background(Color.White)) {
+                AndroidView(factory = {
+                    WebView(ctx).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                        settings.loadWithOverviewMode = true
+                        settings.useWideViewPort = true
+                        loadDataWithBaseURL(null, finalHtml, "text/html", "UTF-8", null)
+                    }
+                }, modifier = Modifier.fillMaxSize())
+                IconButton(onClick = onDismiss, Modifier.align(Alignment.TopEnd).padding(12.dp).size(36.dp)) {
+                    LucideIcon("x", stringResource(R.string.qk_00272), Modifier.size(22.dp), tint = Color.White)
+                }
+            }
+        }
+        return
+    }
+
+    DisposableEffect(Unit) {
+        val host = activity
+        val dialog = android.app.Dialog(host, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.window?.apply {
+            // 全屏三件套：全屏标志 + 允许延伸到系统栏区域 + 沉浸式隐藏导航栏
+            setFlags(
+                WindowManager.LayoutParams.FLAG_FULLSCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            )
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            // 沉浸式：隐藏状态栏和导航栏（兼容 API 30+）
+            @Suppress("DEPRECATION")
+            decorView.systemUiVisibility = (
+                android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            )
+        }
+        val webView = WebView(host).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
+            settings.loadWithOverviewMode = true
+            settings.useWideViewPort = true
+            loadDataWithBaseURL(null, finalHtml, "text/html", "UTF-8", null)
+        }
+        // 右上角半透明关闭按钮（传统 View，避免再套一层 Compose）
+        val closeBtn = TextView(host).apply {
+            text = "✕"
+            textSize = 22f
+            setTextColor(android.graphics.Color.WHITE)
+            background = GradientDrawable().apply { setColor(0x73000000.toInt()); cornerRadius = 22f }
+            setPadding(22, 10, 22, 10)
+            setOnClickListener { dialog.dismiss() }
+        }
+        val frame = FrameLayout(host)
+        frame.addView(webView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val closeLp = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = 56; rightMargin = 28
+        }
+        frame.addView(closeBtn, closeLp)
+        dialog.setContentView(frame)
+        dialog.setOnDismissListener { onDismiss() }
+        dialog.show()
+        onDispose { dialog.dismiss() }
+    }
+}
+
+// 从 Context 中安全取出宿主 Activity（兼容 ContextWrapper 多层包装）。
+// 与 QuroBrowserScreen.findActivity 同逻辑，但本文件需独立定义（原实现为 private 不可跨文件见）。
+private fun Context.findActivity(): Activity? {
+    var c: Context? = this
+    while (c != null) {
+        if (c is Activity) return c
+        c = if (c is ContextWrapper) c.baseContext else null
+    }
+    return null
+}
+
+private fun copyPlain(ctx: Context, text: String) {
+    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    cm.setPrimaryClip(android.content.ClipData.newPlainText("Zorv", text))
+    Toast.makeText(ctx, qstr(R.string.qk_00023), Toast.LENGTH_SHORT).show()
+}
+
+private fun saveCodeToDownloads(context: Context, fileName: String, content: String) {
+    android.os.Handler(android.os.Looper.getMainLooper()).post {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                uri?.let {
+                    context.contentResolver.openOutputStream(it)?.use { outputStream ->
+                        outputStream.write(content.toByteArray())
+                    }
+                    Toast.makeText(context, qstr(R.string.qk_00273, (fileName).toString()), Toast.LENGTH_SHORT).show()
+                } ?: Toast.makeText(context, qstr(R.string.qk_00274), Toast.LENGTH_SHORT).show()
+            } else {
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!downloadsDir.exists()) downloadsDir.mkdirs()
+                val file = java.io.File(downloadsDir, fileName)
+                file.writeText(content)
+                Toast.makeText(context, qstr(R.string.qk_00273, (fileName).toString()), Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, qstr(R.string.qk_00275, (e.message).toString()), Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+/** 构造 WebView 预览用 HTML：完整文档直接渲染，HTML 片段包裹为完整文档，非 HTML 代码用 <pre> 转义防 XSS。 */
+private fun buildPreviewHtml(code: String, isHtml: Boolean, lang: String = ""): String {
+    val t = code.trim()
+    val isFullDoc = t.startsWith("<!DOCTYPE html", ignoreCase = true) || t.startsWith("<html", ignoreCase = true)
+
+    // SVG 内容：直接渲染为图形
+    if (t.contains("<svg") || t.contains("<svg ")) {
+        return buildString {
+            append("<!DOCTYPE html><html><head><meta charset=\"UTF-8\">")
+            append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+            append("<style>body{margin:0;padding:8px;background:white;display:flex;justify-content:center;align-items:center;}svg{max-width:100%;height:auto;}</style>")
+            append("</head><body>")
+            append(t)
+            append("</body></html>")
+        }
+    }
+
+    // JSON 内容：渲染为格式化的树形视图
+    if (lang.equals("json", ignoreCase = true) || looksLikeJson(t)) {
+        return buildJsonPreviewHtml(t)
+    }
+
+    return if (isFullDoc || isHtml) {
+        if (isFullDoc) code else buildString {
+            append("<!DOCTYPE html><html><head><meta charset=\"UTF-8\">")
+            append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+            append("<base href=\"https://localhost/\">")
+            append("<style>body{margin:8px;padding:0;font-family:sans-serif;word-wrap:break-word;}img{max-width:100%;height:auto;}</style></head><body>")
+            append(code)
+            append("</body></html>")
+        }
+    } else {
+        // 代码块：使用内联 CSS 高亮 + 简单语法着色（不依赖外部 CDN）
+        buildString {
+            append("<!DOCTYPE html><html><head><meta charset=\"UTF-8\">")
+            append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+            // 内联语法高亮样式
+            append("<style>")
+            append("body{margin:0;padding:0;background:#1e1e1e;}")
+            append("pre{margin:0;padding:16px;overflow-x:auto;font-family:'Fira Code',Consolas,Monaco,'Courier New',monospace;font-size:13px;line-height:1.5;color:#d4d4d4;white-space:pre-wrap;word-break:break-word;}")
+            append("code{background:transparent;padding:0;}")
+            // Python 语法高亮颜色
+            append(".keyword{color:#c586c0;}")  // 关键词
+            append(".string{color:#ce9178;}")   // 字符串
+            append(".number{color:#b5cea8;}")   // 数字
+            append(".comment{color:#6a9955;}")  // 注释
+            append(".function{color:#dcdcaa;}")  // 函数名
+            append(".decorator{color:#dcdcaa;}") // 装饰器
+            append(".builtin{color:#4ec9b0;}")  // 内置函数
+            append(".operator{color:#d4d4d4;}") // 运算符
+            append("</style></head><body><pre><code>")
+            // 简单语法高亮
+            append(highlightCode(escapeHtml(code), lang))
+            append("</code></pre>")
+            append("</body></html>")
+        }
+    }
+}
+
+/** 检测是否看起来像 JSON 内容。 */
+private fun looksLikeJson(code: String): Boolean {
+    val t = code.trim()
+    return (t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))
+}
+
+/** 为 JSON 内容构建格式化的树形预览 HTML。 */
+private fun buildJsonPreviewHtml(code: String): String {
+    // 提取实际的 JSON 内容（跳过提示文本）
+    val jsonContent = if (code.contains("\n\n")) {
+        code.substringAfter("\n\n").trim()
+    } else {
+        code.trim()
+    }
+
+    return buildString {
+        append("<!DOCTYPE html><html><head><meta charset=\"UTF-8\">")
+        append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+        append("<style>")
+        append("body{margin:0;padding:12px;background:#1e1e1e;font-family:'Fira Code',Consolas,Monaco,'Courier New',monospace;font-size:13px;line-height:1.5;}")
+        append(".json-key{color:#9cdcfe;}")   // 键名
+        append(".json-string{color:#ce9178;}") // 字符串值
+        append(".json-number{color:#b5cea8;}") // 数字值
+        append(".json-boolean{color:#569cd6;}") // 布尔值
+        append(".json-null{color:#569cd6;}")   // null 值
+        append(".json-brace{color:#d4d4d4;}")  // 大括号
+        append(".json-bracket{color:#d4d4d4;}") // 中括号
+        append(".json-colon{color:#d4d4d4;}")  // 冒号
+        append(".json-comma{color:#d4d4d4;}")  // 逗号
+        append(".json-indent{display:inline-block;width:20px;}")
+        append("</style></head><body><pre>")
+        // 简单的 JSON 语法高亮
+        append(highlightJsonForPreview(escapeHtml(jsonContent)))
+        append("</pre></body></html>")
+    }
+}
+
+/** 为 JSON 预览添加语法高亮。 */
+private fun highlightJsonForPreview(code: String): String {
+    var result = code
+    // 键名（双引号包裹的键，后面跟冒号）
+    result = result.replace(Regex("(&quot;[^&]*?&quot;)(\\s*:)"), "<span class=\"json-key\">$1</span><span class=\"json-colon\">$2</span>")
+    // 字符串值（冒号后面的双引号包裹的内容）
+    result = result.replace(Regex(":(\\s*)&quot;([^&]*?)&quot;"), ":<span class=\"json-string\">&quot;$2&quot;</span>")
+    // 数字
+    result = result.replace(Regex("\\b(\\d+\\.?\\d*)\\b"), "<span class=\"json-number\">$1</span>")
+    // 布尔值
+    result = result.replace(Regex("\\b(true|false)\\b"), "<span class=\"json-boolean\">$1</span>")
+    // null
+    result = result.replace(Regex("\\b(null)\\b"), "<span class=\"json-null\">$1</span>")
+    return result
+}
+
+/** 简单语法高亮：根据语言类型用正则替换关键词为带样式的 span */
+private fun highlightCode(code: String, lang: String): String {
+    val lower = lang.lowercase()
+    return when {
+        lower == "python" || lower == "py" -> highlightPython(code)
+        lower == "javascript" || lower == "js" || lower == "ts" || lower == "typescript" -> highlightJs(code)
+        lower == "kotlin" || lower == "kt" -> highlightKotlin(code)
+        lower == "java" -> highlightJava(code)
+        lower == "json" -> highlightJson(code)
+        lower == "cpp" || lower == "c" || lower == "c++" || lower == "cc" || lower == "h" || lower == "hpp" -> highlightCpp(code)
+        lower == "css" -> highlightCss(code)
+        lower == "xml" || lower == "svg" -> highlightXml(code)
+        else -> code // 其他语言不处理
+    }
+}
+
+/** Python 语法高亮 */
+private fun highlightPython(code: String): String {
+    var result = code
+    // 注释（# 开头到行尾）
+    result = result.replace(Regex("(#[^\n]*)"), "<span class=\"comment\">$1</span>")
+    // 字符串（单引号/双引号/三引号）
+    result = result.replace(Regex("(&quot;[^&]*?&quot;|&#39;[^&]*?&#39;|(&quot;&quot;&quot;)[\\s\\S]*?(&quot;&quot;&quot;))"), "<span class=\"string\">$1</span>")
+    // 关键词
+    val keywords = listOf("def", "class", "if", "else", "elif", "for", "while", "return", "import", "from", "as", "try", "except", "finally", "with", "lambda", "yield", "pass", "break", "continue", "and", "or", "not", "in", "is", "None", "True", "False", "self", "print")
+    keywords.forEach { kw ->
+        result = result.replace(Regex("\\b($kw)\\b"), "<span class=\"keyword\">$1</span>")
+    }
+    // 数字
+    result = result.replace(Regex("\\b(\\d+\\.?\\d*)\\b"), "<span class=\"number\">$1</span>")
+    // 函数名
+    result = result.replace(Regex("\\b(\\w+)\\s*\\("), "<span class=\"function\">$1</span>(")
+    return result
+}
+
+/** JavaScript 语法高亮 */
+private fun highlightJs(code: String): String {
+    var result = code
+    // 注释
+    result = result.replace(Regex("(//[^\n]*)"), "<span class=\"comment\">$1</span>")
+    // 字符串
+    result = result.replace(Regex("(#[^\n]*)"), "<span class=\"comment\">$1</span>")
+    result = result.replace(Regex("(&quot;[^&]*?&quot;|&#39;[^&]*?&#39;)"), "<span class=\"string\">$1</span>")
+    // 关键词
+    val keywords = listOf("var", "let", "const", "function", "return", "if", "else", "for", "while", "class", "extends", "import", "export", "default", "new", "this", "console", "log", "true", "false", "null", "undefined")
+    keywords.forEach { kw ->
+        result = result.replace(Regex("\\b($kw)\\b"), "<span class=\"keyword\">$1</span>")
+    }
+    // 数字
+    result = result.replace(Regex("\\b(\\d+\\.?\\d*)\\b"), "<span class=\"number\">$1</span>")
+    return result
+}
+
+/** Kotlin 语法高亮 */
+private fun highlightKotlin(code: String): String {
+    var result = code
+    // 注释
+    result = result.replace(Regex("(//[^\n]*)"), "<span class=\"comment\">$1</span>")
+    // 字符串
+    result = result.replace(Regex("(&quot;[^&]*?&quot;|&#39;[^&]*?&#39;)"), "<span class=\"string\">$1</span>")
+    // 关键词
+    val keywords = listOf("fun", "val", "var", "class", "object", "interface", "if", "else", "when", "for", "while", "return", "import", "package", "private", "public", "internal", "protected", "override", "abstract", "data", "sealed", "companion", "suspend", "launch", "with", "this", "super", "true", "false", "null")
+    keywords.forEach { kw ->
+        result = result.replace(Regex("\\b($kw)\\b"), "<span class=\"keyword\">$1</span>")
+    }
+    // 数字
+    result = result.replace(Regex("\\b(\\d+\\.?\\d*)\\b"), "<span class=\"number\">$1</span>")
+    return result
+}
+
+/** Java 语法高亮 */
+private fun highlightJava(code: String): String {
+    var result = code
+    // 注释
+    result = result.replace(Regex("(//[^\n]*)"), "<span class=\"comment\">$1</span>")
+    // 字符串
+    result = result.replace(Regex("(&quot;[^&]*?&quot;|&#39;[^&]*?&#39;)"), "<span class=\"string\">$1</span>")
+    // 关键词
+    val keywords = listOf("public", "private", "protected", "static", "final", "class", "interface", "extends", "implements", "if", "else", "for", "while", "return", "import", "package", "new", "this", "super", "void", "int", "long", "double", "float", "boolean", "char", "byte", "short", "String", "null", "true", "false")
+    keywords.forEach { kw ->
+        result = result.replace(Regex("\\b($kw)\\b"), "<span class=\"keyword\">$1</span>")
+    }
+    // 数字
+    result = result.replace(Regex("\\b(\\d+\\.?\\d*)\\b"), "<span class=\"number\">$1</span>")
+    return result
+}
+
+/** JSON 语法高亮 */
+private fun highlightJson(code: String): String {
+    var result = code
+    // 字符串（键和值）
+    result = result.replace(Regex("(&quot;[^&]*?&quot;)"), "<span class=\"string\">$1</span>")
+    // 数字
+    result = result.replace(Regex("\\b(\\d+\\.?\\d*)\\b"), "<span class=\"number\">$1</span>")
+    // 布尔值
+    result = result.replace(Regex("\\b(true|false|null)\\b"), "<span class=\"keyword\">$1</span>")
+    return result
+}
+
+/** C/C++ 语法高亮 */
+private fun highlightCpp(code: String): String {
+    var result = code
+    // 块注释 /* */
+    result = result.replace(Regex("(/\\*[\\s\\S]*?\\*/)"), "<span class=\"comment\">$1</span>")
+    // 行注释 //
+    result = result.replace(Regex("(//[^\\n]*)"), "<span class=\"comment\">$1</span>")
+    // 字符串
+    result = result.replace(Regex("(&quot;[^&]*?&quot;|&#39;[^&]*?&#39;)"), "<span class=\"string\">$1</span>")
+    // 预处理指令
+    result = result.replace(Regex("(#\\w+)"), "<span class=\"builtin\">$1</span>")
+    // 关键词
+    val keywords = listOf("int", "long", "short", "char", "float", "double", "bool", "void", "auto", "const", "static", "struct", "class", "public", "private", "protected", "virtual", "template", "typename", "namespace", "using", "if", "else", "for", "while", "do", "switch", "case", "return", "break", "continue", "new", "delete", "true", "false", "nullptr", "include", "define", "ifdef", "ifndef", "endif", "std")
+    keywords.forEach { kw ->
+        result = result.replace(Regex("\\b($kw)\\b"), "<span class=\"keyword\">$1</span>")
+    }
+    // 数字
+    result = result.replace(Regex("\\b(\\d+\\.?\\d*)\\b"), "<span class=\"number\">$1</span>")
+    return result
+}
+
+/** CSS 语法高亮 */
+private fun highlightCss(code: String): String {
+    var result = code
+    // 注释
+    result = result.replace(Regex("(/\\*[\\s\\S]*?\\*/)"), "<span class=\"comment\">$1</span>")
+    // 选择器 { 前的高亮
+    result = result.replace(Regex("([.#]?[a-zA-Z_-][\\w-]*)\\s*\\{"), "<span class=\"function\">$1</span> {")
+    // 属性名（冒号前）
+    result = result.replace(Regex("([a-z-]+)\\s*:"), "<span class=\"keyword\">$1</span>:")
+    // 数值 + 单位
+    result = result.replace(Regex("\\b(\\d+\\.?\\d*)(px|em|rem|%|vh|vw|s|ms)?\\b"), "<span class=\"number\">$1$2</span>")
+    // 颜色
+    result = result.replace(Regex("(#[0-9a-fA-F]{3,8})\\b"), "<span class=\"string\">$1</span>")
+    // 字符串
+    result = result.replace(Regex("(&quot;[^&]*?&quot;|&#39;[^&]*?&#39;)"), "<span class=\"string\">$1</span>")
+    return result
+}
+
+/** XML/SVG 语法高亮（输入已 escapeHtml：< → &lt;，> → &gt;，\" → &quot;） */
+private fun highlightXml(code: String): String {
+    var result = code
+    // 注释
+    result = result.replace(Regex("(&lt;!--[\\s\\S]*?--&gt;)"), "<span class=\"comment\">$1</span>")
+    // 标签名
+    result = result.replace(Regex("(&lt;/?)([a-zA-Z][\\w:-]*)"), "$1<span class=\"keyword\">$2</span>")
+    // 属性名
+    result = result.replace(Regex("([a-zA-Z_:][\\w:.-]*)="), "<span class=\"function\">$1</span>=")
+    // 属性值
+    result = result.replace(Regex("=(&quot;[^&]*?&quot;|&#39;[^&]*?&#39;)"), "=<span class=\"string\">$1</span>")
+    return result
+}
+
+/** 复制整段对话全文（全部复制）。 */
+private fun copyConversation(ctx: Context, messages: List<Message>) {
+    val sb = StringBuilder()
+    messages.forEach { m ->
+        val who = if (m.mine) qstr(R.string.qk_00061) else m.author
+        sb.append("$who：${m.text ?: ""}\n")
+    }
+    copyPlain(ctx, sb.toString().trim())
+}
+
+/** [D2] 导出当前对话为 Markdown 文件，保存到应用外部私有目录 QuroAI_exports/，返回保存路径；失败返回 null。不发起任何网络请求。 */
+private fun exportConversation(ctx: Context, messages: List<Message>): String? {
+    return runCatching {
+        val dir = File(ctx.getExternalFilesDir(null), "QuroAI_exports").apply { if (!exists()) mkdirs() }
+        val stamp = java.time.format.DateTimeFormatter
+            .ofPattern("yyyyMMdd_HHmmss")
+            .format(java.time.LocalDateTime.now())
+        val file = File(dir, qstr(R.string.qk_00276, (stamp).toString()))
+        val sb = StringBuilder()
+        sb.append(qstr(R.string.qk_00277))
+        sb.append(qstr(R.string.qk_00278, (java.time.LocalDateTime.now()).toString()))
+        messages.forEach { m ->
+            val who = if (m.mine) qstr(R.string.qk_00061) else m.author
+            val body = (m.text ?: "").trim()
+            if (body.isNotBlank()) {
+                sb.append("**$who**：\n\n$body\n\n---\n\n")
+            }
+        }
+        file.writeText(sb.toString())
+        file.absolutePath
+    }.getOrElse { e ->
+        Log.e("ChatScreen", qstr(R.string.qk_00279), e)
+        null
+    }
+}
+
+// ---------------- Zorv AI 后端 → MoWen UI 适配器 ----------------
+
+/** 无激活人格时的兜底人格。 */
+private fun fallbackPersona() = QuroPersona(name = "Zorv", description = qstr(R.string.qk_00280), avatarEmoji = "🤖")
+
+/** QuroMessage → MoWen Message（mine 由 role 决定）。 */
+/** 判断工具结果是否为已知的垃圾值（旧版 bug 残留 / 异常调用）。渲染期与持久化迁移共用。 */
+private fun isGarbageToolResult(c: String): Boolean {
+    if (c.isBlank() || c == "?" || c == "OK") return true
+    // 33.333… 是 100/3 的浮点残留，旧版曾当工具结果落盘
+    if (c.startsWith("33.")) return true
+    return false
+}
+
+private fun QuroMessage.toMessage(
+    assistantName: String,
+    assistantAvatar: String,
+    assistantAvatarUri: String = "",
+    userAvatarUri: String = "",
+    userName: String = "",
+): Message {
+    val mine = role == "user"
+    val think = reasoning?.takeIf { it.isNotBlank() }?.let {
+        ThinkBlock(
+            it.split("\n")
+                .map { l -> l.trim().removePrefix("•").removePrefix("-").trim() }
+                .filter { l -> l.isNotBlank() }
+        )
+    }
+    val attachmentList = attachments?.map {
+        Attachment(it.name, formatSize(it.size), path = it.uri, type = it.type)
+    } ?: emptyList()
+    return Message(
+        id = id.hashCode(),
+        uids = listOf(id),
+        mine = mine,
+        author = if (mine) (senderName ?: userName).ifBlank { qstr(R.string.qk_00061) } else assistantName,
+        avatar = if (mine) (senderName ?: userName).ifBlank { qstr(R.string.qk_00061) } else assistantAvatar,
+        avatarUri = if (mine) (avatarUrl ?: userAvatarUri) else assistantAvatarUri,
+        time = formatChatTime(createdAt),
+        text = stripGenUiFences(content).ifBlank { null },
+        attachments = attachmentList,
+        think = think,
+        cards = cards,
+        genUiCardIds = genUiCardIds,
+    )
+}
+
+/**
+ * 处理 AI 回复里的动态 UI 围栏。
+ *
+ * 原先这里会剥除 ```zorv/ui ... ``` 围栏，因为那时它由 :genui WebView 管线消费。
+ * 现在 WebView 红线已废弃，zorv/ui / quro-ui 围栏统一由原生 A2UI 解释器（QuroUiDslParser +
+ * A2uiInterpreter → QuroUiRenderer）渲染，必须保留在原文本里交给 [parseBlocks] 路由。
+ * 故此处直接原样返回，不再剥除。
+ */
+private fun stripGenUiFences(src: String): String = src
+
+/** QuroPersona → MoWen Persona（含 id 以便回写激活状态）。 */
+private fun QuroPersona.toPersona(): Persona {
+    // 头像：emoji 类型用 emoji；图片/无图退化为名称首字母（与 QuroSoulUi.AvatarContent 一致）
+    val safeName = name.ifBlank { "Zorv" }
+    val name1 = (if (safeName == "?") "Q" else safeName).first().toString()  // 永远非空（fallback "Q"，绝不返回 "?"）
+    val ava = when {
+        avatarType == "emoji" && avatarEmoji.isNotBlank() -> avatarEmoji
+        else -> name1  // 优先首字母，绝不返回空或 "?"
+    }
+    return Persona(
+        id = id,
+        name = name.ifBlank { "Zorv" },
+        role = description.ifBlank { qstr(R.string.qk_00280) },
+        desc = description.ifBlank { qstr(R.string.qk_00281) },
+        ava = ava,
+        color = "#211E1A",
+        avatarUri = if (avatarType == "image") avatarUri else "",
+        tags = tags,  // 标签仅存全局标签名（String）
+    )
+}
+
+/** QuroConversationMeta → MoWen HistoryItem。 */
+fun QuroConversationMeta.toHistoryItem(active: Boolean): HistoryItem {
+    return HistoryItem(
+        id = id,
+        title = title.ifBlank { qstr(R.string.qk_00282) },
+        sub = preview.ifBlank { qstr(R.string.qk_00283) },
+        time = formatChatTime(updatedAt),
+        group = formatGroup(updatedAt),
+        active = active,
+        genUiType = genUiType,
+    )
+}
+
+private fun formatChatTime(ts: Long): String {
+    val now = Calendar.getInstance()
+    val c = Calendar.getInstance().also { it.timeInMillis = ts }
+    val sameDay = c.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
+        c.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)
+    val f = if (sameDay) SimpleDateFormat("HH:mm", Locale.getDefault())
+    else SimpleDateFormat("MM/dd", Locale.getDefault())
+    return f.format(Date(ts))
+}
+
+private fun formatGroup(ts: Long): String {
+    val diffDays = ((System.currentTimeMillis() - ts) / 86_400_000L).toInt()
+    return when {
+        diffDays < 1 -> qstr(R.string.qk_00284)
+        diffDays < 7 -> qstr(R.string.qk_00285)
+        else -> qstr(R.string.qk_00286)
+    }
+}
+
+private fun formatSize(bytes: Long): String {
+    return when {
+        bytes <= 0 -> qstr(R.string.qk_00287)
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+        else -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+    }
+}
+
+// ---------------- 附件下载 ----------------
+
+/**
+ * 将聊天附件保存到用户可见的 Download/Quro 目录（优先 MediaStore，失败回退到应用私有目录）。
+ */
+private fun downloadAttachment(ctx: Context, att: Attachment) {
+    val src = att.path?.let { File(it) }?.takeIf { it.exists() } ?: run {
+        Toast.makeText(ctx, qstr(R.string.qk_00113), Toast.LENGTH_SHORT).show()
+        return
+    }
+    val collectedName = att.name.ifBlank { "quro_${System.currentTimeMillis()}" }
+    val mime = when (att.type) {
+        "image" -> "image/*"
+        "video" -> "video/*"
+        else -> "*/*"
+    }
+    try {
+        val uri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val collection = when (att.type) {
+                "image" -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                "video" -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                else -> MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            }
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, collectedName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Quro")
+            }
+            ctx.contentResolver.insert(collection, values)
+        } else {
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val out = File(dir, collectedName)
+            Uri.fromFile(out)
+        }
+        if (uri == null) { fallbackCopy(ctx, src, collectedName); return }
+        ctx.contentResolver.openOutputStream(uri)?.use { os ->
+            src.inputStream().use { it.copyTo(os) }
+        } ?: run { fallbackCopy(ctx, src, collectedName); return }
+        Toast.makeText(ctx, qstr(R.string.qk_00288, (collectedName).toString()), Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) {
+        fallbackCopy(ctx, src, collectedName)
+    }
+}
+
+private fun fallbackCopy(ctx: Context, src: File, name: String) {
+    runCatching {
+        val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: ctx.filesDir
+        val out = File(dir, name)
+        src.inputStream().use { ins -> out.outputStream().use { os -> ins.copyTo(os) } }
+        Toast.makeText(ctx, qstr(R.string.qk_00289, (out.absolutePath).toString()), Toast.LENGTH_LONG).show()
+    }.onFailure {
+        Toast.makeText(ctx, qstr(R.string.qk_00290, (it.message).toString()), Toast.LENGTH_SHORT).show()
+    }
+}
+
+// PermissionModeBar / PolicyChipGroup 已抽到 ui/chat/ChatPermissionModeBar.kt（ChatPermissionModeBar），
+// 修复「权限模式全选后收起/返回按钮被测量成 0 宽而消失」的布局塌陷根因。
+
+// 工作流管理界面
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun QuroWorkflowScreen(onClose: () -> Unit) {
+    val context = LocalContext.current
+    var workflows by remember { mutableStateOf(listOf<Workflow>()) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var editingWorkflow by remember { mutableStateOf<Workflow?>(null) }
+
+    // 初始化 WorkflowRepository
+    LaunchedEffect(Unit) {
+        WorkflowRepository.init(context)
+        workflows = WorkflowRepository.getAll()
+    }
+
+    // 监听工作流变化
+    LaunchedEffect(WorkflowRepository.changeSignal.value) {
+        workflows = WorkflowRepository.getAll()
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.qk_00291), fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.qk_00143))
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { editingWorkflow = null; showCreateDialog = true }) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.qk_00292))
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        if (workflows.isEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(Icons.Filled.List, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
+                Spacer(Modifier.height(16.dp))
+                Text(stringResource(R.string.qk_00293), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.qk_00294), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(workflows, key = { it.id }) { workflow ->
+                    WorkflowCard(
+                        workflow = workflow,
+                        onToggle = { enabled ->
+                            val updated = workflow.copy(enabled = enabled)
+                            WorkflowRepository.upsert(updated)
+                        },
+                        onRun = {
+                            // 运行工作流
+                            CoroutineScope(Dispatchers.IO).launch {
+                                try {
+                                    com.ai.assistance.quro.workflow.executor.WorkflowEngine.run(workflow.id)
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, qstr(R.string.qk_00295), Toast.LENGTH_SHORT).show()
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        Toast.makeText(context, qstr(R.string.qk_00296, (e.message).toString()), Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        },
+                        onEdit = {
+                            editingWorkflow = workflow
+                            showCreateDialog = true
+                        },
+                        onDelete = {
+                            WorkflowRepository.delete(workflow.id)
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    // 创建/编辑工作流对话框
+    if (showCreateDialog) {
+        WorkflowCreateDialog(
+            workflow = editingWorkflow,
+            onDismiss = { showCreateDialog = false },
+            onSave = { workflow ->
+                WorkflowRepository.upsert(workflow)
+                showCreateDialog = false
+            }
+        )
+    }
+}
+
+// 工作流卡片
+@Composable
+private fun WorkflowCard(
+    workflow: Workflow,
+    onToggle: (Boolean) -> Unit,
+    onRun: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = cs.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = workflow.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = cs.onSurface
+                    )
+                    Text(text = stringResource(R.string.qk_00297, (workflow.trigger).toString(), (workflow.nodes.size).toString()),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.onSurfaceVariant
+                    )
+                    if (workflow.lastStatus != "idle") {
+                        Text(text = stringResource(R.string.qk_00298, (workflow.lastStatus).toString()),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when (workflow.lastStatus) {
+                                "success" -> Color(0xFF4CAF50)
+                                "failed" -> Color(0xFFF44336)
+                                else -> cs.onSurfaceVariant
+                            }
+                        )
+                    }
+                }
+                Switch(
+                    checked = workflow.enabled,
+                    onCheckedChange = onToggle
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onRun,
+                    modifier = Modifier.weight(1f),
+                    enabled = workflow.enabled
+                ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.qk_00266))
+                }
+                OutlinedButton(
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.qk_00299))
+                }
+                IconButton(
+                    onClick = onDelete,
+                    colors = IconButtonDefaults.iconButtonColors(contentColor = cs.error)
+                ) {
+                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.qk_00091))
+                }
+            }
+        }
+    }
+}
+
+// 工作流创建/编辑对话框
+@Composable
+private fun WorkflowCreateDialog(
+    workflow: Workflow?,
+    onDismiss: () -> Unit,
+    onSave: (Workflow) -> Unit
+) {
+    var name by remember { mutableStateOf(workflow?.name ?: "") }
+    var trigger by remember { mutableStateOf(workflow?.trigger ?: "manual") }
+    var schedule by remember { mutableStateOf(workflow?.schedule ?: "") }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (workflow != null) stringResource(R.string.qk_00300) else stringResource(R.string.qk_00292)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.qk_00301)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = trigger,
+                    onValueChange = { trigger = it },
+                    label = { Text(stringResource(R.string.qk_00302)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = schedule,
+                    onValueChange = { schedule = it },
+                    label = { Text(stringResource(R.string.qk_00303)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val newWorkflow = Workflow(
+                        id = workflow?.id ?: java.util.UUID.randomUUID().toString(),
+                        name = name,
+                        trigger = trigger,
+                        schedule = schedule,
+                        enabled = workflow?.enabled ?: true,
+                        nodes = workflow?.nodes ?: emptyList()
+                    )
+                    onSave(newWorkflow)
+                },
+                enabled = name.isNotBlank()
+            ) {
+                Text(stringResource(R.string.qk_00198))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.qk_00011))
+            }
+        }
+    )
+}
+
+/**
+ * 文件管理页面（从设置「文件管理」进入）。
+ * 浏览沙箱目录，并支持「在系统文件管理器中打开」与「复制路径」；
+ * 顶部展示共享存储挂载状态（Android 11+ 应用私有目录在系统文件管理器可见）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FileManagerDialog(
+    onClose: () -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+) {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val externalFiles = ctx.getExternalFilesDir(null)
+    val dirs = listOfNotNull(
+        "应用私有文件" to ctx.filesDir,
+        "应用数据(quro_data)" to File(ctx.filesDir, "quro_data"),
+        "导出(quro_exports)" to File(externalFiles, "quro_exports"),
+        "备份(quro_backups)" to File(externalFiles, "quro_backups"),
+        "公共下载/QuroAI_logs" to File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "QuroAI_logs",
+        ),
+    )
+    val sharedMounted = Environment.getExternalStorageState() == Environment.MEDIA_MOUNTED
+
+    fun openInSystemFileManager(dir: File) {
+        if (!dir.exists()) {
+            Toast.makeText(ctx, qstr(R.string.qk_00309, (dir.absolutePath).toString()), Toast.LENGTH_SHORT).show()
+            return
+        }
+        // 路径 1：用 FileProvider 暴露 content:// URI，再 ACTION_OPEN_DOCUMENT_TREE 落到 SAF。
+        // ACTION_VIEW + file:// 在 Android 7+ StrictMode 直接崩、11+ 无文件管理器响应，
+        // 所以这里尽量走 SAF / 复制路径兜底，避免误以为功能不工作。
+        try {
+            val treeIntent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            ctx.startActivity(treeIntent)
+            Toast.makeText(ctx, qstr(R.string.qk_00310, (dir.absolutePath).toString()), Toast.LENGTH_LONG).show()
+        } catch (_: Exception) {
+            try {
+                val authority = "${ctx.packageName}.fileprovider"
+                val uri = androidx.core.content.FileProvider.getUriForFile(ctx, authority, dir)
+                val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "resource/folder")
+                    addCategory(Intent.CATEGORY_DEFAULT)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                ctx.startActivity(viewIntent)
+            } catch (_: Exception) {
+                val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("path", dir.absolutePath))
+                Toast.makeText(ctx, qstr(R.string.qk_00311, (dir.absolutePath).toString()), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(cs.background)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.qk_00143)) }
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.qk_02669), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = cs.onSurface)
+        }
+        // 共享存储状态
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(10.dp)).background(cs.surfaceVariant.copy(alpha = 0.4f))
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (sharedMounted) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+                null,
+                tint = if (sharedMounted) cs.primary else cs.error,
+            )
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(stringResource(R.string.qk_00312), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = cs.onSurface)
+                Text(
+                    if (sharedMounted) stringResource(R.string.qk_00313) else stringResource(R.string.qk_00314),
+                    fontSize = 12.sp, color = cs.onSurfaceVariant,
+                )
+            }
+        }
+        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            item { StorageManagementSection() }
+            item { FtpServerSection() }
+            item { TerminalRootfsSection() }
+            items(dirs) { (label, dir) ->
+                val exists = dir.exists()
+                Column(
+                    Modifier.fillMaxWidth().clickable { openInSystemFileManager(dir) }
+                        .padding(vertical = 12.dp),
+                ) {
+                    Text(label, fontSize = 15.sp, color = cs.onSurface, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${if (exists) "存在" else "不存在"} · ${dir.absolutePath}",
+                        fontSize = 12.sp, color = cs.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AssistChip(
+                            onClick = { openInSystemFileManager(dir) },
+                            label = { Text(stringResource(R.string.qk_00315)) },
+                            leadingIcon = { Icon(Icons.Filled.FolderOpen, null, Modifier.size(16.dp)) },
+                        )
+                        AssistChip(
+                            onClick = {
+                                val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("path", dir.absolutePath))
+                                Toast.makeText(ctx, qstr(R.string.qk_00316), Toast.LENGTH_SHORT).show()
+                            },
+                            label = { Text(stringResource(R.string.qk_00317)) },
+                            leadingIcon = { Icon(Icons.Filled.ContentCopy, null, Modifier.size(16.dp)) },
+                        )
+                    }
+                    HorizontalDivider(Modifier.padding(top = 10.dp), color = cs.outlineVariant)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 存储管理（原终端-设置「存储管理」迁入）：展示 Linux rootfs 缓存占用，一键清除。
+ */
+@Composable
+private fun StorageManagementSection() {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val cacheManager = remember { CacheManager(ctx) }
+    var cacheSizeText by remember { mutableStateOf(qstr(R.string.qk_00318)) }
+    var clearing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val size = cacheManager.getCacheSize { }
+        cacheSizeText = cacheManager.formatSize(size)
+    }
+
+    Surface(
+        color = cs.surfaceVariant.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.FormatSize, null, tint = cs.primary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.qk_00319), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = cs.onSurface, modifier = Modifier.weight(1f))
+                Text(cacheSizeText, fontSize = 13.sp, color = cs.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(stringResource(R.string.qk_00320),
+                fontSize = 12.sp, color = cs.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        if (clearing) return@Button
+                        clearing = true
+                        scope.launch {
+                            cacheManager.clearCache(TerminalManager.getInstance(ctx))
+                            withContext(Dispatchers.Main) {
+                                cacheSizeText = "0 B"
+                                clearing = false
+                                Toast.makeText(ctx, qstr(R.string.qk_00321), Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    enabled = !clearing,
+                ) { Text(if (clearing) stringResource(R.string.qk_00322) else stringResource(R.string.qk_00323)) }
+            }
+        }
+    }
+}
+
+/**
+ * FTP 文件服务器（原终端-设置「FTP文件服务器」迁入）：启动/停止 Apache FtpServer，
+ * 暴露 Ubuntu rootfs 供局域网 FTP 客户端访问。
+ */
+@Composable
+private fun FtpServerSection() {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val ftp = remember { FtpServerManager.getInstance(ctx) }
+    var running by remember { mutableStateOf(ftp.isFtpServerRunning()) }
+    var info by remember { mutableStateOf(ftp.getFtpServerInfo()) }
+    var busy by remember { mutableStateOf(false) }
+
+    Surface(
+        color = cs.surfaceVariant.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Usb, null, tint = if (running) cs.primary else cs.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.qk_00324), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = cs.onSurface, modifier = Modifier.weight(1f))
+                Text(if (running) stringResource(R.string.qk_00325) else stringResource(R.string.qk_00326), fontSize = 13.sp, color = if (running) cs.primary else cs.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(info, fontSize = 12.sp, color = cs.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = {
+                    if (busy) return@Button
+                    busy = true
+                    scope.launch {
+                        val ok = if (running) ftp.stopFtpServer() else ftp.startFtpServer()
+                        withContext(Dispatchers.Main) {
+                            running = ftp.isFtpServerRunning()
+                            info = ftp.getFtpServerInfo()
+                            busy = false
+                            Toast.makeText(
+                                ctx,
+                                if (ok) (if (running) qstr(R.string.qk_00327) else qstr(R.string.qk_00328)) else qstr(R.string.qk_00329),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                },
+                enabled = !busy,
+            ) { Text(if (busy) stringResource(R.string.qk_00330) else if (running) stringResource(R.string.qk_00331) else stringResource(R.string.qk_00332)) }
+        }
+    }
+}
+
+/**
+ * 终端 rootfs 文件（设置-文件管理对接终端）：经统一门面浏览/读写/删除 Ubuntu rootfs 内文件，
+ * 与可见终端共用同一文件系统（/root、/etc、/sdcard…）。
+ */
+@Composable
+private fun TerminalRootfsSection() {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    var path by remember { mutableStateOf("/root") }
+    var result by remember { mutableStateOf<String?>(null) }
+    var content by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var envReady by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { envReady = QuroTerminalBridge.envReady(ctx) }
+    }
+
+    Surface(
+        color = cs.surfaceVariant.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Folder, null, tint = cs.primary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.qk_00333), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = cs.onSurface, modifier = Modifier.weight(1f))
+                Text(if (envReady) stringResource(R.string.qk_00334) else stringResource(R.string.qk_00335), fontSize = 13.sp, color = if (envReady) cs.primary else cs.error)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(stringResource(R.string.qk_00336), fontSize = 12.sp, color = cs.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = path,
+                onValueChange = { path = it },
+                label = { Text(stringResource(R.string.qk_00337)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(enabled = !busy && path.isNotBlank(), onClick = {
+                    busy = true
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) { QuroTerminalBridge.listDir(ctx, path.trim()) }
+                        withContext(Dispatchers.Main) {
+                            busy = false
+                            result = if (r.success) r.output.ifBlank { qstr(R.string.qk_00338) } else qstr(R.string.qk_00339, (r.error).toString())
+                        }
+                    }
+                }) { Text(if (busy) "…" else stringResource(R.string.qk_00340)) }
+                OutlinedButton(enabled = !busy && path.isNotBlank(), onClick = {
+                    busy = true
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) { QuroTerminalBridge.readFile(ctx, path.trim()) }
+                        withContext(Dispatchers.Main) {
+                            busy = false
+                            if (r.success) {
+                                content = r.output
+                                result = qstr(R.string.qk_00341, (r.output.length).toString())
+                            } else {
+                                result = qstr(R.string.qk_00339, (r.error).toString())
+                            }
+                        }
+                    }
+                }) { Text(qstr(R.string.qk_00342)) }
+                OutlinedButton(enabled = !busy && path.isNotBlank(), onClick = {
+                    busy = true
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) { QuroTerminalBridge.writeFile(ctx, path.trim(), content) }
+                        withContext(Dispatchers.Main) {
+                            busy = false
+                            result = if (r.success) qstr(R.string.qk_00343, (path.trim()).toString()) else qstr(R.string.qk_00339, (r.error).toString())
+                        }
+                    }
+                }) { Text(qstr(R.string.qk_00344)) }
+                OutlinedButton(enabled = !busy && path.isNotBlank(), onClick = {
+                    busy = true
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) { QuroTerminalBridge.deleteFile(ctx, path.trim()) }
+                        withContext(Dispatchers.Main) {
+                            busy = false
+                            result = if (r.success) qstr(R.string.qk_00345, (path.trim()).toString()) else qstr(R.string.qk_00339, (r.error).toString())
+                        }
+                    }
+                }) { Text(qstr(R.string.qk_00091), color = cs.error) }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = content,
+                onValueChange = { content = it },
+                label = { Text(stringResource(R.string.qk_00346)) },
+                minLines = 3,
+                maxLines = 8,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                result ?: stringResource(R.string.qk_00347),
+                fontSize = 12.sp,
+                color = cs.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 20,
+            )
+        }
+    }
+}
+
+/**
+ * 清理存储页面（从设置「数据 → 清理存储」进入）。
+ * 分类清理：日志、离线模型缓存、AI产物、临时文件等。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CleanupScreen(
+    onClose: () -> Unit,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+) {
+    val cs = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    // 🔴🔴🔴 R7-14 主修：清理页的数据源从「递归遍历文件系统」换成**系统记账**。
+    //
+    // 参考开源清理类 App（清浊 / SuperCleanMaster / Fulldive Full Cleaner）的通行做法：
+    // 它们**不靠 `listFiles()` 逐个累加 `File.length()`**，而是读内核维护的记账 ——
+    // `StorageStatsManager.queryStatsForPackage()` 拿 appData/cache，
+    // `StorageManager.getCacheSizeBytes()` 拿官方口径的缓存总量。O(1)、零权限。
+    //
+    // 旧实现为什么必须换：`linux-sandbox` 是整个 Ubuntu rootfs（数万文件），
+    // 递归 stat 要几十秒，于是页面长期「应用数据出数字、其余 4 项永远扫描中」——
+    // 用户看到的就是「功能不可用」。
+    //
+    // 现在分工：
+    // - **总大小 / 缓存 / 存储压力** → 系统记账（[readStorageStats]），瞬间出数；
+    // - **各分类明细** → 仍按目录递归（开源 App 同样要做细分），但**逐项并发 + 限时**，
+    //   慢的那项只拖它自己，不再阻塞其他项，也不再阻塞总览。
+    var storageStats by remember { mutableStateOf<QuroStorageStats?>(null) }
+    val ext = context.getExternalFilesDir(null)
+    val paths = remember {
+        mapOf(
+            "appdata" to File(context.filesDir, "quro_data"),
+            "sandbox" to File(context.filesDir, "linux-sandbox"), // Ubuntu rootfs + tmp，体积最大
+            "logs" to (ext?.let { File(it, "QuroAI_logs") }
+                // 极端情况下拿不到外部目录（存储未挂载），退回 app 内部同名目录，
+                // 那里 QuroLlmClient 也有兜底写入（QuroLlmClient.kt:441 的 ?: filesDir 分支）。
+                ?: File(context.filesDir, "QuroAI_logs")),
+            "exports" to (ext?.let { File(it, "quro_exports") } ?: File(context.filesDir, "quro_exports")),
+            "backups" to (ext?.let { File(it, "quro_backups") } ?: File(context.filesDir, "quro_backups")),
+            "cache" to context.cacheDir,
+        )
+    }
+    // 🔴🔴 sizes 的值语义（这是「真实 vs 假实现」的分界线）：
+    //    `null` = **读不到**（无权限 / IO 失败）→ UI 必须显示「无权限」，绝不能显示 0 B；
+    //    `0L`   = 确实读到了且为空；
+    //    >0    = 真实体积。
+    //    旧实现用 `calculateDirSize` 把「无权限」一律压成 0，等于编造数据。
+    var sizes by remember { mutableStateOf(mapOf<String, Long?>()) }
+    var showCleanupDialog by remember { mutableStateOf(false) }
+    var cleanupType by remember { mutableStateOf("") }
+
+    // 只累加「真实读到」的值；读不到的项不参与求和，避免把未知说成 0。
+    fun total() = sizes.values.filterNotNull().sum()
+
+    // 🔴 可访问但非空的分类：用于告诉用户「这里确实有东西可清」，
+    //    避免全部显示 0 B 时误以为清理页坏了。
+    var readable by remember { mutableStateOf(mapOf<String, Boolean>()) }
+
+    // 🔴 扫描中状态：linux-sandbox 是整个 Ubuntu rootfs（数万文件），
+    //    递归统计要几十秒。旧实现等**全部算完**才一次性刷新 UI，
+    //    期间页面一直显示 0 B —— 用户看到的就是「进页面不自动扫描 / 扫描没反应」。
+    //    现在改为逐项扫完立即回填，大目录还没算完时小目录已经显示真实体积。
+    var scanning by remember { mutableStateOf(true) }
+
+    // 🔴 已完成的扫描项数（配合逐项并发）：scanning = doneCount < paths.size。
+    //    不用单一 Boolean —— 串行时只有"全完成"那一刻才能置 false，
+    //    那正是用户截图里「4 项永远扫描中」的成因。
+    var doneCount by remember { mutableStateOf(0) }
+
+    // 🔴 单项遍历的软预算（毫秒）。超时即视为「只量到一部分」。
+    //    开源清理 App 普遍用「快速/深度」两档扫描来规避rootfs 全遍历卡 UI，
+    //    这里用同一个思路的简化版：给每一项一个上限，绝不无限等。
+    var partials by remember { mutableStateOf(mapOf<String, Boolean>()) }
+
+    // 🔴 真实进程内存快照（PSS / Java 堆 / Native 堆），进页面即采一次。
+    var memInfo by remember { mutableStateOf<QuroMemoryInfo?>(null) }
+
+    val cleanupScope = rememberCoroutineScope()
+    // 🔴🔴 扫描必须**逐项并发 + 单项限时**，不能串行（用户实测截图：只有第1 项「应用数据」出数字，
+    //后面 4 项永远停在「扫描中…」）。
+    //
+    // 原因：`paths` 是 LinkedHashMap（appdata → sandbox → logs → exports → backups → cache），
+    // 旧实现 `paths.forEach { measureDirOrNull(it) }` **串行**执行，而第 2 项 `sandbox`
+    // 是整个 Ubuntu rootfs（数万文件），递归统计要几十秒 —— 它没算完，
+    // 后面 4 项就一个都轮不到，UI 永远显示「扫描中…」。
+    //
+    // 现在：
+    // 1. 先取**系统记账**（[readStorageStats]，O(1)）→ 总览立刻有数，不再等任何遍历；
+    // 2. 各分类明细逐项 `launch` 并发，谁先算完谁先回填；
+    // 3. 每项加 [DETAIL_SCAN_BUDGET_MS] 软预算，超时就用「已量到的部分 + 标记不完整」，
+    //    宁可显示「≥ xx MB」也不让整页卡在「扫描中」——
+    //    这正是开源清理 App「快速扫描 vs 深度扫描」的分级思路（清浊的快扫只扫 2~3 层）。
+    suspend fun scanAll() = withContext(Dispatchers.IO) {
+        // ① 系统记账：瞬间出数，是总览的唯一数据来源。
+        val st = readStorageStats(context, ext?.absolutePath)
+        withContext(Dispatchers.Main) { storageStats = st }
+
+        // ② 外部私有目录（官方 API 覆盖不到 data 分区以外）——三个小目录，秒回。
+        val extSizes = measureExternalAppDirs(context)
+        withContext(Dispatchers.Main) {
+            sizes = sizes + extSizes
+            readable = readable + extSizes.mapValues { it.value != null }
+            doneCount += extSizes.size
+        }
+
+        withContext(Dispatchers.Main) { memInfo = readProcessMemory(context) }
+
+        // ③ data 分区内的分类明细，逐项并发 + 软预算。
+        val detailKeys = paths.keys - extSizes.keys
+        detailKeys.forEach { key ->
+            val dir = paths.getValue(key)
+            cleanupScope.launch(Dispatchers.IO) {
+                val budget = System.currentTimeMillis() + DETAIL_SCAN_BUDGET_MS
+                var sum = 0L
+                var partial = false
+                // 迭代式 walk（非递归），逐目录查一次预算；超时就停，把已量的当**下界**。
+                val queue = ArrayDeque<File>()
+                queue.addLast(dir)
+                while (queue.isNotEmpty()) {
+                    if (System.currentTimeMillis() > budget) { partial = true; break }
+                    val cur = queue.removeFirst()
+                    val children = cur.listFiles() ?: continue
+                    for (f in children) {
+                        if (f.isDirectory) queue.addLast(f) else sum += f.length()
+                    }
+                }
+                val ok = dir.exists() && dir.canRead()
+                withContext(Dispatchers.Main) {
+                    // 🔴 超时项写进 sizes 但同时打 partial 标记（UI 显示「≥ xx MB」）：
+                    //    拿一个偏小的数字**冒充最终值**才是假实现；标出「这是下界」才是诚实的。
+                    sizes = sizes + (key to sum)
+                    readable = readable + (key to ok)
+                    partials = partials + (key to partial)
+                    doneCount += 1
+                }
+            }
+        }
+    }
+    fun refresh() {
+        cleanupScope.launch {
+            doneCount = 0
+            scanAll()
+        }
+    }
+
+    // 进页面自动扫描（含从清理页返回后的重新统计）
+    LaunchedEffect(Unit) { refresh() }
+
+    // 🔴 全部项都算完才结束「扫描中」——由计数器驱动，与并发扫描配套。
+    //    单靠 refresh() 里的 `scanning = false` 会在 scanAll刚返回时就置false（那一刻子协程还在跑），
+    //    导致「已算完的项显示 0 B、没算完的项也显示 0 B」—— 又是假数据。
+    LaunchedEffect(doneCount) {
+        scanning = doneCount < paths.size
+    }
+
+    // 尚未算完的项显示「扫描中…」而不是 0 B —— 后者会被理解为「这里没东西可清」
+    val scanningLabel = stringResource(R.string.qk_03920)
+    // 🔴 无权限文案：宁可说「读不到」，也不能编一个体积出来。
+    val deniedLabel = stringResource(R.string.qk_03921)
+    // 🔴 「≥」前缀：该项只量了一部分（超出 DETAIL_SCAN_BUDGET_MS 被截断），
+    //    显示为下界而不是最终值 —— 诚实标注未知，好过给个小数字冒充准确。
+    val partialPrefix = stringResource(R.string.qk_03940)
+    fun sizeText(key: String): String {
+        // 🔴 只要该项还没回填就是「扫描中」，**不看 scanning 全局标志**：
+        //    旧写法 `!sizes.containsKey(key) && scanning` 在扫描全部结束后
+        //    对未回填项会掉到 `v == null` 分支显示「无权限」—— 明明是没扫完，不是没权限。
+        if (!sizes.containsKey(key)) return scanningLabel
+        val v = sizes[key]
+        return when {
+            v == null -> deniedLabel
+            partials[key] == true -> partialPrefix + formatFileSize(v)
+            else -> formatFileSize(v)
+        }
+    }
+
+    Column(Modifier.fillMaxSize().background(cs.background)) {
+        TopAppBar(
+            title = { Text(stringResource(R.string.qk_03836)) },
+            navigationIcon = {
+                IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = cs.background),
+        )
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 20.dp)
+        ) {
+            // ════════════════════════════════════════════════════════════════════
+            // 🔴🔴 真实进程内存（PSS / Java 堆 / Native 堆）—— 真数据，非估算
+            //
+            // 用户诉求：「清理内存不要搞假实现，要真实的功能」。
+            // 此前本页只有磁盘目录清理，却顶着「清理内存」的名头，一个字节内存都没读。
+            // 现在这里直接展示 Android 系统统计的真实内存指标，并提供真实的释放动作。
+            // ════════════════════════════════════════════════════════════════════
+            GroupCaption(stringResource(R.string.qk_03922))
+            SetGroup {
+                val m = memInfo
+                if (m == null) {
+                    SetRowClickable(
+                        icon = Icons.Filled.Memory,
+                        name = stringResource(R.string.qk_03922),
+                        sub = stringResource(R.string.qk_03935),
+                        value = scanningLabel,
+                        onClick = { },
+                        scaled = scaled,
+                    )
+                } else {
+                    // PSS：系统认为本进程真实占用的物理内存，最权威的一项。
+                    SetRowClickable(
+                        icon = Icons.Filled.Memory,
+                        name = stringResource(R.string.qk_03922),
+                        sub = stringResource(R.string.qk_03923),
+                        value = formatFileSize(m.pssTotal),
+                        onClick = { },
+                        scaled = scaled,
+                    )
+                    HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                    SetRowClickable(
+                        icon = Icons.Filled.DataUsage,
+                        name = stringResource(R.string.qk_03924),
+                        sub = stringResource(R.string.qk_03925),
+                        value = formatFileSize(m.javaHeapUsed),
+                        onClick = { },
+                        scaled = scaled,
+                    )
+                    HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                    // 🔴 只有这一项是「真正能被清掉」的量：已分配但未被对象使用的部分。
+                    //    不标它的话，页面上其余数字都会被误读成「可释放」。
+                    SetRowClickable(
+                        icon = Icons.Filled.CleaningServices,
+                        name = stringResource(R.string.qk_03926),
+                        sub = stringResource(R.string.qk_03927),
+                        value = formatFileSize(m.collectibleHeap),
+                        onClick = { },
+                        scaled = scaled,
+                    )
+                    HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                    // Native 堆：端侧推理（MNN/llama）主要占这里，Java 堆管不到。
+                    SetRowClickable(
+                        icon = Icons.Filled.DeveloperBoard,
+                        name = stringResource(R.string.qk_03928),
+                        sub = stringResource(R.string.qk_03929),
+                        value = formatFileSize(m.nativeHeap),
+                        onClick = { },
+                        scaled = scaled,
+                    )
+                    HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                    SetRowClickable(
+                        icon = Icons.Filled.PhoneAndroid,
+                        name = stringResource(R.string.qk_03930),
+                        sub = stringResource(R.string.qk_03931),
+                        value = formatFileSize(m.systemAvailable),
+                        onClick = { },
+                        scaled = scaled,
+                    )
+                }
+            }
+
+            // ── 释放内存（真实动作）────────────────────────────────────
+ Spacer(Modifier.height(10.dp))
+            // 🔴 用 state 而不是 Job.isActive：Job 一次性启动后不可重启，
+            //    且 isActive 在协程体执行期间才为 true，用它做按钮 enable 会闪烁/失效。
+            var trimming by remember { mutableStateOf(false) }
+            Button(
+                onClick = {
+                    if (trimming) return@Button
+                    trimming = true
+                    cleanupScope.launch {
+                        val before = memInfo ?: readProcessMemory(context)
+                        memInfo = before
+                        // 🔴 Android 没有「一键清空内存」API。这里做的是系统认可的
+                        //    onTrimMemory(UI_HIDDEN) + 主动 GC，并**用实测 PSS 差值**播报，
+                        //    绝不预报一个编造的「已释放 xx MB」。
+                        val after = withContext(Dispatchers.IO) { requestMemoryTrim(context, before) }
+                        memInfo = after
+                        val freed = (before.pssTotal - after.pssTotal).coerceAtLeast(0L)
+                        val msg = if (freed > 0L) {
+                            context.getString(R.string.qk_03933, formatFileSize(freed))
+                        } else {
+                            // 如实告知「没释放到」——这正是旧实现最会骗人的地方。
+                            context.getString(R.string.qk_03934)
+                        }
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        trimming = false
+                    }
+                },
+                enabled = memInfo != null && !trimming,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            ) {
+                Text(stringResource(R.string.qk_03932))
+            }
+
+            GroupCaption(stringResource(R.string.qk_00348))
+            SetGroup {
+                // 🔴🔴🔴 总览改用**系统记账**（StorageStatsManager / StorageManager），
+                //    不再靠「把 6 个目录挨个stat 完再相加」。
+                //
+                // 旧实现的两个致命问题：
+                // 1. `sandbox`（Ubuntu rootfs）没算完 → 合计永远停在「扫描中…」；
+                // 2. 即使算完，`sum(我们自己stat的几项)` 也不等于系统设置里显示的「应用占用」——
+                //    漏掉 WebView 库、CodeCache、no_backup、art/Dex 等系统认定的数据，
+                //    用户对照系统设置一看就知道数字是编的。
+                //
+                // 现在三层口径，逐层如实降级，**任何一层拿不到就说拿不到**：
+                //   ① 官方记账（appData+cache+externalCache）→ 与系统设置同源，最权威；
+                //   ② 官方缓存总量（getCacheSizeBytes）→ 对应设置里的「清除缓存」；
+                //   ③ 兜底：我们逐项 stat 出来的合计（可能因限时截断偏小，标「≥」）。
+                val st = storageStats
+                val allDone = sizes.size >= paths.size
+                val anyPartial = partials.values.any { it }
+                val prefix = if (anyPartial) partialPrefix else ""
+                // 🔴 先把可空 getter 落到局部 val，Kotlin 才允许 smart cast。
+                val accounted = st?.accountedBytes
+                SetRowClickable(
+                    icon = Icons.Filled.Info,
+                    name = stringResource(R.string.qk_00349),
+                    sub = stringResource(R.string.qk_00350),
+                    // 官方记账拿不到时不回落到 0，而是继续显示「扫描中…」，
+                    // 因为 0 会被理解成「应用一点数据都没有」—— 又一个假实现。
+                    value = when {
+                        accounted != null -> formatFileSize(accounted)
+                        allDone -> prefix + formatFileSize(total())
+                        else -> scanningLabel
+                    },
+                    onClick = { },
+                    scaled = scaled,
+                )
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                // 🔴 官方口径的缓存总量 —— 这才是系统设置里「清除缓存」会释放的那部分。
+                //    旧页只有「可清理总大小」，没告诉用户「缓存到底多少」，缺了这一维。
+                SetRowClickable(
+                    icon = Icons.Filled.CleaningServices,
+                    name = stringResource(R.string.qk_03941),
+                    sub = stringResource(R.string.qk_03942),
+                    value = st?.cacheSizeBytes?.let { formatFileSize(it) } ?: deniedLabel,
+                    onClick = { cleanupType = "cache"; showCleanupDialog = true },
+                    scaled = scaled,
+                )
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                // 🔴 存储压力：剩余可用 / 总量。算不出就不是「0%」而是「读不到」。
+                val freeB = st?.freeBytes
+                val totalB = st?.totalBytes
+                SetRowClickable(
+                    icon = Icons.Filled.FormatSize,
+                    name = stringResource(R.string.qk_03943),
+                    sub = stringResource(R.string.qk_03944),
+                    value = if (freeB != null && totalB != null && totalB > 0) {
+                        stringResource(
+                            R.string.qk_03945,
+                            formatFileSize(freeB),
+                            formatFileSize(totalB),
+                        )
+                    } else deniedLabel,
+                    onClick = { },
+                    scaled = scaled,
+                )
+            }
+
+            GroupCaption(stringResource(R.string.qk_00351))
+            SetGroup {
+                CleanupRow(Icons.Filled.List, stringResource(R.string.qk_00352), sizeText("appdata"),
+                    stringResource(R.string.qk_00353), scaled) { cleanupType = "appdata"; showCleanupDialog = true }
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                CleanupRow(Icons.Filled.Folder, stringResource(R.string.qk_00354), sizeText("sandbox"),
+                    stringResource(R.string.qk_00355), scaled) { cleanupType = "sandbox"; showCleanupDialog = true }
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                // 🔴 副标题用新键 qk_03936（"应用私有目录 QuroAI_logs"）——
+                //    旧键 qk_00357 写的是「手机 Download/QuroAI_logs」，那是错的（见 paths 注释），
+                //    但 i18n 既有键只能追加不能改，故在此换用新键显示，旧键保留在 xml 里不动。
+                CleanupRow(Icons.Filled.Description, stringResource(R.string.qk_00356), sizeText("logs"),
+                    stringResource(R.string.qk_03936), scaled) { cleanupType = "logs"; showCleanupDialog = true }
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                CleanupRow(Icons.Filled.Folder, stringResource(R.string.qk_00358), sizeText("exports"),
+                    stringResource(R.string.qk_00359), scaled) { cleanupType = "exports"; showCleanupDialog = true }
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                CleanupRow(Icons.Filled.Build, stringResource(R.string.qk_00360), sizeText("backups"),
+                    stringResource(R.string.qk_00361), scaled) { cleanupType = "backups"; showCleanupDialog = true }
+                HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
+                CleanupRow(Icons.Filled.Delete, stringResource(R.string.qk_00362), sizeText("cache"),
+                    stringResource(R.string.qk_00363), scaled) { cleanupType = "cache"; showCleanupDialog = true }
+            }
+
+            GroupCaption(stringResource(R.string.qk_00364))
+            SetGroup {
+                SetRowClickable(
+                    icon = Icons.Filled.DeleteSweep,
+                    name = stringResource(R.string.qk_00365),
+                    sub = stringResource(R.string.qk_00366),
+                    value = "",
+                    onClick = {
+                        cleanupType = "all"
+                        showCleanupDialog = true
+                    },
+                    scaled = scaled,
+                    danger = true
+                )
+            }
+        }
+    }
+
+    if (showCleanupDialog) {
+        val title = when (cleanupType) {
+            "appdata" -> stringResource(R.string.qk_00367)
+            "sandbox" -> stringResource(R.string.qk_00368)
+            "logs" -> stringResource(R.string.qk_00369)
+            "exports" -> stringResource(R.string.qk_00370)
+            "backups" -> stringResource(R.string.qk_00371)
+            "cache" -> stringResource(R.string.qk_00372)
+            "all" -> stringResource(R.string.qk_00365)
+            else -> stringResource(R.string.qk_00373)
+        }
+        val message = when (cleanupType) {
+            "appdata" -> stringResource(R.string.qk_00374)
+            "sandbox" -> stringResource(R.string.qk_00375)
+            "logs" -> stringResource(R.string.qk_00376)
+            "exports" -> stringResource(R.string.qk_00377)
+            "backups" -> stringResource(R.string.qk_00378)
+            "cache" -> stringResource(R.string.qk_00379)
+            "all" -> stringResource(R.string.qk_00380)
+            else -> stringResource(R.string.qk_00381)
+        }
+
+        AlertDialog(
+            onDismissRequest = { showCleanupDialog = false },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showCleanupDialog = false
+                        val ctx = context
+                        CoroutineScope(Dispatchers.IO).launch {
+                            // 🔴 旧实现只 delete() 不看结果、也不刷新，用户点了像没反应。
+                            //   现在：先记录清理前体积 → 逐项删除并统计成功数 → 重新统计 →
+                            //   给出明确的成功/失败 Toast。
+                            val targets = if (cleanupType == "all") paths
+                            else mapOf(cleanupType to (paths[cleanupType] ?: File("/dev/null")))
+
+                            // 🔴🔴 权限前置判断：现在所有目标都在 **app 私有目录**
+                            //   （filesDir / cacheDir / getExternalFilesDir），
+                            //   **不需要 MANAGE_EXTERNAL_STORAGE**。
+                            //   旧判断 `absolutePath.contains(DIRECTORY_DOWNLOADS)` 是配着
+                            //   旧的公共 Download 日志路径写的；路径改对之后这个判断已经**永远为假**，
+                            //   但留着会误导后来人以为还有外部目录要授权。
+                            //   现在改为**实测**能否列出内容：列不出（listFiles()==null）才算真读不到。
+                            //
+                            //   🔴 读不到时**不再跳「所有文件访问权限」设置页**：
+                            //   app 私有目录本就不在 MANAGE_EXTERNAL_STORAGE 管辖范围内，
+                            //   跳过去用户授权完依然删不掉 —— 这正是「点了没反应 / 假实现」的观感来源。
+                            //   私有目录 listFiles()==null 只能是目录已被并发移除或IO 异常，
+                            //   如实告知失败即可，不给无效的下一步。
+                            val unreadable = targets.values.filter { it.exists() && it.listFiles() == null }
+                            if (unreadable.isNotEmpty()) {
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(ctx, qstr(R.string.qk_03938), Toast.LENGTH_LONG).show()
+                                }
+                                return@launch
+                            }
+
+                            // 🔴 「释放了多少」必须用**删除后实测的差值**，不能拿删除前的体积累加 ——
+                            //    旧实现无论 delete 成功与否都把 before 算进 freed，
+                            //    于是无权限/文件被占用时仍提示「已释放 xx MB」，用户点第二次发现体积没动，
+                            //    就此认定功能是坏的。实测差值为 0 时如实告知「未释放」。
+                            var beforeTotal = 0L
+                            var afterTotal = 0L
+                            // 🔴 失败计数改为**整棵树的删不掉条目数**（含内层），
+                            //    旧版只在顶层 `deleteDir(f) < 0` 时计数，内层失败全被吞掉。
+                            val failed = IntArray(1)
+                            targets.forEach { (_, f) ->
+                                beforeTotal += calculateDirSize(f)
+                                deleteDir(f, failed)
+                                afterTotal += calculateDirSize(f)
+                            }
+                            val denied = failed[0]
+                            val freed = (beforeTotal - afterTotal).coerceAtLeast(0L)
+                            refresh()
+                            withContext(Dispatchers.Main) {
+                                val msg = when {
+                                    denied > 0 && freed == 0L ->
+                                        ctx.getString(R.string.qk_03938)
+                                    freed == 0L ->
+                                        // 目录本来就是空的，如实说明而不是谎报释放量
+                                        ctx.getString(R.string.qk_03919)
+                                    denied > 0 ->
+                                        // 🔴 部分成功也**必须说出来**：旧实现一律弹成功文案，
+                                        //    用户清第二次发现体积没降就认定功能是假的。
+                                        ctx.getString(R.string.qk_03939, targets.size, formatFileSize(freed))
+                                    else ->
+                                        ctx.getString(R.string.qk_03916, targets.size, formatFileSize(freed))
+                                }
+                                Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                ) { Text(stringResource(R.string.qk_00382)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCleanupDialog = false }) { Text(qstr(R.string.qk_00011)) }
+            }
+        )
+    }
+}
+
+/**
+ * 清理存储分类行（点击触发确认）。
+ */
+@Composable
+private fun CleanupRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    size: String,
+    sub: String,
+    scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
+    onClick: () -> Unit,
+) {
+    // 🔴 参数顺序必须与 SetRowClickable(icon, name, sub, value) 一致：
+    //    旧实现传成 (icon, title, size, sub) → 体积被当成副标题、说明被当成右侧值，
+    //    于是界面上出现「诊断日志 / 0 B / 手机 Download/QuroAI_logs」这种错位排版。
+    SetRowClickable(icon = icon, name = title, sub = sub, value = size, onClick = onClick, scaled = scaled)
+}
+
+/**
+ * 计算目录大小（递归）。
+ *
+ * 🔴 `listFiles()` 在无权限时返回 **null**（不是空数组）。旧实现直接 `?.forEach` 跳过，
+ * 于是「无权限」被当成「目录为空」→ 页面显示 0 B → 用户以为功能坏了。
+ *
+ * 🔴 同样的假实现已下沉到 [measureDirOrNull]（能区分 null=无权限 / 0=真空），
+ *    本函数保留是因为清理流程需要「拿不到就当0、绝不崩」的语义，
+ *    UI 层展示一律走 [measureDirOrNull]。
+ */
+private fun calculateDirSize(dir: File): Long {
+    if (!dir.exists()) return 0
+    val children = dir.listFiles() ?: return 0
+    var size = 0L
+    children.forEach { file ->
+        size += if (file.isDirectory) {
+            calculateDirSize(file)
+        } else {
+            file.length()
+        }
+    }
+    return size
+}
+
+/** 目录是否可读（可列出内容）。用于区分「真的是空的」与「没权限看」。 */
+private fun isReadable(dir: File): Boolean = dir.exists() && dir.canRead()
+
+/**
+ * 删除目录内容（保留顶层目录本身，仅清空内容，避免后续写入因目录缺失而报错）。
+ *
+ * ## 🔴 为什么改成有返回值（这是「清理点了没反应」的真凶）
+ * 旧实现 `file.delete()` 的**返回值被直接丢弃**：无权限 / 文件被占用 / 只读时
+ * `delete()` 返回 false，而界面上没有任何提示 —— 用户点了就像功能根本没实现。
+ * 现在返回「成功删除的文件数」，由调用方据此给出明确反馈。
+ *
+ * @return 成功删除的文件/目录数；无权限读不到时返回 -1（调用方应提示授权）。
+ */
+private fun deleteDir(dir: File): Int = deleteDir(dir, null)
+
+/**
+ * 🔴 [failed] 是**可变出参**，用来把「某一层删不掉」这件事层层上报到顶层。
+ *
+ * 旧实现只有顶层能返回 -1（listFiles()==null）；内层 `delete()` 返回 false
+ * （文件被占用 / 只读）时**静默丢弃**，于是顶层返回 >=0，调用方
+ * `if (deleteDir(f) < 0) denied++` 完全看不出部分失败 → 界面照样弹「已清理 N 项，释放 xx MB」，
+ * 而实际有一堆文件没删掉。又一处「看起来成功、其实没成」的假实现。
+ */
+private fun deleteDir(dir: File, failed: IntArray?): Int {
+    if (!dir.exists()) return 0
+    val children = dir.listFiles() ?: run {
+        if (failed != null) failed[0] += 1
+        return -1
+    }
+    var deleted = 0
+    children.forEach { file ->
+        // 目录要先递归清空再删自身。
+        // 🔴 旧实现只递归、不 delete 子目录本身，返回值还只当计数用 ——
+        //    结果是「内容清空了但空目录还在」，反复清理时目录层级只增不减，
+        //    用户看到体积没降就以为功能没实现。
+        if (file.isDirectory) {
+            val inner = deleteDir(file, failed)
+            // inner == -1 表示这层读不到内容（无权限），不能算成功
+            if (inner >= 0) {
+                if (file.delete()) deleted++
+                else if (failed != null) failed[0] += 1
+            }
+        } else if (file.delete()) {
+            deleted++
+        } else if (failed != null) {
+            failed[0] += 1
+        }
+    }
+    return deleted
+}
+
+/**
+ * 格式化文件大小
+ */
+private fun formatFileSize(bytes: Long): String {
+    return when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+        bytes < 1024 * 1024 * 1024 -> "${bytes / (1024 * 1024)} MB"
+        else -> "${bytes / (1024 * 1024 * 1024)} GB"
+    }
+}
+
+
+/**
+ * 拉起视频通话（[com.ai.assistance.quro.service.QuroVideoCallService]）。
+ * 通话界面是该服务的 WindowManager 悬浮窗，因此必须先有悬浮窗权限；没有则引导去系统设置。
+ */
+private fun startVideoCall(ctx: Context) {
+    if (!android.provider.Settings.canDrawOverlays(ctx)) {
+        Toast.makeText(ctx, qstr(R.string.qk_03902), Toast.LENGTH_LONG).show()
+        runCatching {
+            ctx.startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + ctx.packageName),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+        return
+    }
+    runCatching {
+        val i = Intent(ctx, com.ai.assistance.quro.service.QuroVideoCallService::class.java)
+            .setAction(com.ai.assistance.quro.service.QuroVideoCallService.ACTION_START)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
+        else ctx.startService(i)
+    }
+}
+
+/**
+ * 🔴 清理页「分类明细」单项遍历的**软预算**（毫秒）。
+ *
+ * 背景：`linux-sandbox` 是整个 Ubuntu rootfs，数万文件，全量`stat` 要几十秒。
+ * 开源清理 App（清浊等）普遍用「快速扫描 / 深度扫描」两档来规避这个问题——
+ * 快速档只扫 2~3 层，深档在系统空闲时再跑。这里取其简化版：
+ * **每一项**给一个上限，超时就把已量到的当**下界**展示（UI 加「≥」前缀），
+ * 绝不让整页卡在「扫描中…」。
+ *
+ * 取 6s 的理由：常规目录（quro_data / cache / 日志）都在百毫秒级，
+ * 6s 足够任何正常目录跑完；只有 rootfs 这种超大目录才会触发降级。
+ */
+private const val DETAIL_SCAN_BUDGET_MS = 6_000L

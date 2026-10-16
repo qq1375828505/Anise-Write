@@ -1,0 +1,378 @@
+package com.ai.assistance.quro.core.tools
+
+import android.content.Context
+import android.os.Environment
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+
+/**
+ * 增强版文档创建工具：支持更多文档类型和更好的渲染
+ * 支持：docx, xlsx, pptx, pdf, md, txt, csv, html, rtf, odt, epub, json, xml, yaml, svg
+ */
+class EnhancedDocTool : QuroTool {
+    override val name = "enhanced_doc_create"
+    override val description = """📝 多格式文档创建：支持 md/txt/csv/json/xml/yaml/html/css/js/svg/epub 等 17 种格式。
+与 aiwps_create 的区别：aiwps_create 生成真正的 Office 二进制文件（docx/xlsx/pptx），适合分享给他人用 WPS/Office 打开。
+enhanced_doc_create 适合创建代码文件、配置文件、Markdown、HTML 等文本类文档，创建后自动在对话框渲染预览。
+参数：{"type":"格式","title":"标题","content":"内容","filename":"文件名"}"""
+    override val parametersJson = """{
+        "type":"object",
+        "properties":{
+            "type":{"type":"string","description":"文档类型","enum":["docx","xlsx","pptx","pdf","md","txt","csv","html","rtf","odt","epub","json","xml","yaml","css","js","svg"]},
+            "title":{"type":"string","description":"文档标题"},
+            "content":{"type":"string","description":"文档内容"},
+            "filename":{"type":"string","description":"文件名（不含扩展名）"}
+        },
+        "required":["type","content"]
+    }"""
+
+    override fun run(context: Context, arguments: String): String {
+        val args = JSONObject(arguments)
+        val type = args.optString("type", "").trim().lowercase()
+        val content = args.optString("content", "")
+        val title = args.optString("title", "").ifBlank { "${type}_${System.currentTimeMillis()}" }
+        val filename = args.optString("filename", "").ifBlank { "${type}_${System.currentTimeMillis()}" }
+
+        val supportedTypes = setOf(
+            "docx", "xlsx", "pptx", "pdf", "md", "txt", "csv", "html",
+            "rtf", "odt", "epub", "json", "xml", "yaml", "css", "js", "svg"
+        )
+
+        if (type !in supportedTypes) {
+            return "不支持的类型：$type\n支持的类型：${supportedTypes.joinToString(", ")}"
+        }
+
+        if (content.isBlank()) return "内容不能为空"
+
+        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "QuroDocs")
+        if (!dir.exists()) dir.mkdirs()
+
+        val safeName = filename.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(80)
+
+        return try {
+            when (type) {
+                "docx" -> createDocx(context, safeName, content, title)
+                "xlsx" -> createXlsx(context, safeName, content, title)
+                "pptx" -> createPptx(context, safeName, content, title)
+                "pdf" -> createPdf(context, safeName, content, title)
+                "html", "htm" -> createHtml(dir, safeName, content, title)
+                "md", "markdown" -> createMarkdown(dir, safeName, content, title)
+                "txt" -> createPlainText(dir, safeName, content, title)
+                "csv" -> createCsv(dir, safeName, content, title)
+                "json" -> createJson(dir, safeName, content, title)
+                "xml" -> createXml(dir, safeName, content, title)
+                "yaml", "yml" -> createYaml(dir, safeName, content, title)
+                "css" -> createCss(dir, safeName, content, title)
+                "js" -> createJs(dir, safeName, content, title)
+                "svg" -> createSvg(dir, safeName, content, title)
+                "rtf" -> createRtf(dir, safeName, content, title)
+                "odt" -> createOdt(dir, safeName, content, title)
+                "epub" -> createEpub(dir, safeName, content, title)
+                else -> "不支持的类型：$type"
+            }
+        } catch (e: Exception) {
+            "创建失败：${e.message}"
+        }
+    }
+
+    private fun createDocx(context: Context, name: String, content: String, title: String): String {
+        // 走实例 run()，写入应用专属 QuroDocs（与查看器扫描目录一致，避免落公共目录导致文档列表不显示）
+        val result = AiwpsCreateTool().run(context, org.json.JSONObject().apply {
+            put("type", "docx"); put("content", content); put("title", title); put("filename", name)
+        }.toString())
+        return "✅ $result"
+    }
+
+    private fun createXlsx(context: Context, name: String, content: String, title: String): String {
+        val result = AiwpsCreateTool().run(context, org.json.JSONObject().apply {
+            put("type", "xlsx"); put("content", content); put("title", title); put("filename", name)
+        }.toString())
+        return "✅ $result"
+    }
+
+    private fun createPptx(context: Context, name: String, content: String, title: String): String {
+        val result = AiwpsCreateTool().run(context, org.json.JSONObject().apply {
+            put("type", "pptx"); put("content", content); put("title", title); put("filename", name)
+        }.toString())
+        return "✅ $result"
+    }
+
+    private fun createPdf(context: Context, name: String, content: String, title: String): String {
+        val result = AiwpsCreateTool().run(context, org.json.JSONObject().apply {
+            put("type", "pdf"); put("content", content); put("title", title); put("filename", name)
+        }.toString())
+        return "✅ $result"
+    }
+
+    private fun createHtml(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.html")
+        val htmlContent = buildHtmlDocument(content, title)
+        file.writeText(htmlContent, Charsets.UTF_8)
+        val note = "✅ HTML 文档已创建\n文件：${file.absolutePath}\n大小：${formatFileSize(file.length())}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, htmlContent, "html", note = note)
+    }
+
+    private fun createMarkdown(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.md")
+        val mdContent = "# $title\n\n$content"
+        file.writeText(mdContent, Charsets.UTF_8)
+        val note = "✅ Markdown 文档已创建\n文件：${file.absolutePath}\n大小：${formatFileSize(file.length())}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, mdContent, "md", note = note)
+    }
+
+    private fun createPlainText(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.txt")
+        val txtContent = "$title\n${"=".repeat(50)}\n\n$content"
+        file.writeText(txtContent, Charsets.UTF_8)
+        val note = "✅ 文本文档已创建\n文件：${file.absolutePath}\n大小：${formatFileSize(file.length())}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, txtContent, "text", note = note)
+    }
+
+    private fun createCsv(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.csv")
+        file.writeText(content, Charsets.UTF_8)
+        val note = "✅ CSV 文件已创建：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "csv", note = note)
+    }
+
+    private fun createJson(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.json")
+        file.writeText(content, Charsets.UTF_8)
+        val note = "✅ JSON 文件已创建\n文件：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "json", note = note)
+    }
+
+    private fun createXml(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.xml")
+        file.writeText(content, Charsets.UTF_8)
+        val note = "✅ XML 文件已创建\n文件：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "xml", note = note)
+    }
+
+    private fun createYaml(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.yaml")
+        file.writeText(content, Charsets.UTF_8)
+        val note = "✅ YAML 文件已创建\n文件：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "yaml", note = note)
+    }
+
+    private fun createCss(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.css")
+        file.writeText(content, Charsets.UTF_8)
+        val note = "✅ CSS 文件已创建\n文件：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "css", note = note)
+    }
+
+    private fun createJs(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.js")
+        file.writeText(content, Charsets.UTF_8)
+        val note = "✅ JavaScript 文件已创建\n文件：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "js", note = note)
+    }
+
+    private fun createSvg(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.svg")
+        file.writeText(content, Charsets.UTF_8)
+        val note = "✅ SVG 文件已创建\n文件：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "svg", note = note)
+    }
+
+    private fun createRtf(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.rtf")
+        val rtfContent = buildRtfDocument(content, title)
+        file.writeText(rtfContent, Charsets.UTF_8)
+        val note = "✅ RTF 文档已创建：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "rtf", note = note)
+    }
+
+    private fun createOdt(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.odt")
+        // ODT 是 ZIP 格式，简化处理
+        val odtContent = buildOdtDocument(content, title)
+        writeZipFile(file, odtContent)
+        val note = "✅ ODT 文档已创建：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, content, "odt", note = note)
+    }
+
+    private fun createEpub(dir: File, name: String, content: String, title: String): String {
+        val file = File(dir, "$name.epub")
+        // EPUB 是 ZIP 格式，简化处理
+        val epubContent = buildEpubDocument(content, title)
+        writeZipFile(file, epubContent)
+        val note = "✅ EPUB 电子书已创建：${file.absolutePath}"
+        return com.ai.assistance.quro.core.canvas.Aip.docEnvelope(title, "", "text", note = note)
+    }
+
+    private fun buildHtmlDocument(content: String, title: String): String {
+        val formattedContent = content
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br>\n")
+
+        return """
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${escapeHtml(title)}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; }
+        h3 { color: #7f8c8d; }
+        p { margin: 10px 0; }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: "Courier New", monospace;
+        }
+        pre {
+            background-color: #f8f8f8;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            border: 1px solid #ddd;
+        }
+        blockquote {
+            border-left: 4px solid #3498db;
+            margin: 10px 0;
+            padding: 10px 20px;
+            background-color: #f9f9f9;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 10px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>${escapeHtml(title)}</h1>
+    $formattedContent
+</body>
+</html>
+        """.trimIndent()
+    }
+
+    private fun buildRtfDocument(content: String, title: String): String {
+        return """{\rtf1\ansi\deff0
+{\fonttbl{\f0 Times New Roman;}}
+{\colortbl;\red0\green0\blue0;}
+\pard\qc\fs32\b ${escapeRtf(title)}\b0\par
+\pard\fs24 ${escapeRtf(content)}\par
+}"""
+    }
+
+    private fun buildOdtDocument(content: String, title: String): Map<String, String> {
+        // 简化的 ODT 结构
+        val contentXml = """<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content
+    xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+    xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+  <office:body>
+    <office:text>
+      <text:h text:style-name="Heading1">${escapeXml(title)}</text:h>
+      <text:p>${escapeXml(content)}</text:p>
+    </office:text>
+  </office:body>
+</office:document-content>"""
+
+        return mapOf(
+            "content.xml" to contentXml,
+            "META-INF/manifest.xml" to """<?xml version="1.0" encoding="UTF-8"?>
+<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
+  <manifest:file-entry manifest:media-type="application/vnd.oasis.opendocument.text" manifest:full-path="/"/>
+  <manifest:file-entry manifest:media-type="text/xml" manifest:full-path="content.xml"/>
+</manifest:manifest>"""
+        )
+    }
+
+    private fun buildEpubDocument(content: String, title: String): Map<String, String> {
+        val contentHtml = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>${escapeXml(title)}</title>
+</head>
+<body>
+  <h1>${escapeXml(title)}</h1>
+  <p>${escapeXml(content)}</p>
+</body>
+</html>"""
+
+        return mapOf(
+            "content.opf" to """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>${escapeXml(title)}</dc:title>
+    <dc:language>zh-CN</dc:language>
+  </metadata>
+  <manifest>
+    <item id="content" href="content.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="content"/>
+  </spine>
+</package>""",
+            "content.xhtml" to contentHtml,
+            "mimetype" to "application/epub+zip"
+        )
+    }
+
+    private fun writeZipFile(file: File, parts: Map<String, String>) {
+        FileOutputStream(file).use { fos ->
+            ZipOutputStream(fos).use { zos ->
+                parts.forEach { (path, content) ->
+                    zos.putNextEntry(ZipEntry(path))
+                    zos.write(content.toByteArray(Charsets.UTF_8))
+                    zos.closeEntry()
+                }
+            }
+        }
+    }
+
+    private fun formatFileSize(bytes: Long): String {
+        return when {
+            bytes < 1024 -> "$bytes B"
+            bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+            else -> "${bytes / (1024 * 1024)} MB"
+        }
+    }
+
+    private fun escapeHtml(s: String): String = s
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+
+    private fun escapeXml(s: String): String = s
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+
+    private fun escapeRtf(s: String): String = s
+        .replace("\\", "\\\\")
+        .replace("{", "\\{")
+        .replace("}", "\\}")
+}

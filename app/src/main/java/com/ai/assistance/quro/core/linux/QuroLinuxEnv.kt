@@ -1,0 +1,3483 @@
+package com.ai.assistance.quro.core.linux
+import com.ai.assistance.quro.R
+import com.ai.assistance.quro.core.tools.QuroToolProcesses
+import com.ai.assistance.quro.util.qstr
+
+import android.content.Context
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.os.Build
+import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.BufferedInputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.util.Locale
+import java.util.zip.GZIPInputStream
+import com.ai.assistance.quro.util.QuroDiag
+import com.ai.assistance.quro.core.linux.PackageManagerType
+import com.ai.assistance.quro.core.linux.SourceManager
+import kotlin.time.Duration.Companion.milliseconds
+
+/** 把 Windows CRLF 统一为 LF，防止写入 proot/Ubuntu 的脚本被 sh 解析成非法选项。 */
+private fun String.normalizeLineEndings(): String = this.replace("\r\n", "\n").replace("\r", "\n")
+
+/**
+ * 应用内 Linux 环境（proot + Ubuntu 24.04 ARM64）后端。
+ *
+ * v108 删除了原 QuroLinuxEnv 资产（proot 二进制 + rootfs 随包解压），
+ * 导致终端只能回退成设备 Toybox sh、AI 的 linux_* 工具全部报「环境不可用」。
+ *
+ * 本版本采用 Android Linux Sandbox 思路并落地：
+ * - proot 二进制以预编译 .so 形式打包进 jniLibs，**从 applicationInfo.nativeLibraryDir
+ *   取执行权限**（Android 仅在此目录授予 .so 可执行权限，这是终端此前跑不起来的根因）；
+ * - Ubuntu 24.04 ARM64 rootfs（首次使用时从镜像下载 base rootfs 并解压到应用私有目录）；
+ * - 交互终端经 [shellLaunch] 以 proot 常驻 /bin/sh，获得 python3 / 完整写能力等；
+ * - 非交互命令经 [run] 一次性执行，供 AI 的 linux_* / terminal_* 工具调用；
+ * - 任一资产缺失则优雅降级并报明确原因，不崩溃、不静默失败。
+ */
+object QuroLinuxEnv {
+
+    private const val TAG = "QuroLinuxEnv"
+
+    /** Ubuntu 24.04 LTS (Noble) ARM64 rootfs。 */
+    private const val UBUNTU_CODENAME = "noble"
+    private const val UBUNTU_VERSION = "24.04.4"
+    private const val BUFFER_SIZE = 8192
+    private const val MAX_OUTPUT_LENGTH = 15_000L
+
+    /** chroot 配置 SharedPreferences 键名。 */
+    private const val PREFS_NAME = "quro_linux_env"
+    private const val KEY_USE_CHROOT = "use_chroot"
+
+    /**
+     * dpkg/apt 锁检测与释放 prologue —— 所有经 proot 的 apt/dpkg 安装脚本都应先执行。
+     *
+     * 上一次安装中断/崩溃会残留 /var/lib/dpkg/lock* 与 /var/cache/apt/archives/lock，
+     * 导致后续 apt-get 卡死或报 "Could not get lock ... - open (11: Resource temporarily unavailable)" / "Unable to acquire the dpkg frontend lock"。
+     * 策略：逐个检查锁文件，若已存在且**无进程占用**（stale，典型为上次中断遗留）则删除；
+     * 若被进程占用则跳过（不误杀运行中的 apt）。最后 dpkg --configure -a 修复半配置状态。
+     */
+    val APT_LOCK_RELEASE_PROLOGUE = """
+        |# ── dpkg / apt 锁检测与释放（仅当锁残留且无进程占用时才释放）──
+        |echo "[lock] 检查 dpkg/apt 残留锁..."
+        |_quro_release_locks() {
+        |  local released=0
+        |  for lk in /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/cache/apt/archives/lock /var/lib/apt/lists/lock; do
+        |    [ -e "${'$'}lk" ] || continue
+        |    local held=0
+        |    if command -v fuser >/dev/null 2>&1; then
+        |      fuser "${'$'}lk" >/dev/null 2>&1 && held=1
+        |    else
+        |      for _p in /proc/[0-9]*/cmdline; do
+        |        if tr '\0' ' ' < "${'$'}_p" 2>/dev/null | grep -qE 'apt|dpkg'; then held=1; break; fi
+        |      done
+        |    fi
+        |    if [ "${'$'}held" -eq 0 ]; then
+        |      rm -f "${'$'}lk" 2>/dev/null || true
+        |      echo "[lock] 释放 stale 锁: ${'$'}lk"
+        |      released=1
+        |    else
+        |      echo "[lock] ${'$'}lk 被进程占用，跳过释放"
+        |    fi
+        |  done
+        |  [ "${'$'}released" -eq 0 ] && echo "[lock] 无残留锁，无需释放"
+        |}
+        |_quro_release_locks
+        |dpkg --configure -a 2>/dev/null || true
+        |""".trimMargin()
+
+    // rootfs 下载镜像（Ubuntu Base 最小化 rootfs）- 使用HTTP避免SSL问题
+    // 优先使用阿里云镜像（清华镜像可能被封锁）
+    private val UBUNTU_ROOTFS_MIRRORS = listOf(
+        "http://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release",
+        "http://mirrors.tuna.tsinghua.edu.cn/ubuntu-cdimage/ubuntu-base/releases/24.04/release",
+        "http://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release",
+    )
+
+    // apt 软件源镜像（阿里云优先，清华其次，国际兜底）
+    // ⚠️ arm64/aarch64 架构必须用 ubuntu-ports，不是 ubuntu！
+    private val UBUNTU_APT_MIRRORS = listOf(
+        "http://mirrors.aliyun.com/ubuntu-ports",
+        "http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports",
+        "http://ports.ubuntu.com/ubuntu-ports",
+    )
+
+    /**
+     * 获取用户选择的 APT 镜像源（优先使用 SourceManager）
+     */
+    private fun getSelectedAptMirror(context: Context): String {
+        return try {
+            val sourceManager = SourceManager(context)
+            val selectedSource = sourceManager.getSelectedSource(PackageManagerType.APT)
+            selectedSource.url
+        } catch (e: Exception) {
+            // 如果 SourceManager 不可用，使用默认列表
+            UBUNTU_APT_MIRRORS.first()
+        }
+    }
+
+    sealed interface SandboxState {
+        data object NotInstalled : SandboxState
+        data class Downloading(val progress: Float) : SandboxState
+        data object Extracting : SandboxState
+        data class Installing(val detail: String = "") : SandboxState
+        data object Ready : SandboxState
+        data class Error(val message: String) : SandboxState
+    }
+
+    data class EnvStatus(
+        val available: Boolean,
+        val prootPath: String?,
+        val rootfsPath: String?,
+        val reason: String,
+    )
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val _state = MutableStateFlow<SandboxState>(SandboxState.NotInstalled)
+    val state: StateFlow<SandboxState> = _state
+
+    private val setupMutex = Mutex()
+    private var setupJob: Job? = null
+    /**
+     * 安装失败冷却：失败后 60 秒内拒绝再次 setup，避免 UI 的 auto-fix effect / 用户多次点重试
+     * 把设备打成"死循环安装环境"（apt-get install exit 100 后 setupJob 完成 → state 变 Error →
+     * UI 横幅"重试"回调 setup → 又一次失败）。冷却期内直接返回最近一次错误。
+     */
+    @Volatile private var lastSetupFailAt: Long = 0L
+    private val setupCooldownMs: Long = 60_000L
+    /** 失败时给用户的详细诊断（含 apt-get 完整输出前 60 行），写到公共 Download 目录供手机直接读取。 */
+    private fun writeLastErrorToDownloads(context: Context, detail: String) {
+        runCatching {
+            val downloads = android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS
+            )
+            if (downloads == null) return@runCatching
+            downloads.mkdirs()
+            val out = File(downloads, "QuroAI_last_setup_error.txt")
+            val header = "QuroAI setup failed at ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}\n" +
+                "请把本文件发给开发者，或自行查下面的网址/DNS/HTTP 错误。\n" +
+                "（" + out.absolutePath + "）\n\n"
+            out.writeText(header + detail)
+        }
+    }
+
+    private fun sandboxDir(context: Context) = File(context.filesDir, "linux-sandbox")
+
+    fun rootfsPath(context: Context): String =
+        File(sandboxDir(context), "rootfs").absolutePath
+
+    /**
+     * /root 绑定目录（宿主侧路径；proot 内即 /root，二者必须始终同一目录，否则 CMS 模块/venv/引擎
+     * 在宿主与容器间读写错位）。
+     *
+     * 早期实现绑外部存储 `getExternalFilesDir(null)/sandbox-home`，但外部 FUSE/sdcardfs 对 proot 子进程
+     * 有写入与符号链接限制（SELinux 域 + FUSE 不支持 symlink）：容器内 /root 实际不可写，导致
+     * `python3 -m venv /root/cms-venv` 静默失败、CMS 引擎目录(/root/cms/_engine)建不了，表现就是
+     * 「Python 未注册 / PYTHON·NODE 共享引擎未拉起」（用户诊断出的 /root ACL/权限限制根因）。
+     * 改为绑 **app 内部存储**（sandboxDir/sandbox-home，真实 ext4/f2fs，支持符号链接与完整 Unix 权限，
+     * 与 proot 进程同 UID 同 SELinux 域，可自由读写），思路同 Termux 的 $PREFIX。宿主 homePath 与容器
+     * /root 仍同一目录，CMS 模块/venv/引擎读写一致。
+     */
+    fun homePath(context: Context): String {
+        val target = File(sandboxDir(context), "sandbox-home")
+        target.mkdirs()
+        return target.absolutePath
+    }
+
+    fun tmpPath(context: Context): String =
+        File(sandboxDir(context), "tmp").absolutePath
+
+    /**
+     * 设备共享存储（/sdcard，即 /storage/emulated/0）宿主路径，绑进 proot 后沙箱内可见为 /sdcard。
+     * 参考 Agora：仅在已获「所有文件访问」权限时才返回路径并真正 bind；否则返回 null 跳过挂载。
+     * 没有该权限时即便 proot bind 成功，沙箱内访问 DCIM/Download/Pictures 等子目录仍会 EACCES
+     * （Android 11+ scoped storage），等于「共享存储没挂上」。用权限闸门保证「挂载即真实可用」。
+     */
+    fun sharedStorageHostDir(context: Context): File? {
+        val accessible = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+：全文件系统 appop 特殊权限 MANAGE_EXTERNAL_STORAGE
+            android.os.Environment.isExternalStorageManager()
+        } else {
+            // Android 10-：分区存储下需 READ/WRITE_EXTERNAL_STORAGE
+            context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED ||
+            context.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+        if (!accessible) return null
+        val f = android.os.Environment.getExternalStorageDirectory()
+        return if (f != null && f.canRead()) f else null
+    }
+
+    /** 共享存储在 proot 内的挂载点（Agora 同为 /sdcard）。 */
+    const val SHARED_STORAGE_MOUNT = "/sdcard"
+
+    /**
+     * 应用私有目录（context.filesDir）在 proot 内的挂载点（issue #11 ③）。
+     *
+     * 旧实现只绑 /root（sandbox-home）、/tmp、/sdcard，**完全没绑 filesDir** ——
+     * 于是构建台产物（filesDir/buildproject）、AI 经 workspace 工具写的数据在容器里
+     * 一律「不存在」，ls/cat 全落空。缺的只是启动参数里的一个 `-b`，不是 Android 限制。
+     *
+     * ⚠️ 已知边界：rootfs 自身位于 filesDir/linux-sandbox/rootfs，故容器内
+     * `/quro/linux-sandbox/rootfs` 就是沙箱自己（自包含挂载）。proot 的路径翻译是
+     * 有限深度前缀替换，不会死循环；但 `du /quro` / `find /quro` 会把 rootfs
+     * 重复计入一遍，属预期内损耗。
+     */
+    const val APP_PRIVATE_MOUNT = "/quro"
+
+    /** proot 二进制：nativeLibraryDir 内，Android 在此授予 .so 可执行权限。 */
+    fun prootPath(context: Context): String = findNativeLibWithAssetsFallback(context, "libproot.so")
+
+    fun loaderPath(context: Context): String = findNativeLibWithAssetsFallback(context, "libproot-loader.so")
+    
+    /**
+     * 查找 native library，如果 nativeLibraryDir 为空则从 assets 解压。
+     * 解决某些设备/ROM 的 native library 解压失败问题。
+     */
+    private fun findNativeLibWithAssetsFallback(context: Context, libName: String): String {
+        val primary = File(context.applicationInfo.nativeLibraryDir, libName)
+        if (primary.exists()) return primary.absolutePath
+        
+        // nativeLibraryDir 为空，尝试从 assets 解压
+        Log.w(TAG, "⚠ $libName 在 nativeLibraryDir 中不存在，尝试从 assets 解压")
+        val extracted = extractProotFromAssets(context, libName)
+        if (extracted != null) {
+            Log.i(TAG, "✅ 从 assets 解压 $libName: ${extracted.absolutePath}")
+            return extracted.absolutePath
+        }
+        
+        Log.w(TAG, "⚠ $libName 在所有路径均未找到，返回默认路径: ${primary.absolutePath}")
+        return primary.absolutePath
+    }
+    
+    /**
+     * 从 assets/linux_env/ 解压 proot 二进制到应用私有目录。
+     */
+    private fun extractProotFromAssets(context: Context, libName: String): File? {
+        return try {
+            val assetName = when (libName) {
+                "libproot.so" -> "linux_env/proot"
+                "libproot-loader.so" -> "linux_env/libproot-loader.so"
+                "libproot-loader32.so" -> "linux_env/libproot-loader32.so"
+                else -> null
+            } ?: return null
+            
+            val targetDir = File(context.filesDir, "native-libs")
+            targetDir.mkdirs()
+            val target = File(targetDir, libName)
+            if (target.exists()) return target
+            
+            context.assets.open(assetName).use { input ->
+                FileOutputStream(target).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            target.setExecutable(true, false)
+            Log.i(TAG, "✅ 从 assets 解压 $assetName -> ${target.absolutePath} (${target.length()} bytes)")
+            target
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ 从 assets 解压 $libName 失败: ${e.message}")
+            null
+        }
+    }
+
+
+
+    private fun getLinuxArch(): String {
+        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+        return when {
+            abi.startsWith("arm64") -> "aarch64"
+            abi.startsWith("armeabi") -> "armhf"
+            abi.startsWith("x86_64") -> "x86_64"
+            abi.startsWith("x86") -> "x86"
+            else -> "aarch64"
+        }
+    }
+
+    /**
+     * 探测环境是否就绪（不触发下载）。
+     *
+     * **关键修复（终端「部署按钮变导出日志」根因）**：旧实现只在环境确实存在时把 [_state]
+     * 升级为 [SandboxState.Ready]，却从不降级。一旦 [_state] 进入 Ready，即使 rootfs 被
+     * （沙箱内命令误删 / 系统清理私有目录 / 升级残留）删掉，[_state] 仍停在 Ready，
+     * 终端安装横幅被永久隐藏，用户顶栏只剩「导出日志」按钮、无从重新部署。
+     * 现改为：探测到 proot/rootfs 实际不可用时，若此前被错误标记为 Ready，则降级回 NotInstalled，
+     * 让安装横幅重新出现。下载/安装中间态由 [setup] 自身管理，此处不抢状态。
+     */
+    fun probe(context: Context): EnvStatus {
+        val prootPathStr = prootPath(context)
+        val proot = File(prootPathStr)
+        Log.i(TAG, "🔍 probe 开始: prootPath=$prootPathStr, exists=${proot.exists()}")
+        
+        if (!proot.exists()) {
+            if (_state.value is SandboxState.Ready) _state.value = SandboxState.NotInstalled
+            // 诊断：列出 nativeLibraryDir 下的实际文件，帮助定位问题
+            val nativeDir = context.applicationInfo.nativeLibraryDir
+            val nativeFiles = try {
+                File(nativeDir).listFiles()?.map { it.name }?.joinToString(", ") ?: "(目录不可读)"
+            } catch (_: Throwable) { "(访问失败)" }
+            Log.e(TAG, "❌ proot 二进制缺失。nativeLibraryDir=$nativeDir，内容=[$nativeFiles]")
+            return EnvStatus(false, null, null,
+                "proot 二进制缺失。应用库目录($nativeDir)内容: $nativeFiles。" +
+                "可能原因：1) APK 未正确安装（native library 未解压）；2) 设备架构不匹配（需 arm64-v8a）；" +
+                "3) 系统清理了应用数据。请尝试卸载重装。")
+        }
+
+        val rootfs = File(rootfsPath(context))
+        // 关键：不仅看目录在不在，还要确认 rootfs 真能用（/bin/sh 存在且可解析）。
+        // 否则「目录在但解压残缺 / 符号链接创建失败 / 上次安装中断残留」会被误判为就绪，
+        // 终端顶栏显示 proot/Linux，实际 proot 启动失败、静默回退设备 sh —— 即「完全废了」的无声根因。
+        // 注意：/bin/sh 是绝对符号链接，必须按 rootfs 边界内解析（见 [rootfsBinRunnable]）。
+        val shOk = rootfs.isDirectory && rootfsBinRunnable(rootfs, "bin/sh")
+        val prootCanExec = proot.canExecute()
+        Log.i(TAG, "🔍 rootfs 存在=${rootfs.isDirectory}, sh 可执行=$shOk, proot 可执行=$prootCanExec")
+        
+        return if (shOk && prootCanExec) {
+            if (_state.value !is SandboxState.Ready) _state.value = SandboxState.Ready
+            EnvStatus(true, proot.absolutePath, rootfs.absolutePath, "环境就绪")
+        } else {
+            // rootfs 缺失/残缺/不可执行：把错误的 Ready 降级回 NotInstalled，恢复安装横幅。
+            if (_state.value is SandboxState.Ready) _state.value = SandboxState.NotInstalled
+            // 🔧 「曾安装但现已丢失」：多因系统清理应用数据（应用长时间未用）。写自诊断到 Download，
+            // 并给出一键恢复提示，避免用户面对「莫名其妙没了」无从下手。
+            val wasThere = wasInstalled(context)
+            if (wasThere) writeLostEnvDiagnostic(context)
+            val reason = when {
+                !rootfs.isDirectory ->
+                    if (wasThere)
+                        "开发环境曾安装但 rootfs 已丢失（最可能是系统清理了应用数据 / 应用长时间未用被速冻）。点「安装 Linux 环境」或发送 linux:install 可一键重新下载恢复。"
+                    else
+                        "Ubuntu rootfs 未安装（请在终端点「安装 Linux 环境」）"
+                !rootfsBinRunnable(rootfs, "bin/sh") ->
+                    "rootfs 解压残缺（/bin/sh 无法在 rootfs 内解析，可能符号链接创建失败），请重试安装"
+                !prootCanExec ->
+                    "proot 不可执行（权限问题）。可能原因：SELinux 限制、文件系统挂载选项（noexec）、或应用权限不足。"
+                else -> "proot 不可执行"
+            }
+            Log.e(TAG, "❌ 环境不可用: $reason")
+            EnvStatus(false, proot.absolutePath, null, reason)
+        }
+    }
+
+    /**
+     * **宽松探测**：只校验「文件/目录是否真实存在」，不校验可执行位与符号链接可解析性。
+     *
+     * 供**交互终端启动路径**（[shellLaunch] / [QuroHostBridge.buildLaunch]）专用，
+     * 与一次性执行命令的 [run] 保持同一策略：直接构造 proot 参数，让 proot 自己报错，
+     * 而不是在 Kotlin 侧预先判定「不可用」。
+     *
+     * ## 为什么必须宽松（真机根因，2026-08-29）
+     * 严格版 [probe] 用 `proot.canExecute()` + [rootfsBinRunnable] 两项判定，在部分 ROM /
+     * SELinux 策略 / 挂载选项（noexec）下会**误判为不可用**：
+     *  - `canExecute()` 对 nativeLibraryDir 下的 .so 可能返回 false（SELinux 限制），
+     *    但 proot 经 ProcessBuilder 实际能执行；
+     *  - rootfs 的 `/bin/sh` 是**指向 rootfs 内部的符号链接**（如 `-> dash` / `-> busybox`），
+     *    在宿主文件系统上解析必然失败，误报「解压残缺」。
+     *
+     * 结果是：AI 的 `terminal_exec`（走 [run]，绕过 probe）一切正常，
+     * 而终端 UI（走 [shellLaunch] → [probe]）被误判后**静默回退** `/system/bin/sh`，
+     * 表现为 `/bin/sh: dpkg: inaccessible or not found`（Android toybox 的特有措辞）。
+     *
+     * 宽松后：proot 真的跑不起来时，进程启动会抛异常，由 [QuroShellSession.create] 的
+     * try-catch 捕获并降级设备 sh，行为可预期且日志可查，不会再「静默」退化。
+     */
+    fun probeLenient(context: Context): EnvStatus {
+        val prootPathStr = prootPath(context)
+        val proot = File(prootPathStr)
+        val rootfs = File(rootfsPath(context))
+
+        if (!proot.exists()) {
+            return EnvStatus(false, prootPathStr, null, "proot 二进制缺失（$prootPathStr）")
+        }
+        if (!rootfs.isDirectory || (rootfs.listFiles()?.isEmpty() != false)) {
+            return EnvStatus(false, prootPathStr, null, "rootfs 目录缺失或为空（${rootfs.absolutePath}）")
+        }
+        // 存在即认为可用；可执行位/符号链接问题交给 proot 自己暴露。
+        val strict = probe(context)
+        if (!strict.available) {
+            // 严格探测与宽松探测结论不一致 = 严格探测在误判，记日志便于真机取证。
+            Log.w(TAG, "⚠ 宽松探测可用但严格探测判为不可用，按宽松结论启动 proot。" +
+                "严格原因: ${strict.reason}")
+        }
+        return EnvStatus(true, proot.absolutePath, rootfs.absolutePath, "环境就绪（宽松探测）")
+    }
+
+    /**
+     * 在 rootfs 内部解析一个（可能含绝对/相对符号链接的）路径，判断其最终真实文件是否存在且可执行。
+     *
+     * **不能用 [File.exists]/[File.canExecute] 直接判**：rootfs 的 `/bin/sh` 可能是符号链接
+     * （如 `-> /bin/busybox` 或 `-> /usr/bin/dash`）。在宿主 Android 文件系统上链接目标
+     * 根本不存在，宿主侧 `exists()` 会误判缺失；但 proot 进入 rootfs 后链接目标是存在的。
+     * 必须按 rootfs 边界把链接目标解析回 rootfs 内再判定，否则正确解压的 rootfs 会被误报「残缺」。
+     */
+    private fun rootfsBinRunnable(rootfs: File, relPath: String): Boolean {
+        var cur = File(rootfs, relPath)
+        val root = rootfs.canonicalFile
+        val seen = mutableSetOf<File>()
+        repeat(16) {
+            // 先确认解析结果落在 rootfs 内，避免越界；再用 canExecute 判可执行（会跟随链接）。
+            if (cur.canonicalFile.startsWith(root) && cur.canExecute()) return true
+            if (!java.nio.file.Files.isSymbolicLink(cur.toPath())) return false
+            val target = java.nio.file.Files.readSymbolicLink(cur.toPath()).toString()
+            cur = if (target.startsWith("/")) File(root, target.removePrefix("/"))
+                   else File(cur.parentFile ?: root, target)
+            if (!seen.add(cur)) return false // 防环
+        }
+        return false
+    }
+
+    /**
+     * 触发一次性安装：下载 Ubuntu rootfs → 解压 → 写 resolv.conf/sources.list →
+     * apt-get update → 装 bash。幂等，已是 Ready 则直接返回。进度通过 [state] 暴露给 UI。
+     */
+    fun setup(context: Context) {
+        if (setupJob?.isActive == true) return
+        // 冷却期检查：失败后 60 秒内拒绝再跑，避免"死循环安装环境"。
+        val now = System.currentTimeMillis()
+        val sinceLastFail = now - lastSetupFailAt
+        if (lastSetupFailAt != 0L && sinceLastFail < setupCooldownMs) {
+            val remain = (setupCooldownMs - sinceLastFail) / 1000
+            val prev = (state.value as? SandboxState.Error)?.message ?: "最近一次安装失败"
+            Log.w(TAG, "setup: 处于安装失败冷却期（剩余 ${remain}s），忽略本次重试请求")
+            _state.value = SandboxState.Error("$prev\n\n冷却期剩余 ${remain}s，请稍候再试。完整错误请查看手机 Download/QuroAI_last_setup_error.txt")
+            return
+        }
+        setupJob = scope.launch {
+            if (!setupMutex.tryLock()) return@launch
+            try {
+                setupInternal(context)
+            } catch (e: Exception) {
+                Log.e(TAG, "setup failed", e)
+                val logPath = File(sandboxDir(context), "setup-diag.log").absolutePath
+                // 把完整诊断（含 apt-get 真实输出 60+ 行）写到公共 Download 目录，
+                // 用户用手机文件管理器能直接读出"哪个域名拉不到 / 哪个包 404"等根因。
+                val fullDetail = (e.message ?: qstr(R.string.qk_00503)) + "\n\n沙箱内诊断日志: " + logPath
+                writeLastErrorToDownloads(context, fullDetail)
+                _state.value = SandboxState.Error("${e.message}\n\n诊断日志: $logPath\n详细错误已写入 Download/QuroAI_last_setup_error.txt")
+                lastSetupFailAt = System.currentTimeMillis()
+            } finally {
+                setupMutex.unlock()
+            }
+        }
+    }
+
+    /**
+     * 阻塞式确保终端(proot/Ubuntu)已安装，供 CMS 部署器等「必须同步等到环境就绪」的调用方使用。
+     *
+     * - 已就绪：直接返回就绪状态（不触发下载）。
+     * - 未就绪：触发一次性安装（下载 rootfs → 解压 → apt-get update → 装 bash → proot 自检），
+     *   成功返回就绪状态；安装过程进度仍经 [state] 暴露给 UI。
+     * - 安装失败：返回 available=false 的状态并附带原因（不抛异常，便于部署器转成明确错误文案）。
+     *
+     * 实现要点：用 [runBlocking] + [setupMutex.withLock] 同步等待安装完成；若并发的 [setup] 已在跑，
+     * withLock 会等其释放后重新探测（可能已被装好）。**调用方必须已处于后台线程**——
+     * CMS 部署器本就在工作线程跑阻塞式 proot 命令，符合此约束。
+     */
+    fun ensureInstalledBlocking(context: Context): EnvStatus {
+        // 用**宽松探测**：严格 probe 会误判（见 [probeLenient]），
+        // 一旦误判成「不可用」就会触发 setupInternal —— 重新下载并解压约 200MB rootfs。
+        // 真机上表现为「每次打开终端都要重装环境、等好几分钟」。
+        // 宽松探测保证「已装好」时直接复用，只在 proot/rootfs 真正缺失时才重装。
+        val st = probeLenient(context)
+        if (st.available) {
+            // 存量环境（rootfs 已装好）：补齐开发工具链（python3/ffmpeg/node/git 等），幂等，仅装一次。
+            // 这样已装环境的用户在更新 APK 后打开终端即自动获得完整 Linux 命令，无需重新下载 rootfs。
+            // installDevToolchain 是 suspend 函数，而本方法为阻塞式（调用方已处于后台线程），
+            // 用 runBlocking 同步等待工具链补齐完成（与下方 runBlocking 一致）。
+            runCatching { runBlocking { installDevToolchain(context) } }
+            return st
+        }
+        return try {
+            runBlocking {
+                setupMutex.withLock {
+                    // 抢到锁后再探一次：并发 setup() 可能已先完成安装
+                    probeLenient(context).takeIf { it.available }?.let { return@runBlocking it }
+                    setupInternal(context)
+                    probeLenient(context)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureInstalledBlocking 终端安装失败", e)
+            EnvStatus(false, prootPath(context).takeIf { File(it).exists() }, null, e.message ?: "终端安装失败")
+        }
+    }
+
+    fun cancelSetup() {
+        setupJob?.cancel()
+        setupJob = null
+    }
+
+    /**
+     * 开发工具链（对齐完整 Ubuntu 体验）：ubuntu-base 极简 rootfs 不含这些包，
+     * 终端内 `python3` / `ffmpeg` / `node` / `npm` / `git` 等均 "command not found"，
+     * 表现为「AI 终端正常、UI 终端只能基础命令」。需在 apt-get update 之后显式安装。
+     */
+    private const val DEVTOOLS_MARKER = ".quro_devtools_v1"
+    /** 核心包：缺任何一个都显著影响终端可用性，必须装成功。 */
+    private const val DEVTOOLS_CORE =
+        "python3 python3-pip python3-venv ffmpeg nodejs npm git build-essential pkg-config"
+    /** 可选包：源未开（如 universe）时单独装、失败忽略，不影响核心包。 */
+    private const val DEVTOOLS_OPTIONAL = "neofetch"
+
+    /**
+     * 补齐开发工具链（python3 / ffmpeg / node / npm / git 等），使 QuroAI 终端开箱即有
+     * 与完整 Ubuntu 一致的 Linux 命令。
+     *
+     * - ubuntu-base 极简 rootfs 不含这些包，必须在 apt-get 之后显式安装；
+     * - 幂等：用 rootfs 内 marker 文件（[DEVTOOLS_MARKER]）防止重复安装；
+     * - 核心包整组安装，失败（apt list 过期）自动 `apt-get update` 后重试；
+     * - 可选包（neofetch 等，可能依赖 universe 源）单独安装、失败忽略，绝不连累核心包；
+     * - 供 [setupInternal]（全新安装）与 [ensureInstalledBlocking]（存量环境自动补全）共用，
+     *   也供 UI 终端打开时后台触发——已装环境无需重新下载 rootfs 即可补齐工具。
+     *
+     * @return 核心工具链安装成功（或已装过）返回 true，否则 false。
+     */
+    suspend fun installDevToolchain(context: Context): Boolean {
+        val rootfs = File(rootfsPath(context))
+        if (!rootfs.isDirectory) {
+            Log.w(TAG, "installDevToolchain: rootfs 不存在，跳过")
+            return false
+        }
+        val marker = File(rootfs, DEVTOOLS_MARKER)
+        if (marker.exists()) {
+            Log.i(TAG, "installDevToolchain: 已装过，跳过")
+            return true
+        }
+        Log.i(TAG, "installDevToolchain: 开始安装核心工具链 $DEVTOOLS_CORE")
+        var r = runProotInstall(context, DEVTOOLS_CORE)
+        if (r.first != 0) {
+            Log.w(TAG, "installDevToolchain: 核心包首次安装失败，apt-get update 后重试: ${r.second.take(300)}")
+            runProot(context, "apt-get update -o Acquire::http::No-Cache=true -o Acquire::ForceIPv4=true", timeoutMs = 180_000)
+            r = runProotInstall(context, DEVTOOLS_CORE)
+        }
+        if (r.first != 0) {
+            // issue #11 问题7：整批两次都失败 → 逐包回退。开发工具链全是增强项，
+            // 能装几个装几个，不让一个缺包（如某镜像缺 nodejs 索引）毁掉整条工具链。
+            Log.w(TAG, "installDevToolchain: 整批安装失败，改逐包回退")
+            val perPkg = aptInstallPerPackage(
+                context, rootfs, DEVTOOLS_CORE, getSelectedAptMirror(context), 420_000,
+                criticalPackages = emptySet(),
+            )
+            val anyInstalled = perPkg.first == 0
+            Log.w(TAG, "installDevToolchain: 逐包回退结果 exit=${perPkg.first}（部分成功即返回 true，不写 marker 等下次自愈补全）：${perPkg.second.take(300)}")
+            if (!anyInstalled) {
+                Log.e(TAG, "❌ installDevToolchain: 核心工具链安装失败(exit ${r.first}): ${r.second.take(400)}")
+                return false
+            }
+            r = perPkg
+        }
+        val coreOk = r.first == 0
+        if (!coreOk) {
+            Log.e(TAG, "❌ installDevToolchain: 核心工具链安装失败(exit ${r.first}): ${r.second.take(400)}")
+            return false
+        }
+        Log.i(TAG, "✅ installDevToolchain: 核心工具链安装成功")
+        // 可选包：单独装、失败忽略
+        if (DEVTOOLS_OPTIONAL.isNotBlank()) {
+            val o = runProotInstall(context, DEVTOOLS_OPTIONAL)
+            if (o.first != 0) Log.w(TAG, "installDevToolchain: 可选包安装失败（忽略）: ${o.second.take(200)}")
+        }
+        runCatching { marker.createNewFile() }
+        return true
+    }
+
+    /**
+     * apt-get install 并强制 IPv4 + 多镜像回退（供 setupInternal 基础包安装调用）。
+     * 真机 5G/移动网络下 IPv6 常半通：apt-get update 带 ForceIPv4 成功，但 install 不带会走 IPv6 拉 .deb 包，
+     * 触发 connection-reset → exit 100（截图实证「update 成功、install 失败」）。故 install 也必须 ForceIPv4。
+     * 单镜像失败依次切换 UBUNTU_APT_MIRRORS 重试（先 rewrite sources + apt-get update 再装）。
+     */
+    private suspend fun aptInstallWithMirrorRetry(
+        context: Context,
+        rootfsDir: File,
+        pkgs: String,
+        userMirror: String,
+        timeoutMs: Long,
+    ): Pair<Int, String> {
+        val mirrors = listOf(userMirror) + UBUNTU_APT_MIRRORS.filter { it != userMirror }
+        var last = Pair(-1, "")
+        for (m in mirrors) {
+            diagLog(context, "apt install 尝试镜像: $m (ForceIPv4)")
+            writeAptSources(rootfsDir, m)
+            runProot(context, "apt-get update -o Acquire::http::No-Cache=true -o Acquire::Max-FutureTime=0 -o Acquire::ForceIPv4=true", timeoutMs = 180_000)
+            last = runProot(
+                context,
+                "apt-get install -y --fix-missing --no-install-recommends -o Acquire::ForceIPv4=true $pkgs",
+                timeoutMs = timeoutMs,
+            )
+            if (last.first == 0) return last
+            Log.w(TAG, "apt install 失败(镜像 $m): ${last.second.take(300)}")
+            diagLog(context, "apt install 失败(镜像 $m): ${last.second.take(400)}")
+        }
+        return last
+    }
+
+    /**
+     * 逐包安装（issue #11 问题7 改善建议3：不要整批失败）。
+     *
+     * 每个包独立走 [aptInstallWithMirrorRetry]（含镜像回退 + ForceIPv4），
+     * 单个包「源不可用」只跳过它自己，并记录 apt 输出的关键行作为原因。
+     *
+     * @param criticalPackages 关键包集合：失败即使整体失败；空集 = 全部非关键（能装几个装几个）。
+     * @return Pair(exit, 摘要)。exit=0 = 关键包已齐；非 0 = 关键包失败。
+     */
+    private suspend fun aptInstallPerPackage(
+        context: Context,
+        rootfsDir: File,
+        pkgs: String,
+        userMirror: String,
+        timeoutMs: Long,
+        criticalPackages: Set<String> = emptySet(),
+    ): Pair<Int, String> {
+        diagLog(context, "逐包安装: $pkgs（关键包: ${criticalPackages.ifEmpty { setOf("无") }}）")
+        val pkgList = pkgs.split(" ").filter { it.isNotBlank() }
+        val failedOptional = mutableListOf<String>()
+        val failedCritical = mutableListOf<String>()
+        var okCount = 0
+        for (p in pkgList) {
+            val r = aptInstallWithMirrorRetry(context, rootfsDir, p, userMirror, timeoutMs)
+            if (r.first == 0) {
+                okCount++
+                diagLog(context, "✅ 逐包安装成功: $p")
+                continue
+            }
+            // 抽取失败的关键行（Unable to locate / not available / no candidate / E:），
+            // 让用户与诊断日志都能看到「到底是哪个包、因为什么」。
+            val why = r.second.lineSequence().firstOrNull { line ->
+                line.contains("Unable to locate") || line.contains("not available") ||
+                    line.contains("has no installation candidate") || line.trimStart().startsWith("E:")
+            } ?: r.second.take(200)
+            diagLog(context, "⚠️ 逐包安装失败: $p —— $why")
+            (if (p in criticalPackages) failedCritical else failedOptional).add("$p（$why）")
+        }
+
+        // 退出码契约：① 关键包失败 → 1；② 一个都没装上（全失败）→ 1（不能让「啥都没装」冒充成功）；
+        // ③ 其余（含「部分成功」）→ 0，摘要里列明跳过项。
+        val allFailed = pkgList.isNotEmpty() && okCount == 0
+        return if (failedCritical.isEmpty() && !allFailed) {
+            val summary = buildString {
+                append("已按逐包回退方式安装完成（成功 $okCount/${pkgList.size}）。")
+                if (failedOptional.isNotEmpty()) {
+                    append("\n以下包当前源不可用，已跳过（不影响环境可用性）：")
+                    failedOptional.forEach { append("\n  · $it") }
+                }
+            }
+            Pair(0, summary)
+        } else {
+            val summary = buildString {
+                if (failedCritical.isNotEmpty()) {
+                    append("关键包安装失败：")
+                    failedCritical.forEach { append("\n  · $it") }
+                } else {
+                    append("所有包均安装失败（成功 0/${pkgList.size}）：")
+                    failedOptional.forEach { append("\n  · $it") }
+                }
+                if (failedOptional.isNotEmpty() && failedCritical.isNotEmpty()) {
+                    append("\n同时跳过的非关键包：")
+                    failedOptional.forEach { append("\n  · $it") }
+                }
+            }
+            Pair(1, summary)
+        }
+    }
+
+    /**
+     * 基础包安装（issue #11 问题7 改善建议3：**逐包回退，不要整批失败**）。
+     *
+     * 旧行为：`apt-get install bash ca-certificates libcurl4 curl wget` 一把梭——
+     * 只要一个包 "Unable to locate / has no installation candidate"（源缺组件、
+     * 或镜像缺对应架构索引），整批 exit 100 → 整个 Linux 环境初始化失败，
+     * 全新设备上「开箱不可用」（用户实测复现，v1.1.4）。
+     *
+     * 新行为：
+     *  1. 先整批试一次（快路径，绝大多数镜像一次成功）；
+     *  2. 整批失败 → 逐包单独装（[aptInstallPerPackage]）；
+     *  3. [criticalPackages]（bash——持久 shell 的基石）失败才硬失败；
+     *     其余包装不上只记录明确原因并继续（ca-certificates 有 Android CA 库兜底，
+     *     curl/wget 只是便利工具），绝不因一个非关键包葬送整个环境。
+     *
+     * @return Pair(exit, 摘要)。exit=0 = 关键包已齐（摘要列跳过的非关键包及原因）；
+     *   exit≠0 = 关键包失败，摘要含每个失败包的原因（apt 输出的关键行）。
+     */
+    private suspend fun aptInstallBasePackages(
+        context: Context,
+        rootfsDir: File,
+        pkgs: String,
+        userMirror: String,
+        timeoutMs: Long,
+        criticalPackages: Set<String> = setOf("bash"),
+    ): Pair<Int, String> {
+        // 1) 整批快路径（含镜像回退）
+        val batch = aptInstallWithMirrorRetry(context, rootfsDir, pkgs, userMirror, timeoutMs)
+        if (batch.first == 0) return batch
+
+        // 2) 整批失败 → 逐包回退
+        diagLog(context, "⛔ 整批安装失败（exit ${batch.first}），改逐包安装…")
+        return aptInstallPerPackage(context, rootfsDir, pkgs, userMirror, timeoutMs, criticalPackages)
+    }
+
+    /**
+     * 执行一组 apt-get install（带 --no-install-recommends + --fix-missing + ForceIPv4，缩短体积、扛单包下载失败/网络抖动）。
+     * 失败时按指数退避重试（2s/4s/8s，最多 3 次），对真机移动网络下瞬时拉不到包友好。
+     */
+    private suspend fun runProotInstall(context: Context, pkgs: String): Pair<Int, String> {
+        var attempt = 0
+        var r: Pair<Int, String>
+        while (true) {
+            attempt++
+            r = runProot(
+                context,
+                "apt-get install -y --fix-missing --no-install-recommends -o Acquire::ForceIPv4=true $pkgs",
+                timeoutMs = 420_000
+            )
+            if (r.first == 0) return r
+            if (attempt >= 3) return r
+            val backoff = attempt * 2000L
+            Log.w(TAG, "runProotInstall($pkgs) 第 $attempt 次失败，${backoff}ms 后重试: ${r.second.take(200)}")
+            kotlinx.coroutines.delay(backoff)
+        }
+    }
+
+    /**
+     * 校验已下载 rootfs tarball 的完整性（P2 校验 · 对外可观测入口）。
+     *
+     * 供「linux:verify」等调试命令或设置页调用，让用户主动确认本地 rootfs 未被损坏。
+     * 内部复用 [verifyDownloadedRootfs]：gzip 魔数 + SHA-256 sidecar 匹配；
+     * 无 sidecar 的首次运行会顺手写入（信任当前文件）。
+     *
+     * @return tarball 存在且完整返回 true，否则 false
+     */
+    fun verifyRootfsIntegrity(context: Context): Boolean {
+        val tar = File(sandboxDir(context), "rootfs.tar.gz")
+        return verifyDownloadedRootfs(context, tar)
+    }
+
+    // ═══ 沙箱快照 / 回滚（P2 快照 · 支撑 P3 回滚）═══
+    // 快照对象 = 宿主侧 sandbox-home（proot 内即 /root 的可写层）：用户 venv / CMS 引擎 / 配置 / 项目文件。
+    // 不快照 base rootfs（Ubuntu 本体，只读大体积）；apt 装进 base 的二进制不在快照范围，属已知边界。
+
+    /** 快照根目录：sandboxDir/snapshots/<name>。 */
+    fun snapshotsDir(context: Context): File = File(sandboxDir(context), "snapshots")
+
+    /** 单条快照的元信息（供列表展示）。 */
+    data class SnapshotInfo(val name: String, val sizeBytes: Long, val mtime: Long)
+
+    /** 列出全部快照（按修改时间倒序）。 */
+    fun listSnapshots(context: Context): List<SnapshotInfo> {
+        val dir = snapshotsDir(context)
+        dir.mkdirs()
+        return (dir.listFiles()?.filter { it.isDirectory } ?: emptyList())
+            .map { SnapshotInfo(it.name, dirSize(it), it.lastModified()) }
+            .sortedByDescending { it.mtime }
+    }
+
+    /**
+     * 创建沙箱快照。
+     * @param name 快照名（仅允许 [A-Za-z0-9._-]，超长截断，非法字符替换为 _）
+     * @return 人类可读的结果文案
+     */
+    fun snapshotSandbox(context: Context, name: String): String {
+        val safe = sanitizeSnapshotName(name)
+        if (safe.isEmpty()) return "快照名非法（仅允许字母/数字/._-）"
+        val home = File(homePath(context))
+        if (!home.exists()) return "无沙箱数据（/root 尚不存在），无需快照。"
+        val snap = File(snapshotsDir(context), safe)
+        runCatching { snap.deleteRecursively() }
+        return try {
+            copyTreePreservingSymlinks(home, snap)
+            "✅ 已创建快照「$safe」（大小 ${humanSize(dirSize(snap))}）。回滚：linux:rollback $safe"
+        } catch (t: Throwable) {
+            Log.w(TAG, "创建快照失败: $safe", t)
+            "❌ 创建快照「$safe」失败：${t.message}"
+        }
+    }
+
+    /**
+     * 回滚到指定快照：复制快照到临时区 → 原子替换当前 sandbox-home。
+     * 失败时当前 sandbox-home 保持不变（临时区为独立副本，替换前不删除原数据）。
+     * @return 人类可读的结果文案
+     */
+    fun rollbackSandbox(context: Context, name: String): String {
+        val safe = sanitizeSnapshotName(name)
+        if (safe.isEmpty()) return "快照名非法（仅允许字母/数字/._-）"
+        val snap = File(snapshotsDir(context), safe)
+        if (!snap.isDirectory) return "❌ 快照不存在：「$safe」（linux:snapshots 查看列表）"
+        val base = sandboxDir(context)
+        val home = File(homePath(context))
+        val tmp = File(base, "sandbox-home.rollback.tmp")
+        runCatching { tmp.deleteRecursively() }
+        return try {
+            copyTreePreservingSymlinks(snap, tmp)
+            // 原子替换：原 home 先改名备份，tmp 改名顶上；任一失败则回退到拷贝兜底。
+            val bak = File(base, "sandbox-home.rollback.bak")
+            runCatching { bak.deleteRecursively() }
+            val renamed = home.renameTo(bak)
+            val swapped = if (renamed) tmp.renameTo(home) else false
+            if (!swapped) {
+                // tmp 未顶上（rename 失败，多半跨存储）：直接拷贝 tmp → home
+                if (home.exists()) home.deleteRecursively()
+                copyTreePreservingSymlinks(tmp, home)
+                runCatching { tmp.deleteRecursively() }
+            }
+            runCatching { bak.deleteRecursively() }
+            "✅ 已回滚到快照「$safe」（大小 ${humanSize(dirSize(snap))}）。若当前会话已打开，重启终端生效。"
+        } catch (t: Throwable) {
+            Log.w(TAG, "回滚失败: $safe", t)
+            "❌ 回滚到「$safe」失败：${t.message}（当前数据未改动）"
+        }
+    }
+
+    /** 删除指定快照（回收空间）。 */
+    fun deleteSnapshot(context: Context, name: String): String {
+        val safe = sanitizeSnapshotName(name)
+        if (safe.isEmpty()) return "快照名非法"
+        val snap = File(snapshotsDir(context), safe)
+        if (!snap.isDirectory) return "❌ 快照不存在：「$safe」"
+        return try {
+            snap.deleteRecursively()
+            "✅ 已删除快照「$safe」"
+        } catch (t: Throwable) {
+            "❌ 删除快照「$safe」失败：${t.message}"
+        }
+    }
+
+    private fun sanitizeSnapshotName(name: String): String {
+        val s = name.trim().replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
+        return if (s == ".." || s == ".") "" else s
+    }
+
+    /** 递归拷贝目录，保留符号链接（symlink 原样重建，避免 venv 软链被展开成实体文件导致体积膨胀）。 */
+    private fun copyTreePreservingSymlinks(src: File, dst: File) {
+        if (Files.isSymbolicLink(src.toPath())) {
+            dst.parentFile?.mkdirs()
+            runCatching { Files.deleteIfExists(dst.toPath()) }
+            Files.createSymbolicLink(dst.toPath(), Files.readSymbolicLink(src.toPath()))
+            return
+        }
+        if (src.isDirectory) {
+            dst.mkdirs()
+            src.listFiles()?.forEach { child ->
+                copyTreePreservingSymlinks(child, File(dst, child.name))
+            }
+            return
+        }
+        dst.parentFile?.mkdirs()
+        Files.copy(src.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
+    }
+
+    /** 递归计算目录字节数。 */
+    private fun dirSize(dir: File): Long {
+        if (Files.isSymbolicLink(dir.toPath())) return 0
+        if (dir.isFile) return dir.length()
+        var total = 0L
+        dir.listFiles()?.forEach { total += dirSize(it) }
+        return total
+    }
+
+    private fun humanSize(bytes: Long): String {
+        if (bytes < 1024) return "${bytes}B"
+        val units = arrayOf("B", "KB", "MB", "GB", "TB")
+        var v = bytes.toDouble()
+        var i = 0
+        while (v >= 1024 && i < units.lastIndex) { v /= 1024; i++ }
+        return String.format(Locale.US, "%.1f%s", v, units[i])
+    }
+
+    /** 对外暴露的人类可读体积（供终端 linux: 命令展示）。 */
+    fun humanSizePublic(bytes: Long): String = humanSize(bytes)
+
+    /** 将诊断日志同时写到 app 私有目录下的文件，方便用户取出查看。 */
+    private fun diagLog(context: Context, msg: String) {
+        Log.i(TAG, msg)
+        try {
+            val logDir = File(context.filesDir, "linux-sandbox")
+            logDir.mkdirs()
+            val logFile = File(logDir, "setup-diag.log")
+            logFile.appendText("[${java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())}] $msg\n")
+        } catch (_: Throwable) {}
+    }
+
+    // ═══ 安装态持久化 + 丢失自诊断（应对「长时间未用 → 系统清理应用数据 → 重检显示无环境」）═══
+    private fun wasInstalled(context: Context): Boolean =
+        runCatching { context.getSharedPreferences("quro_linux_env", android.content.Context.MODE_PRIVATE).getBoolean("installed", false) }.getOrDefault(false)
+
+    private fun markInstalled(context: Context) {
+        runCatching { context.getSharedPreferences("quro_linux_env", android.content.Context.MODE_PRIVATE).edit().putBoolean("installed", true).apply() }
+    }
+
+    // ═══ chroot 配置管理 ═══
+    /**
+     * 检查是否启用了 chroot 模式（默认 false，即使用 PRoot）。
+     * chroot 需要 root 权限，设备未 root 时此配置无效。
+     */
+    fun isChrootEnabled(context: Context): Boolean {
+        return runCatching {
+            context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                .getBoolean(KEY_USE_CHROOT, false)
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 设置 chroot 模式开关。
+     * @param enabled true=使用 chroot（需 root），false=使用 PRoot（默认）
+     */
+    fun setChrootEnabled(context: Context, enabled: Boolean) {
+        runCatching {
+            context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_USE_CHROOT, enabled).apply()
+        }
+    }
+
+    /**
+     * 检测当前是否可用 chroot（设备已 root 且用户启用了 chroot 模式）。
+     * 需在 IO 线程调用（会探测 su 可用性）。
+     */
+    fun isChrootAvailable(context: Context): Boolean {
+        if (!isChrootEnabled(context)) return false
+        return try {
+            com.ai.assistance.quro.core.privilege.QuroRootGateway.isRootAvailable()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * 构建 chroot 启动参数与环境（与 [buildProotLaunch] 对应）。
+     * chroot 通过 `su -c chroot <rootfs> /bin/sh -c <command>` 执行，
+     * 需要先挂载 /dev、/proc、/sys 到 rootfs。
+     */
+    private data class ChrootLaunch(
+        val suCommand: String,
+        val env: MutableMap<String, String>,
+        val workDir: File,
+    )
+
+    /**
+     * 开发环境丢失时的提示。仅走 Logcat，不再往手机公共 Download 写诊断文件
+     * （避免污染用户文件管理器里的 QuroAI_logs 目录）。
+     * 恢复方法仍由安装横幅 / linux:install 在 UI 层引导，无需落盘文件。
+     */
+    private fun writeLostEnvDiagnostic(context: Context) {
+        Log.w(TAG, "⚠ 开发环境（Ubuntu rootfs）曾安装但已丢失：目录=${rootfsPath(context)}。" +
+            "最可能是系统清理了应用数据。恢复：开发环境页点「安装 Linux 环境」或发送 linux:install（需联网）。")
+    }
+
+    private suspend fun setupInternal(context: Context) {
+        // 清理上次诊断日志
+        try { File(sandboxDir(context), "setup-diag.log").delete() } catch (_: Throwable) {}
+        diagLog(context, "=== setupInternal 开始 ===")
+        diagLog(context, "架构: ${getLinuxArch()}, proot: ${prootPath(context)}")
+
+        val arch = getLinuxArch()
+        val prootPathStr = prootPath(context)
+        val proot = File(prootPathStr)
+        if (!proot.exists()) {
+            val nativeDir = context.applicationInfo.nativeLibraryDir
+            val nativeFiles = try {
+                File(nativeDir).listFiles()?.map { it.name }?.joinToString(", ") ?: "(目录不可读)"
+            } catch (_: Throwable) { "(访问失败)" }
+            
+            // 详细诊断
+            val diagnosticInfo = buildString {
+                appendLine("=== proot 缺失诊断 ===")
+                appendLine("proot路径: ${proot.absolutePath}")
+                appendLine("nativeLibraryDir: $nativeDir")
+                appendLine("nativeLibraryDir存在: ${File(nativeDir).exists()}")
+                appendLine("nativeLibraryDir可读: ${File(nativeDir).canRead()}")
+                appendLine("nativeLibraryDir内容: $nativeFiles")
+                appendLine("文件大小: ${proot.length()}")
+                appendLine("文件权限: canRead=${proot.canRead()}, canWrite=${proot.canWrite()}, canExecute=${proot.canExecute()}")
+                
+                // 检查 APK 安装目录
+                try {
+                    val apkDir = File(context.applicationInfo.sourceDir).parentFile
+                    if (apkDir != null) {
+                        appendLine("APK安装目录: ${apkDir.absolutePath}")
+                        appendLine("APK安装目录存在: ${apkDir.exists()}")
+                        // 列出 lib 目录
+                        val libDir = File(apkDir, "lib")
+                        if (libDir.exists()) {
+                            val libFiles = libDir.listFiles()?.map { it.name }?.joinToString(", ") ?: "(空)"
+                            appendLine("lib目录内容: $libFiles")
+                            // 检查 arm64-v8a 目录
+                            val arm64Dir = File(libDir, "arm64-v8a")
+                            if (arm64Dir.exists()) {
+                                val arm64Files = arm64Dir.listFiles()?.map { it.name }?.joinToString(", ") ?: "(空)"
+                                appendLine("arm64-v8a目录内容: $arm64Files")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    appendLine("APK目录检查失败: ${e.message}")
+                }
+                
+                // 检查 assets
+                try {
+                    val assetFiles = context.assets.list("linux_env") ?: emptyArray()
+                    appendLine("assets/linux_env/内容: ${assetFiles.joinToString(", ")}")
+                } catch (e: Exception) {
+                    appendLine("assets检查失败: ${e.message}")
+                }
+                
+                appendLine("========================")
+            }
+            
+            Log.e(TAG, diagnosticInfo)
+            throw IllegalStateException(
+                "proot 二进制缺失于 ${proot.absolutePath}。\n" +
+                "应用库目录($nativeDir)内容: $nativeFiles。\n" +
+                "详细诊断信息已记录到日志。\n" +
+                "可能原因：1) APK 未正确安装（native library 未解压）；2) 设备架构不匹配（需 arm64-v8a）；" +
+                "3) 系统清理了应用数据。请尝试卸载重装。"
+            )
+        }
+        val dir = sandboxDir(context)
+        dir.mkdirs()
+        File(dir, "tmp").mkdirs()
+
+        // Android 把原生 .so 的 .so.2 后缀剥离，Linux 内程序按 libtalloc.so.2 找，这里补回。
+        val talloc = File(dir, "libtalloc.so.2")
+        if (!talloc.exists()) {
+            val tallocPath = findNativeLibWithAssetsFallback(context, "libtalloc.so")
+            val src = File(tallocPath)
+            if (src.exists()) src.copyTo(talloc, overwrite = true)
+            else QuroDiag.log("LinuxEnv", "⚠ nativeLibraryDir 无 libtalloc.so，libproot-loader 可能加载失败")
+        }
+
+        val rootfsDir = File(dir, "rootfs")
+        if (rootfsDir.exists()) rootfsDir.deleteRecursively()
+        val tarGz = File(dir, "rootfs.tar.gz")
+        val tarXz = File(dir, "rootfs.tar.xz")
+        var extractSuccess = false
+        try {
+            _state.value = SandboxState.Downloading(0f)
+            downloadRootfs(context, arch, tarGz) { p -> _state.value = SandboxState.Downloading(p) }
+
+            _state.value = SandboxState.Extracting
+            // 优先尝试xz格式（兼容上游 proot rootfs 打包）
+            if (tarXz.exists() && tarXz.length() > 0) {
+                Log.i(TAG, "尝试使用xz格式rootfs: ${tarXz.absolutePath} (${tarXz.length()} bytes)")
+                try {
+                    extractXzTar(tarXz, rootfsDir)
+                    // 验证解压是否成功
+                    if (rootfsDir.exists() && rootfsDir.isDirectory && rootfsDir.listFiles()?.isNotEmpty() == true) {
+                        Log.i(TAG, "xz格式rootfs解压成功，目录内容数: ${rootfsDir.listFiles()?.size}")
+                        extractSuccess = true
+                    } else {
+                        Log.w(TAG, "xz格式rootfs解压后目录为空或不存在")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "xz格式rootfs解压失败: ${e.message}")
+                    // 清理解压失败的残留
+                    if (rootfsDir.exists()) rootfsDir.deleteRecursively()
+                }
+            }
+
+            // 如果xz解压失败或不存在，尝试gz格式
+            if (!extractSuccess && tarGz.exists() && tarGz.length() > 0) {
+                Log.i(TAG, "尝试使用gz格式rootfs: ${tarGz.absolutePath} (${tarGz.length()} bytes)")
+                try {
+                    extractTarGz(tarGz, rootfsDir)
+                    // 验证解压是否成功
+                    if (rootfsDir.exists() && rootfsDir.isDirectory && rootfsDir.listFiles()?.isNotEmpty() == true) {
+                        Log.i(TAG, "gz格式rootfs解压成功，目录内容数: ${rootfsDir.listFiles()?.size}")
+                        extractSuccess = true
+                    } else {
+                        Log.w(TAG, "gz格式rootfs解压后目录为空或不存在")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "gz格式rootfs解压失败: ${e.message}")
+                    // 清理解压失败的残留
+                    if (rootfsDir.exists()) rootfsDir.deleteRecursively()
+                }
+            }
+
+            // 如果两种格式都失败，抛出异常
+            if (!extractSuccess) {
+                val xzExists = tarXz.exists()
+                val gzExists = tarGz.exists()
+                throw java.io.IOException(
+                    "rootfs文件解压失败。xz文件存在: $xzExists(${if (xzExists) tarXz.length() else 0} bytes), " +
+                    "gz文件存在: $gzExists(${if (gzExists) tarGz.length() else 0} bytes)。" +
+                    "可能原因：1) busybox/tar命令不可用；2) 存储空间不足；3) 文件损坏"
+                )
+            }
+        } finally {
+            tarGz.delete()
+            tarXz.delete()
+        }
+
+        // 解压后立即校验 rootfs 真可用：/bin/sh 必须能在 rootfs 内部解析为可执行文件。
+        diagLog(context, "解压完成，rootfsDir=${rootfsDir.absolutePath}, 文件数=${rootfsDir.listFiles()?.size ?: 0}")
+        if (!rootfsBinRunnable(rootfsDir, "bin/sh")) {
+            val detail = "rootfs 解压后 /bin/sh 无法在 rootfs 内解析（解压残缺或符号链接创建失败），无法启动 Ubuntu"
+            diagLog(context, "⛔ $detail")
+            QuroDiag.log("LinuxEnv", "⛔ $detail")
+            rootfsDir.deleteRecursively()
+            throw IllegalStateException(detail)
+        }
+        diagLog(context, "✅ /bin/sh 校验通过")
+
+        _state.value = SandboxState.Installing("初始化…")
+        diagLog(context, "makeWritable 开始")
+        makeWritable(rootfsDir)
+        diagLog(context, "fixHardlinks 开始")
+        fixHardlinks(rootfsDir)
+
+        // 创建 usr/bin/ 目录和符号链接（参考上游 proot 实现）
+        diagLog(context, "创建 usr/bin/ 符号链接")
+        createUsrBinSymlinks(context, dir)
+
+        diagLog(context, "prepareRuntimeExtras 开始")
+        prepareRuntimeExtras(context, rootfsDir)
+
+        // 把 proot 打进 rootfs：容器内自持容器运行时（ULFA 零外部依赖）
+        diagLog(context, "installProotIntoRootfs 开始")
+        installProotIntoRootfs(context, rootfsDir)
+
+        // 先做一次 proot 基础能力测试（在 apt-get update 之前）
+        diagLog(context, "proot 基础测试：echo hello")
+        val baseTest = runProot(context, "echo PROOT_BASELINE_OK", timeoutMs = 15_000)
+        diagLog(context, "proot 基础测试结果: exit=${baseTest.first}, output=${baseTest.second.take(200)}")
+        if (baseTest.first != 0 || !baseTest.second.contains("PROOT_BASELINE_OK")) {
+            val detail = "proot 无法在 rootfs 内执行基础命令。\n" +
+                "proot路径: ${prootPath(context)}, exists=${File(prootPath(context)).exists()}\n" +
+                "proot可执行: ${File(prootPath(context)).canExecute()}\n" +
+                "rootfs: ${rootfsDir.absolutePath}, 文件数=${rootfsDir.listFiles()?.size}\n" +
+                "输出(exit ${baseTest.first}):\n${baseTest.second.take(800)}\n" +
+                "常见原因：1) proot loader 缺失或不兼容 2) SELinux 限制 ptrace 3) 设备不支持"
+            diagLog(context, "⛔ $detail")
+            QuroDiag.log("LinuxEnv", "⛔ $detail")
+            rootfsDir.deleteRecursively()
+            throw IllegalStateException(detail)
+        }
+        diagLog(context, "✅ proot 基础测试通过")
+
+        // 设置伪造系统数据（Android 限制了部分 /proc，Linux 程序需要）
+        diagLog(context, "设置伪造系统数据 (setup_fake_sysdata)")
+        setupFakeSysdata(context, rootfsDir)
+
+        // 修复 Android 权限兼容性（添加 Android 组 ID 到 /etc/group）
+        diagLog(context, "修复 Android 权限 (fix_permissions)")
+        fixPermissions(context, rootfsDir)
+
+        // 写 DNS / CA 证书 / nsswitch / 基础文件（联网修复：resolv.conf 用设备真实 DNS + 公共兜底；
+        // 最小 rootfs 无 ca-certificates，SSL 证书来自 Android 系统 CA 库；nsswitch 保证 getaddrinfo 查 DNS；
+        // hosts/timezone/apt keyrings 补齐基础环境）
+        diagLog(context, "写入 resolv.conf / CA 证书 / nsswitch / 基础文件")
+        writeResolvConf(rootfsDir, context)
+        syncCaCerts(context, rootfsDir)
+        ensureNsswitch(rootfsDir)
+        setupMiscFiles(context, rootfsDir)
+        // 绕过被阻断的 53 端口 DNS：宿主侧解析关键主机名写进 /etc/hosts，使 apt-get update 按 IP 直连；
+        // 再走应用层 DoH（443）解析镜像 IP 覆盖同一份 hosts，作为更彻底的 53 绕行兜底
+        bootstrapHosts(context, rootfsDir)
+        bootstrapHostsByDoH(context, rootfsDir)
+
+        var updated = false
+        var lastErr = ""
+        
+        // 优先使用用户选择的镜像源
+        val userMirror = getSelectedAptMirror(context)
+        diagLog(context, "使用用户选择的镜像源: $userMirror")
+        writeAptSources(rootfsDir, userMirror)
+        var r = runProot(context, "apt-get update -o Acquire::http::No-Cache=true -o Acquire::Max-FutureTime=0 -o Acquire::ForceIPv4=true", timeoutMs = 180_000)
+        diagLog(context, "apt-get update 结果: exit=${r.first}, output=${r.second.take(500)}")
+        if (r.first == 0) {
+            updated = true
+        } else {
+            lastErr = r.second
+            Log.w(TAG, "apt-get update 失败 (用户镜像: $userMirror): ${r.second.take(500)}")
+            
+            // 用户镜像失败时，回退到默认列表
+            for (mirror in UBUNTU_APT_MIRRORS) {
+                diagLog(context, "尝试 apt-get update (镜像: $mirror)")
+                writeAptSources(rootfsDir, mirror)
+                r = runProot(context, "apt-get update -o Acquire::http::No-Cache=true -o Acquire::Max-FutureTime=0 -o Acquire::ForceIPv4=true", timeoutMs = 180_000)
+                diagLog(context, "apt-get update 结果: exit=${r.first}, output=${r.second.take(500)}")
+                if (r.first == 0) { updated = true; break }
+                lastErr = r.second
+                Log.w(TAG, "apt-get update 失败 (镜像: $mirror): ${r.second.take(500)}")
+            }
+        }
+        if (!updated) {
+            val detail = "apt-get update 在所有镜像均失败。\n$lastErr"
+            diagLog(context, "⛔ $detail")
+            QuroDiag.log("LinuxEnv", "⛔ $detail")
+            rootfsDir.deleteRecursively()
+            throw IllegalStateException(detail)
+        }
+        diagLog(context, "✅ apt-get update 成功")
+
+        // bash 是持久 shell 的基础，必须装。同时补齐联网/开发必需的底层库（ca-certificates 让 HTTPS 源与
+        // pip/npm 信任链可用；libcurl4 是多数编译/开发工具依赖；curl/wget 便于下载验证）。
+        // ★ 真因修复：apt-get update 带了 ForceIPv4 成功，但 install 不带会走 IPv6 拉 .deb 包，
+        // 真机 5G 下 connection-reset → exit 100（截图实证「update 成功、install 失败」）。
+        // 故 install 强制 ForceIPv4，并按镜像回退重试（先 rewrite sources + update 再装），--fix-missing 容单包 404。
+        _state.value = SandboxState.Installing("安装 bash / ca-certificates / libcurl4…")
+        diagLog(context, "安装基础包 (ForceIPv4 + 镜像回退 + 逐包回退)...")
+        // issue #11 问题7：整批失败时逐包回退——单个包「源不可用」不再葬送整个环境
+        val bash = aptInstallBasePackages(context, rootfsDir, "bash ca-certificates libcurl4 curl wget", userMirror, 240_000)
+        diagLog(context, "基础包安装结果: exit=${bash.first}, 摘要=\n${bash.second.take(60 * 120)}")
+        if (bash.first != 0) {
+            val detail = "基础包安装失败（exit ${bash.first}）：\n${bash.second}"
+            diagLog(context, "⛔ $detail")
+            QuroDiag.log("LinuxEnv", "⛔ $detail")
+            throw IllegalStateException(detail)
+        }
+        diagLog(context, "✅ 基础包安装成功")
+
+        // ★ 补齐开发工具链（python3 / ffmpeg / node / npm / git 等）：ubuntu-base 极简 rootfs 不含这些包，
+        // 而完整 Ubuntu 发行版自带这些包。此处显式安装，使 QuroAI 终端开箱即有完整 Linux 命令，
+        // 对齐「终端所有命令都能用」的体验。已装过（marker 存在）会自动跳过。
+        _state.value = SandboxState.Installing("安装开发工具链 (python3/ffmpeg/node/git)…")
+        diagLog(context, "安装开发工具链: $DEVTOOLS_CORE (+可选 $DEVTOOLS_OPTIONAL)")
+        installDevToolchain(context)
+
+        // 通用 DNS（绕开被阻断的 53 端口）：装 dnscrypt-proxy（向上走 DoH/DNSCrypt 443 解析任意域名）。
+        // 非致命——装不上则退化到 /etc/hosts 预列主机，不影响既有流程。
+        _state.value = SandboxState.Installing("安装 dnscrypt-proxy（通用 DNS）…")
+        diagLog(context, "安装 dnscrypt-proxy...")
+        val dnsp = runProot(context, "apt-get install -y --no-install-recommends dnscrypt-proxy", timeoutMs = 180_000)
+        diagLog(context, "dnscrypt-proxy 安装结果: exit=${dnsp.first}, output=${dnsp.second.take(200)}")
+        if (dnsp.first == 0) {
+            diagLog(context, "启动 DoH 代理（通用 DNS）...")
+            ensureDnsProxy(context, rootfsDir)
+        } else {
+            diagLog(context, "dnscrypt-proxy 安装失败，通用 DNS 跳过（/etc/hosts 兜底）")
+        }
+
+        // ★ 部署后自检
+        _state.value = SandboxState.Installing("自检 proot 运行环境…")
+        diagLog(context, "smoke test: echo + id + apt-get --version")
+        val smoke = runProot(context, "echo QURO_SMOKETEST_OK; id -u; apt-get --version", timeoutMs = 30_000)
+        diagLog(context, "smoke test 结果: exit=${smoke.first}, output=${smoke.second.take(500)}")
+        if (smoke.first != 0 || !smoke.second.contains("QURO_SMOKETEST_OK")) {
+            val detail = "部署后自检失败：proot 在您的设备上无法在 rootfs 内执行命令。\n" +
+                "自检输出（exit ${smoke.first}）：\n${smoke.second.take(800)}"
+            diagLog(context, "⛔ $detail")
+            QuroDiag.log("LinuxEnv", "⛔ $detail")
+            rootfsDir.deleteRecursively()
+            throw IllegalStateException(detail)
+        }
+
+        diagLog(context, "=== ✅ 部署成功 ===")
+        _state.value = SandboxState.Ready
+        // 持久化「曾安装」标记：即使后续 rootfs 被系统清理，重检时也能识别为「丢失」并提示一键恢复。
+        markInstalled(context)
+    }
+
+    /** 一次性执行命令（AI 工具用）。环境不可用返回原因。 */
+    fun run(context: Context, command: String, timeoutMs: Long = 30000): Pair<Int, String> {
+        // 不再依赖 probe() 前置检查 —— probe 的 rootfsBinRunnable 可能在宿主侧误判符号链接。
+        // 直接尝试执行命令，让 proot 自己报错。
+        return runProot(context, command, timeoutMs)
+    }
+
+    /** 获取当前执行模式（proot 或 chroot），供 UI 显示。 */
+    fun getExecutionMode(context: Context): String {
+        return if (isChrootAvailable(context)) "chroot" else "proot"
+    }
+
+    /**
+     * 探测环境内的 Linux 发行版，并返回对应的包管理器。
+     *
+     * 读取 /etc/os-release（Alpine 是 apk、Ubuntu/Debian 是 apt、Fedora 是 dnf、Arch 是 pacman），
+     * 让上层的「装软件」不必把某个包管理器写死。
+     *
+     * 探测失败时（环境未就绪或 cat 失败）回落 apt —— 它是当前内置 rootfs 的默认值，
+     * 至少不会让调用方拿到 null 而无从下手。
+     */
+    fun detectPackageManager(context: Context): PackageManagerSpec {
+        return runCatching {
+            val (code, out) = run(context, DETECT_DISTRO_CMD, timeoutMs = 10_000L)
+            QuroLinuxDistroDetector.packageManagerFor(if (code == 0) out else null)
+        }.getOrDefault(AptPackageManager)
+    }
+
+    /**
+     * 探测到的发行版（供 UI / 工具展示「当前环境是什么系统」）。
+     */
+    fun detectDistro(context: Context): LinuxDistro {
+        return runCatching {
+            val (code, out) = run(context, DETECT_DISTRO_CMD, timeoutMs = 10_000L)
+            QuroLinuxDistroDetector.detect(if (code == 0) out else null)
+        }.getOrDefault(LinuxDistro.UNKNOWN)
+    }
+
+    /** 带实时日志回调的执行命令。每输出一行就回调一次。 */
+    fun runWithLog(
+        context: Context,
+        command: String,
+        timeoutMs: Long = 30000,
+        onLine: (String) -> Unit = {}
+    ): Pair<Int, String> {
+        return runProotWithLog(context, command, timeoutMs, onLine)
+    }
+
+    /** proot 启动参数与环境（不含最终命令）。一次性执行与常驻进程共用，确保行为一致。 */
+    private data class ProotLaunch(
+        val args: MutableList<String>,
+        val env: MutableMap<String, String>,
+        val workDir: File,
+    )
+
+    /** 构造 proot 启动参数与环境（命令由调用方追加为末参）。 */
+    private fun buildProotLaunch(context: Context): ProotLaunch {
+        val proot = prootPath(context)
+        val rootfs = rootfsPath(context)
+        // 存量环境（rootfs 已装好、不会重跑 install）也要补上内置 proot；
+        // 目标已存在且大小一致时会直接返回，开销仅两次 stat。
+        runCatching { installProotIntoRootfs(context, File(rootfs)) }
+        val home = homePath(context)
+        val tmp = tmpPath(context)
+        val loader = loaderPath(context)
+        val dir = sandboxDir(context)
+        val usrBinDir = File(dir, "usr/bin")
+        val args = mutableListOf(
+            proot,
+            "--rootfs=$rootfs",
+            "--link2symlink",  // 添加 link2symlink 支持（参考上游 proot 实现）
+            "--bind=/dev",
+            "--bind=/dev/urandom:/dev/random",  // 参考 Agora：将 /dev/random 映射到 urandom，避免应用读 /dev/random 阻塞
+            "--bind=/proc",
+            // 显式绑入宿主 /proc/net，修复部分 Android 上 proot 内 /proc/net/dev 为空导致
+            // glibc getifaddrs 读不到网卡 → 默认路由解析失败、connect 报 Network unreachable（用户列的首个缺失项）。
+            "--bind=/proc/net:/proc/net",
+            "--bind=/sys",
+            "--bind=$home:/root",
+            "--bind=$tmp:/tmp",
+            // issue #11 ③：应用私有目录整个绑进沙箱（挂载点 /quro，见 APP_PRIVATE_MOUNT）。
+            // 缺这一条 = 构建台产物 / 工作区数据在容器里完全不可见。
+            "--bind=${context.filesDir.absolutePath}:$APP_PRIVATE_MOUNT",
+        )
+        // 设备共享存储（/sdcard）绑进沙箱，让 Linux 终端能访问 Downloads/DCIM/Documents 等（参考 Agora SharedFolderMounts）。
+        sharedStorageHostDir(context)?.let { args.add("--bind=${it.absolutePath}:$SHARED_STORAGE_MOUNT") }
+        // getprop 垫片可回落读 /system/build.prop，仅当该文件本就可读时绑定（避免整体启动失败）。
+        if (File("/system/build.prop").canRead()) {
+            args.add("--bind=/system/build.prop:/system/build.prop")
+        }
+        args.add("-0")
+        args.add("-w"); args.add("/root")
+        args.add("/bin/sh"); args.add("-c")
+        val env = mutableMapOf(
+            "HOME" to "/root",
+            // 更新 PATH 包含 usr/bin/（bash 和 busybox 所在位置），并补齐
+            // cargo（/var/cargo/bin）与 go（/usr/local/go/bin），否则工具中心-包管理里
+            // go/cargo 相关命令会 Command not found。
+            "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/cargo/bin:/usr/local/go/bin:${usrBinDir.absolutePath}",
+            "TERM" to "xterm-256color",
+            "LANG" to "C.UTF-8",
+            "DEBIAN_FRONTEND" to "noninteractive",
+            "LD_LIBRARY_PATH" to "${dir.absolutePath}:${usrBinDir.absolutePath}",
+            "PROOT_TMP_DIR" to tmp,
+            "PROOT_LOADER" to loader,
+        )
+        val rootfsFile = File(rootfs)
+        return ProotLaunch(args, env, rootfsFile.parentFile ?: rootfsFile)
+    }
+
+    /**
+     * 构建 chroot 启动命令（通过 su 执行）。
+     * chroot 需要先挂载 /dev、/proc、/sys 到 rootfs，然后执行 chroot 命令。
+     *
+     * @return ChrootLaunch 包含完整的 su 命令字符串、环境变量和工作目录
+     */
+    private fun buildChrootLaunch(context: Context): ChrootLaunch {
+        val rootfs = rootfsPath(context)
+        val home = homePath(context)
+        val tmp = tmpPath(context)
+        val dir = sandboxDir(context)
+        val usrBinDir = File(dir, "usr/bin")
+
+        // 构建 chroot 启动脚本
+        // 1. 挂载必要文件系统
+        // 2. 创建临时挂载点（如果需要）
+        // 3. 执行 chroot
+        val mountCommands = buildString {
+            // 挂载 /dev
+            appendLine("mount -o bind /dev $rootfs/dev")
+            // 挂载 /dev/pts（伪终端）
+            appendLine("mkdir -p $rootfs/dev/pts 2>/dev/null || true")
+            appendLine("mount -o bind /dev/pts $rootfs/dev/pts")
+            // 挂载 /proc
+            appendLine("mount -t proc proc $rootfs/proc")
+            // 挂载 /sys
+            appendLine("mount -t sysfs sysfs $rootfs/sys")
+            // 挂载 /tmp（如果不同）
+            if (tmp != "$rootfs/tmp") {
+                appendLine("mkdir -p $rootfs/tmp 2>/dev/null || true")
+                appendLine("mount -o bind $tmp $rootfs/tmp")
+            }
+            // 挂载 home 目录到 /root
+            appendLine("mkdir -p $rootfs/root 2>/dev/null || true")
+            appendLine("mount -o bind $home $rootfs/root")
+            // 挂载设备共享存储（/sdcard）进沙箱，终端可访问 Downloads/DCIM/Documents（参考 Agora SharedFolderMounts）
+            sharedStorageHostDir(context)?.let { ss ->
+                appendLine("mkdir -p $rootfs/sdcard 2>/dev/null || true")
+                appendLine("mount -o bind ${ss.absolutePath} $rootfs/sdcard")
+            }
+            // 挂载 /system/build.prop（如果可读）
+            if (File("/system/build.prop").canRead()) {
+                appendLine("mkdir -p $rootfs/system 2>/dev/null || true")
+                appendLine("mount -o bind /system/build.prop $rootfs/system/build.prop")
+            }
+        }
+
+        // 构建 chroot 命令（进入 rootfs 后执行）
+        val chrootCmd = "chroot $rootfs /bin/sh -c 'cd /root && exec /bin/sh'"
+
+        // 完整的 su 命令：挂载 + chroot
+        val fullScript = buildString {
+            appendLine("#!/system/bin/sh")
+            appendLine("# QuroAI chroot 启动脚本")
+            appendLine(mountCommands)
+            appendLine("# 执行 chroot")
+            appendLine(chrootCmd)
+            // 清理挂载（chroot 退出后）
+            appendLine("# 清理挂载点")
+            appendLine("umount $rootfs/dev/pts 2>/dev/null || true")
+            appendLine("umount $rootfs/dev 2>/dev/null || true")
+            appendLine("umount $rootfs/proc 2>/dev/null || true")
+            appendLine("umount $rootfs/sys 2>/dev/null || true")
+            if (tmp != "$rootfs/tmp") {
+                appendLine("umount $rootfs/tmp 2>/dev/null || true")
+            }
+            appendLine("umount $rootfs/root 2>/dev/null || true")
+            sharedStorageHostDir(context)?.let { appendLine("umount $rootfs/sdcard 2>/dev/null || true") }
+            if (File("/system/build.prop").canRead()) {
+                appendLine("umount $rootfs/system/build.prop 2>/dev/null || true")
+            }
+        }
+
+        // 转义脚本中的特殊字符，用于 su -c
+        val escapedScript = fullScript.replace("'", "'\\''")
+        val suCommand = "su -c '$escapedScript'"
+
+        val env = mutableMapOf(
+            "HOME" to "/root",
+            "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/cargo/bin:/usr/local/go/bin:${usrBinDir.absolutePath}",
+            "TERM" to "xterm-256color",
+            "LANG" to "C.UTF-8",
+            "DEBIAN_FRONTEND" to "noninteractive",
+            "LD_LIBRARY_PATH" to "${dir.absolutePath}:${usrBinDir.absolutePath}",
+        )
+
+        val rootfsFile = File(rootfs)
+        return ChrootLaunch(suCommand, env, rootfsFile.parentFile ?: rootfsFile)
+    }
+
+    /** 内部：构造 proot 参数并执行。添加多种执行策略应对权限问题。 */
+    private fun runProot(context: Context, command: String, timeoutMs: Long): Pair<Int, String> {
+        // 不再依赖 probe() 前置检查 —— probe 的 rootfsBinRunnable 可能在宿主侧误判符号链接。
+        // 直接尝试执行命令，让 proot 自己报错。
+        val rootfs = rootfsPath(context)
+        prepareRuntimeExtras(context, File(rootfs))
+        Log.i(TAG, "runProot 开始执行，超时: ${timeoutMs}ms，命令: ${command.take(100)}...")
+
+        // 根据配置选择 proot 或 chroot
+        if (isChrootAvailable(context)) {
+            Log.i(TAG, "使用 chroot 模式执行命令")
+            return runChroot(context, command, timeoutMs)
+        }
+
+        val launch = buildProotLaunch(context)
+        launch.args.add(command)
+        return try {
+            val pb = ProcessBuilder(launch.args)
+            pb.directory(launch.workDir)
+            pb.environment().putAll(launch.env)
+            pb.redirectErrorStream(true)
+            val before = QuroToolProcesses.snapshotPids()
+            val p = pb.start()
+            // issue #11 问题 8：登记派生进程。用户点「停止生成」/工具超时时，
+            // QuroToolProcesses 会在取消方线程强杀它（destroy + 杀子孙 + SIGKILL），
+            // 让阻塞在 waitFor 的本函数立刻返回 —— 否则取消只能干等命令自己跑完。
+            QuroToolProcesses.register(p)
+            Log.i(TAG, "proot 进程已启动")
+
+            // 关键修复（#911 根因）：必须先 waitFor(timeout) 再读输出。原先 readText() 会阻塞到
+            // 进程退出，导致 timeoutMs 永不触发，hang 住的 bootstrap/provision 让部署永久卡「部署中」。
+            // 改为后台线程读 stdout，主线程 waitFor 超时后强杀进程，读取线程随 stdout 关闭自然结束。
+            val outBuilder = StringBuilder()
+            val reader = p.inputStream.bufferedReader()
+            val readThread = Thread {
+                try { reader.use { r -> r.forEachLine { outBuilder.appendLine(it) } } } catch (_: Throwable) {}
+            }
+            readThread.start()
+            val startTime = System.currentTimeMillis()
+            val finished = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            val duration = System.currentTimeMillis() - startTime
+            val code = if (finished) {
+                p.exitValue()
+            } else {
+                Log.w(TAG, "proot 执行超时(${timeoutMs}ms)，强杀进程")
+                try { p.destroyForcibly() } catch (_: Throwable) {}
+                -1
+            }
+            try { readThread.join(2000) } catch (_: Throwable) {} // 进程已结束/被强杀，stdout 已关闭，回收读取线程
+            // issue #11 问题 9：命令返回后强杀残留后台进程（nohup/setsid … & 脱离 shell 的漏网进程）
+            QuroToolProcesses.reapLeakedSince("proot", before)
+            val trimmed = outBuilder.toString().trim()
+            Log.i(TAG, "proot 执行完成，耗时: ${duration}ms，退出码: $code，输出长度: ${trimmed.length}")
+            if (trimmed.isNotEmpty()) {
+                Log.i(TAG, "proot 输出前500字符: ${trimmed.take(500)}")
+            }
+            code to (if (trimmed.isBlank()) (if (finished) "(no output, exit $code)" else "⏱ 命令超时(${timeoutMs}ms)") else trimmed)
+        } catch (e: Exception) {
+            Log.e(TAG, "proot 执行异常: ${e.message}")
+            -1 to "❌ proot 执行失败: ${e.message}"
+        }
+    }
+
+    /**
+     * 使用 chroot 模式执行命令（通过 su 权限）。
+     * 与 [runProot] 对应，但使用 chroot 而不是 proot。
+     */
+    private fun runChroot(context: Context, command: String, timeoutMs: Long): Pair<Int, String> {
+        Log.i(TAG, "runChroot 开始执行，超时: ${timeoutMs}ms，命令: ${command.take(100)}...")
+
+        val launch = buildChrootLaunch(context)
+        // 将用户命令追加到 chroot 脚本中
+        val escapedCommand = command.replace("'", "'\\''")
+        val rootfsPathStr = rootfsPath(context)
+        val suCommand = launch.suCommand.replace(
+            "chroot $rootfsPathStr /bin/sh -c 'cd /root && exec /bin/sh'",
+            "chroot $rootfsPathStr /bin/sh -c 'cd /root && $escapedCommand'"
+        )
+
+        return try {
+            // 通过 su 执行 chroot 命令
+            val pb = ProcessBuilder("su", "-c", suCommand)
+            pb.directory(launch.workDir)
+            pb.environment().putAll(launch.env)
+            pb.redirectErrorStream(true)
+            val before = QuroToolProcesses.snapshotPids()
+            val p = pb.start()
+            // issue #11 问题 8：登记派生进程。用户点「停止生成」/工具超时时，
+            // QuroToolProcesses 会在取消方线程强杀它（destroy + 杀子孙 + SIGKILL），
+            // 让阻塞在 waitFor 的本函数立刻返回 —— 否则取消只能干等命令自己跑完。
+            QuroToolProcesses.register(p)
+            Log.i(TAG, "chroot 进程已启动（通过 su）")
+
+            val outBuilder = StringBuilder()
+            val reader = p.inputStream.bufferedReader()
+            val readThread = Thread {
+                try { reader.use { r -> r.forEachLine { outBuilder.appendLine(it) } } } catch (_: Throwable) {}
+            }
+            readThread.start()
+            val startTime = System.currentTimeMillis()
+            val finished = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            val duration = System.currentTimeMillis() - startTime
+            val code = if (finished) {
+                p.exitValue()
+            } else {
+                Log.w(TAG, "chroot 执行超时(${timeoutMs}ms)，强杀进程")
+                try { p.destroyForcibly() } catch (_: Throwable) {}
+                -1
+            }
+            try { readThread.join(2000) } catch (_: Throwable) {}
+            // issue #11 问题 9：命令返回后强杀残留后台进程（nohup/setsid … & 脱离 shell 的漏网进程）
+            QuroToolProcesses.reapLeakedSince("chroot", before)
+            val trimmed = outBuilder.toString().trim()
+            Log.i(TAG, "chroot 执行完成，耗时: ${duration}ms，退出码: $code，输出长度: ${trimmed.length}")
+            if (trimmed.isNotEmpty()) {
+                Log.i(TAG, "chroot 输出前500字符: ${trimmed.take(500)}")
+            }
+            code to (if (trimmed.isBlank()) (if (finished) "(no output, exit $code)" else "⏱ 命令超时(${timeoutMs}ms)") else trimmed)
+        } catch (e: Exception) {
+            Log.e(TAG, "chroot 执行异常: ${e.message}")
+            -1 to "❌ chroot 执行失败: ${e.message}"
+        }
+    }
+
+    /**
+     * 启动**常驻** proot 进程（原创运行时 · 修复终端 httpd 被杀）。
+     *
+     * 与 [runProot] 不同：不 waitFor、不超时强杀，直接返回存活的 [Process] 句柄，
+     * 由调用方（[CmsResidentRuntime]）持有并管理生命周期。proot 进程存活期间，
+     * 其内以 `exec` 启动的 server 子进程随之常驻——这正是一次性 [runProot] 做不到的
+     * （一次性 proot 退出后，作为其子进程的 server 因失去 syscall 翻译层而一同被杀）。
+     *
+     * @param command 在 proot 内执行的命令（通常为 `cd <dir> && exec sh ./entry.sh`）。
+     * @param extraEnv 注入到 proot 环境（进而透传给 guest）的额外变量，如 QURO_HTTP_PORT。
+     * @return 已启动的常驻 proot 进程；环境不可用或创建失败返回 null。
+     */
+    fun spawnPersistent(context: Context, command: String, extraEnv: Map<String, String> = emptyMap()): Process? {
+        val st = probe(context)
+        if (!st.available || st.prootPath == null || st.rootfsPath == null) {
+            Log.w(TAG, "spawnPersistent 失败：环境不可用：${st.reason}")
+            return null
+        }
+        prepareRuntimeExtras(context, File(st.rootfsPath))
+
+        // 根据配置选择 proot 或 chroot
+        if (isChrootAvailable(context)) {
+            Log.i(TAG, "使用 chroot 模式启动常驻进程")
+            return spawnPersistentChroot(context, command, extraEnv)
+        }
+
+        val launch = buildProotLaunch(context)
+        launch.args.add(command)
+        launch.env.putAll(extraEnv)
+        return try {
+            val pb = ProcessBuilder(launch.args)
+            pb.directory(launch.workDir)
+            pb.environment().putAll(launch.env)
+            pb.redirectErrorStream(true)
+            val p = pb.start()
+            // issue #11 问题 8：登记派生进程。用户点「停止生成」/工具超时时，
+            // QuroToolProcesses 会在取消方线程强杀它（destroy + 杀子孙 + SIGKILL），
+            // 让阻塞在 waitFor 的本函数立刻返回 —— 否则取消只能干等命令自己跑完。
+            QuroToolProcesses.register(p)
+            Log.i(TAG, "spawnPersistent 常驻 proot 已启动，命令: ${command.take(100)}")
+            p
+        } catch (e: Exception) {
+            Log.e(TAG, "spawnPersistent 创建进程失败: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * 使用 chroot 模式启动常驻进程（通过 su 权限）。
+     * 与 [spawnPersistent] 对应，但使用 chroot 而不是 proot。
+     */
+    private fun spawnPersistentChroot(context: Context, command: String, extraEnv: Map<String, String>): Process? {
+        val launch = buildChrootLaunch(context)
+        // 将用户命令追加到 chroot 脚本中
+        val escapedCommand = command.replace("'", "'\\''")
+        val rootfsPathStr = rootfsPath(context)
+        val suCommand = launch.suCommand.replace(
+            "chroot $rootfsPathStr /bin/sh -c 'cd /root && exec /bin/sh'",
+            "chroot $rootfsPathStr /bin/sh -c 'cd /root && $escapedCommand'"
+        )
+
+        launch.env.putAll(extraEnv)
+        return try {
+            val pb = ProcessBuilder("su", "-c", suCommand)
+            pb.directory(launch.workDir)
+            pb.environment().putAll(launch.env)
+            pb.redirectErrorStream(true)
+            val p = pb.start()
+            // issue #11 问题 8：登记派生进程。用户点「停止生成」/工具超时时，
+            // QuroToolProcesses 会在取消方线程强杀它（destroy + 杀子孙 + SIGKILL），
+            // 让阻塞在 waitFor 的本函数立刻返回 —— 否则取消只能干等命令自己跑完。
+            QuroToolProcesses.register(p)
+            Log.i(TAG, "spawnPersistent 常驻 chroot 已启动（通过 su），命令: ${command.take(100)}")
+            p
+        } catch (e: Exception) {
+            Log.e(TAG, "spawnPersistent chroot 创建进程失败: ${e.message}")
+            null
+        }
+    }
+
+    /** 带实时日志回调的 proot 执行。每输出一行就回调一次。 */
+    private fun runProotWithLog(
+        context: Context,
+        command: String,
+        timeoutMs: Long,
+        onLine: (String) -> Unit
+    ): Pair<Int, String> {
+        val proot = prootPath(context)
+        val rootfs = rootfsPath(context)
+        val home = homePath(context)
+        val tmp = tmpPath(context)
+        val loader = loaderPath(context)
+        val dir = sandboxDir(context)
+        
+        Log.i(TAG, "runProotWithLog 开始执行，超时: ${timeoutMs}ms")
+        
+        prepareRuntimeExtras(context, File(rootfs))
+
+        // 根据配置选择 proot 或 chroot
+        if (isChrootAvailable(context)) {
+            Log.i(TAG, "使用 chroot 模式执行命令（带日志回调）")
+            return runChrootWithLog(context, command, timeoutMs, onLine)
+        }
+
+        return try {
+            val args = mutableListOf(
+                proot,
+                "--rootfs=$rootfs",
+                "--bind=/dev",
+                "--bind=/dev/urandom:/dev/random",  // 参考 Agora：/dev/random → urandom
+                "--bind=/proc",
+                "--bind=/sys",
+                "--bind=$home:/root",
+                "--bind=$tmp:/tmp",
+            )
+            sharedStorageHostDir(context)?.let { args.add("--bind=${it.absolutePath}:$SHARED_STORAGE_MOUNT") }
+            // issue #11 ③：应用私有目录绑进沙箱（挂载点见 APP_PRIVATE_MOUNT 的边界说明）
+            args.add("--bind=${context.filesDir.absolutePath}:$APP_PRIVATE_MOUNT")
+            if (File("/system/build.prop").canRead()) {
+                args.add("--bind=/system/build.prop:/system/build.prop")
+            }
+            args.add("-0")
+            args.add("-w"); args.add("/root")
+            args.add("/bin/sh"); args.add("-c"); args.add(command)
+            val pb = ProcessBuilder(args)
+            pb.directory(File(rootfs).parentFile)
+            pb.environment().apply {
+                put("HOME", "/root")
+                put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+                put("TERM", "xterm-256color")
+                put("LANG", "C.UTF-8")
+                put("LD_LIBRARY_PATH", dir.absolutePath)
+                put("PROOT_TMP_DIR", tmp)
+                put("PROOT_LOADER", loader)
+            }
+            pb.redirectErrorStream(true)
+            val before = QuroToolProcesses.snapshotPids()
+            val p = pb.start()
+            // issue #11 问题 8：登记派生进程。用户点「停止生成」/工具超时时，
+            // QuroToolProcesses 会在取消方线程强杀它（destroy + 杀子孙 + SIGKILL），
+            // 让阻塞在 waitFor 的本函数立刻返回 —— 否则取消只能干等命令自己跑完。
+            QuroToolProcesses.register(p)
+
+            val outBuilder = StringBuilder()
+            val reader = p.inputStream.bufferedReader()
+            // 实时读取并回调每一行
+            val readThread = Thread {
+                try {
+                    reader.use { r ->
+                        r.forEachLine { line ->
+                            outBuilder.appendLine(line)
+                            onLine(line)
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
+            readThread.start()
+            val startTime = System.currentTimeMillis()
+            val finished = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            val duration = System.currentTimeMillis() - startTime
+            val code = if (finished) {
+                p.exitValue()
+            } else {
+                Log.w(TAG, "proot 执行超时(${timeoutMs}ms)，强杀进程")
+                try { p.destroyForcibly() } catch (_: Throwable) {}
+                -1
+            }
+            try { readThread.join(2000) } catch (_: Throwable) {}
+            // issue #11 问题 9：命令返回后强杀残留后台进程（nohup/setsid … & 脱离 shell 的漏网进程）
+            QuroToolProcesses.reapLeakedSince("proot", before)
+            val trimmed = outBuilder.toString().trim()
+            Log.i(TAG, "runProotWithLog 执行完成，耗时: ${duration}ms，退出码: $code")
+            code to (if (trimmed.isBlank()) (if (finished) "(no output)" else "⏱ 超时") else trimmed)
+        } catch (e: Exception) {
+            Log.e(TAG, "proot 执行异常: ${e.message}")
+            -1 to "❌ 执行失败: ${e.message}"
+        }
+    }
+
+    /**
+     * 使用 chroot 模式执行命令（带实时日志回调，通过 su 权限）。
+     * 与 [runProotWithLog] 对应，但使用 chroot 而不是 proot。
+     */
+    private fun runChrootWithLog(
+        context: Context,
+        command: String,
+        timeoutMs: Long,
+        onLine: (String) -> Unit
+    ): Pair<Int, String> {
+        Log.i(TAG, "runChrootWithLog 开始执行，超时: ${timeoutMs}ms，命令: ${command.take(100)}...")
+
+        val launch = buildChrootLaunch(context)
+        // 将用户命令追加到 chroot 脚本中
+        val escapedCommand = command.replace("'", "'\\''")
+        val rootfsPathStr = rootfsPath(context)
+        val suCommand = launch.suCommand.replace(
+            "chroot $rootfsPathStr /bin/sh -c 'cd /root && exec /bin/sh'",
+            "chroot $rootfsPathStr /bin/sh -c 'cd /root && $escapedCommand'"
+        )
+
+        return try {
+            // 通过 su 执行 chroot 命令
+            val pb = ProcessBuilder("su", "-c", suCommand)
+            pb.directory(launch.workDir)
+            pb.environment().putAll(launch.env)
+            pb.redirectErrorStream(true)
+            val before = QuroToolProcesses.snapshotPids()
+            val p = pb.start()
+            // issue #11 问题 8：登记派生进程。用户点「停止生成」/工具超时时，
+            // QuroToolProcesses 会在取消方线程强杀它（destroy + 杀子孙 + SIGKILL），
+            // 让阻塞在 waitFor 的本函数立刻返回 —— 否则取消只能干等命令自己跑完。
+            QuroToolProcesses.register(p)
+            Log.i(TAG, "chroot 进程已启动（通过 su，带日志回调）")
+
+            val outBuilder = StringBuilder()
+            val reader = p.inputStream.bufferedReader()
+            // 实时读取并回调每一行
+            val readThread = Thread {
+                try {
+                    reader.use { r ->
+                        r.forEachLine { line ->
+                            outBuilder.appendLine(line)
+                            onLine(line)
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
+            readThread.start()
+            val startTime = System.currentTimeMillis()
+            val finished = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            val duration = System.currentTimeMillis() - startTime
+            val code = if (finished) {
+                p.exitValue()
+            } else {
+                Log.w(TAG, "chroot 执行超时(${timeoutMs}ms)，强杀进程")
+                try { p.destroyForcibly() } catch (_: Throwable) {}
+                -1
+            }
+            try { readThread.join(2000) } catch (_: Throwable) {}
+            // issue #11 问题 9：命令返回后强杀残留后台进程（nohup/setsid … & 脱离 shell 的漏网进程）
+            QuroToolProcesses.reapLeakedSince("chroot", before)
+            val trimmed = outBuilder.toString().trim()
+            Log.i(TAG, "runChrootWithLog 执行完成，耗时: ${duration}ms，退出码: $code")
+            code to (if (trimmed.isBlank()) (if (finished) "(no output)" else "⏱ 超时") else trimmed)
+        } catch (e: Exception) {
+            Log.e(TAG, "chroot 执行异常: ${e.message}")
+            -1 to "❌ chroot 执行失败: ${e.message}"
+        }
+    }
+
+    /** 策略1：直接执行 proot */
+    /**
+     * 交互终端启动参数：(proot 路径, 参数列表)。环境未安装返回 null。
+     * 注意：PROOT_LOADER / LD_LIBRARY_PATH 等环境变量由 [shellEnv] 提供，
+     * 调用方（QuroShellSession）须将其并入 shell 进程环境。
+     */
+    fun shellLaunch(context: Context): Pair<String, List<String>>? {
+        // ★ 与一次性执行 [run] 完全一致的策略：直接构造 proot 参数，不预先用 probe 判定「不可用」。
+        // [run] 从不调用 probe、直接 launch proot 并让 proot 自身报错；本函数此前用 [probeLenient] 预判，
+        // 在 rootfs 安装中（目录瞬时为空）/ 部分 ROM 的 SELinux 限制下会误判为不可用并返回 null，
+        // 导致 UI 终端静默回退 /system/bin/sh（Toybox 基础命令），而 AI 的 run() 因绕过 probe 正常启动 proot ——
+        // 这正是「AI 终端正常、UI 终端只能基础命令」的真机根因。去掉预判后，UI 与 AI 的启动行为完全一致。
+        val prootPathStr = prootPath(context)
+        val proot = File(prootPathStr)
+        if (!proot.exists()) {
+            Log.w(TAG, "shellLaunch: proot 二进制缺失，返回 null（调用方回退设备 sh）")
+            return null
+        }
+        val rootfs = File(rootfsPath(context))
+        if (!rootfs.isDirectory) {
+            Log.w(TAG, "shellLaunch: rootfs 目录缺失，返回 null（调用方回退设备 sh）")
+            return null
+        }
+        val st = EnvStatus(true, proot.absolutePath, rootfs.absolutePath, "环境就绪")
+        // 运行期资产（resolv.conf 用设备 DNS / getprop 垫片）随网络与设备状态刷新，
+        // 避免安装时一次性快照过期（如换了 WiFi、或升级后属性变化）。
+        prepareRuntimeExtras(context, rootfs)
+        val dir = sandboxDir(context)
+        val usrBinDir = File(dir, "usr/bin")
+
+        // 根据配置选择 proot 或 chroot
+        if (isChrootAvailable(context)) {
+            Log.i(TAG, "使用 chroot 模式启动交互终端")
+            // chroot 模式：通过 su 执行 chroot 命令
+            // 返回 su 和 -c 作为命令，后面追加 chroot 脚本
+            val rootfsPath = st.rootfsPath
+            val home = homePath(context)
+            val tmp = tmpPath(context)
+
+            // 构建 chroot 启动脚本
+            val mountCommands = buildString {
+                appendLine("mount -o bind /dev $rootfsPath/dev")
+                appendLine("mkdir -p $rootfsPath/dev/pts 2>/dev/null || true")
+                appendLine("mount -o bind /dev/pts $rootfsPath/dev/pts")
+                appendLine("mount -t proc proc $rootfsPath/proc")
+                appendLine("mount -t sysfs sysfs $rootfsPath/sys")
+                if (tmp != "$rootfsPath/tmp") {
+                    appendLine("mkdir -p $rootfsPath/tmp 2>/dev/null || true")
+                    appendLine("mount -o bind $tmp $rootfsPath/tmp")
+                }
+                appendLine("mkdir -p $rootfsPath/root 2>/dev/null || true")
+                appendLine("mount -o bind $home $rootfsPath/root")
+                if (File("/system/build.prop").canRead()) {
+                    appendLine("mkdir -p $rootfsPath/system 2>/dev/null || true")
+                    appendLine("mount -o bind /system/build.prop $rootfsPath/system/build.prop")
+                }
+                // 设备共享存储（/sdcard）绑进沙箱，终端可访问 Downloads/DCIM/Documents（参考 Agora）。
+                val ss = android.os.Environment.getExternalStorageDirectory()
+                if (ss != null && ss.canRead()) {
+                    appendLine("mkdir -p $rootfsPath/sdcard 2>/dev/null || true")
+                    appendLine("mount -o bind ${ss.absolutePath} $rootfsPath/sdcard")
+                }
+                // 应用私有目录绑进沙箱（issue #11 ③，与 proot 路径的 /quro 对齐）。
+                appendLine("mkdir -p $rootfsPath${APP_PRIVATE_MOUNT} 2>/dev/null || true")
+                appendLine("mount -o bind ${context.filesDir.absolutePath} $rootfsPath${APP_PRIVATE_MOUNT}")
+            }
+
+            val chrootCmd = "chroot $rootfsPath /bin/sh -c 'cd /root && exec /bin/sh'"
+
+            val fullScript = buildString {
+                appendLine("#!/system/bin/sh")
+                appendLine("# QuroAI chroot 交互终端启动脚本")
+                appendLine(mountCommands)
+                appendLine("# 执行 chroot")
+                appendLine(chrootCmd)
+                // 注意：交互终端不清理挂载，由用户退出时清理
+            }
+
+            val escapedScript = fullScript.replace("'", "'\\''")
+            val suCommand = "su -c '$escapedScript'"
+
+            // 返回 su 和 -c 以及脚本内容
+            return "su" to listOf("-c", escapedScript)
+        }
+
+        val args = mutableListOf(
+            "--rootfs=${st.rootfsPath}",
+            "--link2symlink",  // 添加 link2symlink 支持（参考上游 proot 实现）
+            "--bind=/dev",
+            "--bind=/dev/urandom:/dev/random",  // 参考 Agora：/dev/random → urandom
+
+            "--bind=/proc",
+            // 显式绑入宿主 /proc/net，修复交互式终端内 /proc/net/dev 为空导致 glibc 默认路由解析失败、
+            // apt-get / pip / npm 联网报 Network unreachable（与 AI 一次性执行路径 buildProotLaunch 对齐）。
+            "--bind=/proc/net:/proc/net",
+            "--bind=/sys",
+            "--bind=${homePath(context)}:/root",
+            "--bind=${tmpPath(context)}:/tmp",
+        )
+        // 设备共享存储（/sdcard）绑进沙箱，让终端能访问 Downloads/DCIM/Documents 等（参考 Agora SharedFolderMounts）。
+        sharedStorageHostDir(context)?.let { args.add("--bind=${it.absolutePath}:$SHARED_STORAGE_MOUNT") }
+        // issue #11 ③：应用私有目录（filesDir）绑进沙箱，容器内可见为 /quro。
+        // 缺这一条 = 构建台产物 / 工作区数据在容器里一律「不存在」（ls/cat 全落空）。
+        args.add("--bind=${context.filesDir.absolutePath}:$APP_PRIVATE_MOUNT")
+        args.add("-0")
+        args.add("-w"); args.add("/root")
+        args.add("/bin/sh")
+        // getprop 垫片可回落读 /system/build.prop，故把宿主真机 build.prop 只读绑进沙箱
+        // （仅当该文件本就可读，避免 proot 因源不存在而整体启动失败）。
+        if (File("/system/build.prop").canRead()) {
+            args.add("--bind=/system/build.prop:/system/build.prop")
+        }
+        return prootPathStr to args
+    }
+
+    /** 交互 shell 进程应注入的环境变量（PROOT_LOADER / LD_LIBRARY_PATH 等）。 */
+    fun shellEnv(context: Context): Array<String> {
+        val dir = sandboxDir(context)
+        val usrBinDir = File(dir, "usr/bin")
+
+        // chroot 模式不需要 PROOT 相关变量
+        if (isChrootAvailable(context)) {
+            return arrayOf(
+                "TERM=xterm-256color",
+                "HOME=/root",
+                "TMPDIR=${tmpPath(context)}",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/cargo/bin:/usr/local/go/bin:${usrBinDir.absolutePath}",
+                "LANG=C.UTF-8",
+                "DEBIAN_FRONTEND=noninteractive",
+                "LD_LIBRARY_PATH=${dir.absolutePath}:${usrBinDir.absolutePath}",
+            )
+        }
+
+        return arrayOf(
+            "TERM=xterm-256color",
+            "HOME=/root",
+            "TMPDIR=${tmpPath(context)}",
+            // 更新 PATH 包含 usr/bin/（bash 和 busybox 所在位置），并补齐 cargo/go 工具链
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/var/cargo/bin:/usr/local/go/bin:${usrBinDir.absolutePath}",
+            "LANG=C.UTF-8",
+            "DEBIAN_FRONTEND=noninteractive",
+            "LD_LIBRARY_PATH=${dir.absolutePath}:${usrBinDir.absolutePath}",
+            "PROOT_TMP_DIR=${tmpPath(context)}",
+            "PROOT_LOADER=${loaderPath(context)}",
+        )
+    }
+
+    // ----------------------------------------------------------------
+    // rootfs 下载（HttpURLConnection，避免引入 ktor 依赖）
+    // ----------------------------------------------------------------
+
+    private fun downloadRootfs(context: Context, arch: String, target: File, onProgress: (Float) -> Unit) {
+        // 纯网络下载模式 - 不再从assets读取rootfs
+        Log.i(TAG, "开始网络下载rootfs (gz格式)")
+        val ubuntuArch = when (arch) {
+            "aarch64" -> "arm64"
+            "armhf" -> "armhf"
+            "x86_64" -> "amd64"
+            "x86" -> "i386"
+            else -> "arm64"
+        }
+
+        // 候选文件名：先按 UBUNTU_VERSION 精确拼，再动态解析上游最新点发布（如 24.04.3）。
+        // 上游常把目录从 24.04 推进到 24.04.x，写死版本会永远 404、终端永远进不了 Ubuntu。
+        // （实测 2026-08：UBUNTU_VERSION=24.04.4 时上游目录仅有 24.04.3，全镜像 404。）
+        val candidateFileNames = linkedSetOf<String>().apply {
+            add("ubuntu-base-${UBUNTU_VERSION}-base-${ubuntuArch}.tar.gz")
+            resolveLatestRootfsFileName(ubuntuArch)?.let { add(it) }
+        }
+
+        // 每个镜像 × 候选文件名 生成 URL（精确版本优先，其次最新点发布）。
+        val urls = UBUNTU_ROOTFS_MIRRORS.flatMap { base -> candidateFileNames.map { "$base/$it" } }
+        Log.i(TAG, "rootfs 候选 URL(${urls.size}): ${urls.joinToString(" | ")}")
+
+        // 校验（P2 校验）：已存在且完整性通过（gzip 魔数 + SHA-256 sidecar 匹配）→ 跳过下载复用；
+        // 损坏（被代理/错误页替换、或磁盘写入残缺）→ 清理后重下，避免静默产出破 rootfs（「命令不可达 Ubuntu」）。
+        if (verifyDownloadedRootfs(context, target)) {
+            Log.i(TAG, "发现已存在且校验通过的 rootfs: ${target.absolutePath}, 大小: ${target.length() / 1024}KB, 跳过下载")
+            onProgress(1f)
+            return
+        }
+
+        // 清理不完整/损坏的下载
+        if (target.exists()) {
+            Log.i(TAG, "清理不完整/损坏的下载文件: ${target.absolutePath}, 大小: ${target.length()}")
+            target.delete()
+        }
+
+        var lastErr: Exception? = null
+        for ((i, url) in urls.withIndex()) {
+            try {
+                Log.i(TAG, "尝试镜像 ${i + 1}/${urls.size}: $url")
+                downloadFrom(url, target, onProgress)
+                // 验证刚下载的文件：gzip 魔数 + 写入 SHA-256 sidecar
+                if (target.exists() && target.length() > 10 * 1024 * 1024) {
+                    if (!isGzipFile(target)) {
+                        throw java.io.IOException("下载内容非 gzip（疑似被代理/错误页替换），拒绝使用")
+                    }
+                    val sha = sha256Hex(target)
+                        ?: throw java.io.IOException("rootfs 校验和计算失败")
+                    rootfsShaFile(context).writeText(sha)
+                    Log.i(TAG, "✅ rootfs下载+校验成功: ${target.absolutePath}, 大小: ${target.length() / 1024}KB, sha256=$sha")
+                    return
+                } else {
+                    val size = if (target.exists()) target.length() else 0
+                    throw java.io.IOException("下载的文件太小: ${size}bytes (期望 >10MB)")
+                }
+            } catch (e: Exception) {
+                lastErr = e
+                Log.e(TAG, "❌ 镜像下载失败: $url, 错误: ${e.message}")
+                if (target.exists()) target.delete()
+                if (i < urls.lastIndex) onProgress(0f)
+            }
+        }
+        throw java.io.IOException("所有 Ubuntu 镜像下载失败: ${lastErr?.message}")
+    }
+
+    /**
+     * 计算文件 SHA-256（十六进制小写）；失败返回 null。
+     * 分块流式读取，避免 ~30MB tarball 一次性读入内存。
+     */
+    private fun sha256Hex(file: File): String? = runCatching {
+        val md = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).buffered(64 * 1024).use { `in` ->
+            val buf = ByteArray(64 * 1024)
+            var n: Int
+            while (`in`.read(buf).also { n = it } != -1) md.update(buf, 0, n)
+        }
+        md.digest().joinToString("") { "%02x".format(it) }
+    }.getOrNull()
+
+    /** 文件是否以 gzip 魔数 (0x1f 0x8b) 开头（用于识别「下载内容被代理/错误页替换」）。 */
+    private fun isGzipFile(file: File): Boolean = runCatching {
+        FileInputStream(file).buffered().use { it.read() == 0x1f && it.read() == 0x8b }
+    }.getOrDefault(false)
+
+    /** rootfs tarball 的 SHA-256 校验和 sidecar 路径。 */
+    private fun rootfsShaFile(context: Context) = File(sandboxDir(context), "rootfs.tar.gz.sha256")
+
+    /**
+     * 校验已下载 rootfs tarball 完整性（P2 校验）。
+     *
+     * 判定：
+     *  - 文件不存在 / 小于 10MB → false（需下载）；
+     *  - gzip 魔数缺失 → 内容疑似被代理/错误页替换 → false（需重下）；
+     *  - 有 sidecar 且 SHA-256 不匹配 → 损坏（磁盘写入残缺/被篡改）→ false（需重下）；
+     *  - 无 sidecar（旧安装/首次）→ 计算并写入（信任当前文件，向后兼容），返回 true；
+     *  - 有 sidecar 且匹配 → true。
+     *
+     * 关键：只有「检测到损坏」才触发重下，绝不强迫重下一个本来完好的安装。
+     */
+    private fun verifyDownloadedRootfs(context: Context, file: File): Boolean {
+        if (!file.exists() || file.length() < 10 * 1024 * 1024) return false
+        if (!isGzipFile(file)) {
+            Log.w(TAG, "rootfs 非 gzip（疑似损坏/被代理替换），需重下")
+            return false
+        }
+        val shaFile = rootfsShaFile(context)
+        val actual = sha256Hex(file) ?: return false
+        if (!shaFile.exists()) {
+            shaFile.writeText(actual)
+            Log.i(TAG, "rootfs 校验和 sidecar 已写入（向后兼容旧安装）: $actual")
+            return true
+        }
+        val expected = shaFile.readText().trim()
+        if (expected.equals(actual, ignoreCase = true)) {
+            Log.i(TAG, "rootfs 完整性校验通过")
+            return true
+        }
+        Log.w(TAG, "rootfs 校验和不匹配（损坏），需重下: expected=$expected actual=$actual")
+        return false
+    }
+
+    /**
+     * 从镜像目录索引动态解析最新的 Ubuntu Base 点发布文件名（如 24.04.3）。
+     * 避免上游把目录从 24.04 推进到 24.04.x 后硬编码版本永远 404、终端永远进不了 Ubuntu。
+     */
+    private fun resolveLatestRootfsFileName(ubuntuArch: String): String? {
+        val versionRegex = Regex("ubuntu-base-(\\d+\\.\\d+\\.\\d+)-base-${Regex.escape(ubuntuArch)}\\.tar\\.gz")
+        for (base in UBUNTU_ROOTFS_MIRRORS) {
+            try {
+                val conn = URL("$base/").openConnection() as HttpURLConnection
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 15_000
+                conn.requestMethod = "GET"
+                if (conn.responseCode in 200..299) {
+                    val html = conn.inputStream.bufferedReader().readText()
+                    val latest = versionRegex.findAll(html)
+                        .map { it.groupValues[1] }
+                        .distinct()
+                        // 版本分量补零到 4 位再字典序比较，保证 24.04.10 > 24.04.3 也正确
+                        .maxWithOrNull(compareBy { v -> v.split('.').joinToString(".") { it.padStart(4, '0') } })
+                    if (latest != null) {
+                        Log.i(TAG, "动态解析到最新 rootfs 点发布: ubuntu-base-$latest-base-$ubuntuArch.tar.gz")
+                        conn.disconnect()
+                        return "ubuntu-base-$latest-base-$ubuntuArch.tar.gz"
+                    }
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "解析目录索引失败: $base, ${e.message}")
+            }
+        }
+        return null
+    }
+
+    private fun downloadFrom(url: String, target: File, onProgress: (Float) -> Unit) {
+        Log.i(TAG, "开始下载: $url, 目标文件: ${target.absolutePath}")
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 30_000
+        conn.readTimeout = 120_000
+        conn.requestMethod = "GET"
+        conn.setRequestProperty("User-Agent", "QuroLinuxEnv/1.0")
+        try {
+            Log.i(TAG, "连接建立中...")
+            val responseCode = conn.responseCode
+            Log.i(TAG, "HTTP响应码: $responseCode")
+            if (responseCode !in 200..299) {
+                val errorBody = try { conn.errorStream?.bufferedReader()?.readText()?.take(500) } catch (_: Throwable) { "" }
+                throw java.io.IOException("HTTP $responseCode from $url\n$errorBody")
+            }
+            val total = conn.contentLengthLong
+            val contentType = conn.contentType
+            Log.i(TAG, "Content-Length: $total, Content-Type: $contentType")
+            val startTime = System.currentTimeMillis()
+            var lastLogTime = startTime
+            conn.inputStream.buffered().use { input ->
+                FileOutputStream(target).use { out ->
+                    val buf = ByteArray(BUFFER_SIZE)
+                    var downloaded = 0L
+                    var read: Int
+                    while (input.read(buf).also { read = it } != -1) {
+                        out.write(buf, 0, read)
+                        downloaded += read
+                        val now = System.currentTimeMillis()
+                        // 每2秒或有Content-Length时每5%打一次日志
+                        if (now - lastLogTime > 2000) {
+                            val elapsed = (now - startTime) / 1000.0
+                            val speed = if (elapsed > 0) downloaded / elapsed / 1024 else 0.0
+                            if (total > 0) {
+                                val pct = downloaded * 100f / total
+                                Log.i(TAG, "下载进度: ${downloaded}/${total} (${pct.toInt()}%) 速度: ${"%.1f".format(speed)} KB/s")
+                                onProgress(downloaded.toFloat() / total)
+                            } else {
+                                Log.i(TAG, "已下载: ${downloaded / 1024}KB 速度: ${"%.1f".format(speed)} KB/s")
+                                // 未知大小时模拟进度：基于已下载量估算，100MB为参考
+                                val estimatedProgress = (downloaded.toFloat() / (100 * 1024 * 1024)).coerceAtMost(0.95f)
+                                onProgress(estimatedProgress)
+                            }
+                            lastLogTime = now
+                        }
+                    }
+                    // 最终进度
+                    val finalSize = target.length()
+                    Log.i(TAG, "下载完成: 文件大小=${finalSize / 1024}KB, 耗时=${(System.currentTimeMillis() - startTime) / 1000}秒")
+                    onProgress(1f)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "下载失败: $url, 错误: ${e.message}")
+            throw e
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // tar.gz 解压（移植 Kai 的 RootfsDownloader，含软链/硬链/越权防护）
+    // ----------------------------------------------------------------
+
+    private const val TAR_BLOCK_SIZE = 512
+    private const val TAR_NAME_OFFSET = 0
+    private const val TAR_MODE_OFFSET = 100
+    private const val TAR_SIZE_OFFSET = 124
+    private const val TAR_TYPE_OFFSET = 156
+    private const val TAR_LINK_OFFSET = 157
+    private const val TAR_PREFIX_OFFSET = 345
+
+    private fun extractTarGz(tarGz: File, target: File) {
+        target.mkdirs()
+        Log.d(TAG, "extractTarGz: 开始解压rootfs文件: ${tarGz.name}")
+        
+        // 检查文件格式
+        val fileName = tarGz.name.lowercase()
+        when {
+            fileName.endsWith(".tar.xz") -> {
+                Log.d(TAG, "extractTarGz: 检测到xz格式，使用busybox tar解压")
+                extractXzTar(tarGz, target)
+            }
+            fileName.endsWith(".tar.gz") || fileName.endsWith(".tgz") -> {
+                Log.d(TAG, "extractTarGz: 检测到gzip格式，使用Java GZIPInputStream解压")
+                extractGzTar(tarGz, target)
+            }
+            else -> {
+                Log.d(TAG, "extractTarGz: 未知格式，尝试gzip解压")
+                extractGzTar(tarGz, target)
+            }
+        }
+    }
+    
+    private fun extractGzTar(tarGz: File, target: File) {
+        try {
+            GZIPInputStream(BufferedInputStream(FileInputStream(tarGz))).use { gzip ->
+                extractTar(gzip, target)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "extractGzTar: Java gzip解压失败: ${e.message}")
+            throw e
+        }
+    }
+    
+    private fun extractXzTar(xzFile: File, target: File) {
+        Log.i(TAG, "extractXzTar: 开始解压xz文件: ${xzFile.absolutePath}")
+        target.mkdirs()
+
+        // 检查文件是否存在且有效
+        if (!xzFile.exists() || xzFile.length() == 0L) {
+            throw java.io.IOException("xz文件不存在或为空: ${xzFile.absolutePath}")
+        }
+
+        // 检查可用的解压命令
+        val hasTar = checkCommandExists("tar")
+        val hasBusybox = checkCommandExists("busybox")
+        val hasXz = checkCommandExists("xz")
+
+        Log.i(TAG, "extractXzTar: 可用命令 - tar=$hasTar, busybox=$hasBusybox, xz=$hasXz")
+
+        // 策略1：直接使用tar命令（如果可用）
+        if (hasTar) {
+            val cmd = "tar xf '${xzFile.absolutePath}' -C '${target.absolutePath}'"
+            Log.i(TAG, "extractXzTar: 尝试tar命令: $cmd")
+            if (execCommand(cmd)) {
+                Log.i(TAG, "extractXzTar: tar命令解压成功")
+                return
+            }
+            Log.w(TAG, "extractXzTar: tar命令解压失败")
+        }
+
+        // 策略2：使用busybox tar（如果可用）
+        if (hasBusybox) {
+            val cmd = "busybox tar xf '${xzFile.absolutePath}' -C '${target.absolutePath}'"
+            Log.i(TAG, "extractXzTar: 尝试busybox tar命令: $cmd")
+            if (execCommand(cmd)) {
+                Log.i(TAG, "extractXzTar: busybox tar命令解压成功")
+                return
+            }
+            Log.w(TAG, "extractXzTar: busybox tar命令解压失败")
+        }
+
+        // 策略3：先用xz解压，再用tar解压（如果xz可用）
+        if (hasXz) {
+            val decompressed = File(xzFile.parent, "${xzFile.nameWithoutExtension}")
+            val xzCmd = "xz -dk '${xzFile.absolutePath}'"
+            Log.i(TAG, "extractXzTar: 尝试xz解压: $xzCmd")
+            if (execCommand(xzCmd) && decompressed.exists()) {
+                val tarCmd = "tar xf '${decompressed.absolutePath}' -C '${target.absolutePath}'"
+                Log.i(TAG, "extractXzTar: 尝试tar解压: $tarCmd")
+                if (execCommand(tarCmd)) {
+                    decompressed.delete()
+                    Log.i(TAG, "extractXzTar: xz+tar解压成功")
+                    return
+                }
+                decompressed.delete()
+            }
+            Log.w(TAG, "extractXzTar: xz+tar解压失败")
+        }
+
+        // 策略4：使用Java内置方式解压（最可靠但最慢）
+        Log.i(TAG, "extractXzTar: 尝试Java内置解压方式")
+        try {
+            extractXzWithJava(xzFile, target)
+            Log.i(TAG, "extractXzTar: Java内置解压成功")
+            return
+        } catch (e: Exception) {
+            Log.e(TAG, "extractXzTar: Java内置解压失败: ${e.message}")
+        }
+
+        // 所有策略都失败
+        throw java.io.IOException(
+            "所有xz解压策略都失败。" +
+            "可用命令: tar=$hasTar, busybox=$hasBusybox, xz=$hasXz。" +
+            "请确保设备上有可用的解压工具。"
+        )
+    }
+
+    /** 检查系统命令是否存在 */
+    private fun checkCommandExists(command: String): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("which", command))
+            val exitCode = process.waitFor()
+            exitCode == 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 执行shell命令并返回是否成功 */
+    private fun execCommand(cmd: String): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+            val exitCode = process.waitFor()
+            if (exitCode != 0) {
+                val error = process.errorStream.bufferedReader().readText()
+                Log.w(TAG, "execCommand失败: exitCode=$exitCode, error=${error.take(500)}")
+            }
+            exitCode == 0
+        } catch (e: Exception) {
+            Log.w(TAG, "execCommand异常: ${e.message}")
+            false
+        }
+    }
+
+    /** 使用Java内置方式解压xz文件 */
+    private fun extractXzWithJava(xzFile: File, target: File) {
+        // Java没有内置xz支持，需要使用系统命令
+        // 尝试多种命令组合
+        val commands = listOf(
+            // 策略1：直接用tar（现代tar支持xz）
+            arrayOf("tar", "xf", xzFile.absolutePath, "-C", target.absolutePath),
+            // 策略2：用sh -c调用tar
+            arrayOf("sh", "-c", "tar xf '${xzFile.absolutePath}' -C '${target.absolutePath}'"),
+            // 策略3：尝试先xz解压再tar（如果xz命令可用）
+            arrayOf("sh", "-c", "xz -dk '${xzFile.absolutePath}' && tar xf '${xzFile.absolutePath}' -C '${target.absolutePath}'"),
+        )
+
+        for (cmd in commands) {
+            try {
+                Log.i(TAG, "extractXzWithJava: 尝试命令: ${cmd.joinToString(" ")}")
+                val pb = ProcessBuilder(*cmd)
+                pb.redirectErrorStream(true)
+                val process = pb.start()
+                val output = process.inputStream.bufferedReader().readText()
+                val exitCode = process.waitFor()
+                if (exitCode == 0) {
+                    Log.i(TAG, "extractXzWithJava: 命令成功")
+                    return
+                } else {
+                    Log.w(TAG, "extractXzWithJava: 命令失败(exit $exitCode): ${output.take(200)}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "extractXzWithJava: 命令执行异常: ${e.message}")
+            }
+        }
+
+        throw java.io.IOException(
+            "xz解压失败：系统没有可用的tar/xz命令。" +
+            "建议使用gz格式的rootfs文件。"
+        )
+    }
+
+    private fun extractTar(input: java.io.InputStream, targetDir: File) {
+        val header = ByteArray(TAR_BLOCK_SIZE)
+        val data = ByteArray(BUFFER_SIZE)
+        while (true) {
+            if (readFully(input, header) < TAR_BLOCK_SIZE) break
+            val name = readTarString(header, TAR_NAME_OFFSET, 100)
+            if (name.isEmpty()) break
+            val prefix = readTarString(header, TAR_PREFIX_OFFSET, 155)
+            val fullName = if (prefix.isNotEmpty()) "$prefix/$name" else name
+            val sizeStr = readTarString(header, TAR_SIZE_OFFSET, 12)
+            val size = if (sizeStr.isNotEmpty()) sizeStr.toLong(8) else 0L
+            val modeStr = readTarString(header, TAR_MODE_OFFSET, 8)
+            val mode = if (modeStr.isNotEmpty()) modeStr.toInt(8) else 0
+            val typeFlag = header[TAR_TYPE_OFFSET]
+            val linkName = readTarString(header, TAR_LINK_OFFSET, 100)
+            val outFile = File(targetDir, fullName)
+            if (!outFile.canonicalPath.startsWith(targetDir.canonicalPath)) {
+                skipBytes(input, alignToBlock(size))
+                continue
+            }
+            when (typeFlag.toInt().toChar()) {
+                '5', 'D' -> outFile.mkdirs()
+                '2' -> {
+                    outFile.parentFile?.mkdirs()
+                    try {
+                        if (outFile.exists()) outFile.delete()
+                        java.nio.file.Files.createSymbolicLink(outFile.toPath(), java.nio.file.Paths.get(linkName))
+                    } catch (e: Exception) {
+                        // 符号链接创建失败（如 SELinux 限制应用私有目录软链）会导致 /bin/sh 等缺失，
+                        // 必须记下来，否则 rootfs 残缺却被当成「解压成功」。
+                        QuroDiag.log("LinuxEnv", "⚠ 符号链接创建失败: $fullName -> $linkName: ${e.message}")
+                    }
+                }
+                '1' -> {
+                    val linkTarget = File(targetDir, linkName)
+                    outFile.parentFile?.mkdirs()
+                    if (linkTarget.exists()) linkTarget.copyTo(outFile, overwrite = true)
+                }
+                '0', '\u0000' -> {
+                    outFile.parentFile?.mkdirs()
+                    FileOutputStream(outFile).use { out ->
+                        var remaining = size
+                        while (remaining > 0) {
+                            val toRead = minOf(remaining, data.size.toLong()).toInt()
+                            val r = input.read(data, 0, toRead)
+                            if (r <= 0) break
+                            out.write(data, 0, r)
+                            remaining -= r
+                        }
+                    }
+                    if (mode and 0b001_001_001 != 0) outFile.setExecutable(true, false)
+                    skipBytes(input, alignToBlock(size) - size)
+                    continue
+                }
+                else -> { }
+            }
+            if (size > 0 && typeFlag.toInt().toChar() !in setOf('0', '\u0000')) {
+                skipBytes(input, alignToBlock(size))
+            }
+        }
+    }
+
+    private fun readTarString(buf: ByteArray, offset: Int, length: Int): String {
+        val end = minOf(offset + length, buf.size)
+        val nullIdx = (offset until end).firstOrNull { buf[it] == 0.toByte() } ?: end
+        return String(buf, offset, nullIdx - offset, Charsets.US_ASCII).trim()
+    }
+
+    private fun readFully(input: java.io.InputStream, buf: ByteArray): Int {
+        var total = 0
+        while (total < buf.size) {
+            val r = input.read(buf, total, buf.size - total)
+            if (r <= 0) break
+            total += r
+        }
+        return total
+    }
+
+    private fun skipBytes(input: java.io.InputStream, count: Long) {
+        var rem = count
+        while (rem > 0) {
+            val skipped = input.skip(rem)
+            if (skipped <= 0) { if (input.read() < 0) break; rem -= 1 } else rem -= skipped
+        }
+    }
+
+    private fun alignToBlock(size: Long): Long {
+        val rem = size % TAR_BLOCK_SIZE
+        return if (rem == 0L) size else size + (TAR_BLOCK_SIZE - rem)
+    }
+
+    private fun makeWritable(rootfs: File) {
+        rootfs.walkTopDown().forEach { f ->
+            // 递归设置所有目录和文件的写权限
+            if (f.isDirectory && !f.canWrite()) f.setWritable(true, true)
+            if (f.isFile && !f.canWrite()) f.setWritable(true, true)
+        }
+        // 确保关键目录存在且可写
+        listOf("var/lib/dpkg", "var/lib/apt", "var/cache/apt", "tmp").forEach { dir ->
+            val d = File(rootfs, dir)
+            d.mkdirs()
+            d.setWritable(true, true)
+        }
+    }
+
+    /**
+     * 修复 rootfs 中的 hardlink 问题（P0 修复）。
+     *
+     * Ubuntu rootfs 通常不依赖 busybox hardlink，但极少数压缩包格式或文件系统
+     * 可能导致 hardlink 退化为 0 字节空文件。本函数扫描 rootfs 中所有 0 字节的
+     * 可执行文件并记录日志，确保问题可追溯。
+     */
+    private fun fixHardlinks(rootfs: File) {
+        Log.i(TAG, "修复 rootfs hardlink 问题...")
+        var fixed = 0
+
+        // 1. 修复 bin 目录下的 0 字节文件 → 符号链接到 busybox
+        val binDir = File(rootfs, "bin")
+        if (binDir.isDirectory) {
+            binDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.length() == 0L && f.canExecute()) {
+                    try {
+                        f.delete()
+                        java.nio.file.Files.createSymbolicLink(
+                            f.toPath(),
+                            java.nio.file.Paths.get("/bin/busybox")
+                        )
+                        fixed++
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
+        // 2. 修复 usr/bin 目录下的 0 字节文件 → 符号链接到 busybox
+        val usrBinDir = File(rootfs, "usr/bin")
+        if (usrBinDir.isDirectory) {
+            usrBinDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.length() == 0L) {
+                    try {
+                        f.delete()
+                        java.nio.file.Files.createSymbolicLink(
+                            f.toPath(),
+                            java.nio.file.Paths.get("/bin/busybox")
+                        )
+                        fixed++
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
+        // 3. 修复 lib 目录下的 0 字节 .so 文件 → 删除（避免加载崩溃）
+        val libDir = File(rootfs, "lib")
+        if (libDir.isDirectory) {
+            libDir.listFiles()?.forEach { f ->
+                if (f.isFile && f.length() == 0L && f.name.endsWith(".so")) {
+                    f.delete()
+                    fixed++
+                }
+            }
+        }
+
+        Log.i(TAG, "修复 hardlink 完成，共修复 $fixed 个文件")
+    }
+
+    /**
+     * 写 rootfs 的 /etc/resolv.conf。
+     *
+     * **网络修复（用户「要完整的」之一）**：旧实现硬编码 `nameserver 8.8.8.8 / 8.8.4.4`，
+     * 在运营商/企业网屏蔽 Google DNS 时终端 `ping`/`apt`/`curl` 全部解析失败。
+     * 改为优先采用**设备当前网络真实 DNS**（由 [deviceDnsServers] 经 ConnectivityManager
+     * 取 LinkProperties.dnsServers），缺失再回落到硬编码的公共 DNS。这样终端联网行为与
+     * 宿主 App 一致，切换 WiFi/数据也不会失效。
+     */
+    private fun writeResolvConf(rootfs: File, context: Context) {
+        val etc = File(rootfs, "etc"); etc.mkdirs()
+        val device = deviceDnsServers(context)
+        // 设备真实 DNS 优先（匹配宿主网络 / 企业内网解析），再追加多个公共 DNS 兜底，
+        // 避免单一 Google DNS 被运营商 / 企业网屏蔽时整网解析失败（用户「apt 完全无法联网」根因之一）。
+        val fallbacks = listOf("223.5.5.5", "119.29.11.29", "1.1.1.1", "8.8.8.8", "8.8.4.4")
+        val all = (device.distinct() + fallbacks).distinct().take(6)
+        val body = if (all.isNotEmpty()) all.joinToString("\n") { "nameserver $it" }
+        else "nameserver 223.5.5.5\nnameserver 1.1.1.1"
+        File(etc, "resolv.conf").writeText(body + "\n")
+    }
+
+    /**
+     * 把 Android 系统 CA 证书同步进 rootfs 的 /etc/ssl/certs，使容器内 apt/curl/wget/openssl/requests
+     * 能校验 HTTPS（用户「proot 容器内缺少 SSL 证书，apt/pip/npm 全超时」的根因之一）。
+     *
+     * 最小 ubuntu-base rootfs 不自带 ca-certificates，/etc/ssl/certs 为空；而 Android 在
+     * /system/etc/security/cacerts（或 /apex/com.android.conscrypt/cacerts）存了完整系统 CA
+     * （每个证书一个哈希命名的 .0 PEM）。把这些文件复制进 rootfs/etc/ssl/certs，OpenSSL/gnutls 即可识别；
+     * 再拼接成 ca-certificates.crt 单文件 bundle，供 apt / python-requests / pip 等使用。
+     *
+     * 幂等：ca-certificates.crt 已存在（说明后续 apt 已装好 ca-certificates）则跳过，避免覆盖。
+     * 任何失败都只记日志，不致命——HTTP 镜像仍可走 DNS 联网。
+     */
+    private fun syncCaCerts(context: Context, rootfs: File) {
+        try {
+            val certsDir = File(rootfs, "etc/ssl/certs").apply { mkdirs() }
+            val bundle = File(certsDir, "ca-certificates.crt")
+            if (bundle.exists() && bundle.length() > 1024) {
+                Log.i(TAG, "syncCaCerts 跳过：已存在 ca-certificates.crt")
+                return
+            }
+            // 候选 Android CA 目录（不同 Android 版本路径不同）
+            val src = listOf(
+                "/system/etc/security/cacerts",
+                "/apex/com.android.conscrypt/cacerts",
+            ).firstOrNull { File(it).isDirectory }
+            if (src == null) {
+                Log.w(TAG, "syncCaCerts：未找到 Android CA 目录（证书校验需联网 HTTPS 时可能失败）")
+                return
+            }
+            val files = File(src).listFiles { f -> f.isFile && (f.extension == "0" || f.name.endsWith(".pem")) }
+            if (files.isNullOrEmpty()) {
+                Log.w(TAG, "syncCaCerts：CA 目录为空 $src")
+                return
+            }
+            // CA 证书库存放目录（update-ca-certificates 的源目录；用户「CA 证书库缺失」项）
+            val shareDir = File(rootfs, "usr/share/ca-certificates").apply { mkdirs() }
+            val localShareDir = File(rootfs, "usr/local/share/ca-certificates").apply { mkdirs() }
+            val sb = StringBuilder()
+            files.forEach { f ->
+                try {
+                    val text = f.readText()
+                    // 复制原始证书文件（保持哈希命名 .0，OpenSSL 直接识别）
+                    File(certsDir, f.name).writeText(text)
+                    // CA 证书库源目录也放一份（供后续 update-ca-certificates 使用）
+                    File(shareDir, f.name).writeText(text)
+                    File(localShareDir, f.name).writeText(text)
+                    // 拼接到单文件 bundle
+                    sb.append(text)
+                    if (!text.endsWith("\n")) sb.append("\n")
+                } catch (_: Throwable) { }
+            }
+            bundle.writeText(sb.toString())
+            Log.i(TAG, "✅ syncCaCerts：复制 ${files.size} 个 CA 证书 → ${certsDir.absolutePath}")
+        } catch (e: Exception) {
+            Log.w(TAG, "syncCaCerts 失败（非致命）: ${e.message}")
+        }
+    }
+
+    /**
+     * 补齐最小 rootfs 缺的基础文件（用户列出的「缺失项」）：
+     * 1. /etc/hosts —— 127.0.0.1/::1 解析 localhost，否则本地域名解析不可用；
+     * 2. /etc/timezone —— 取设备当前时区（java.util.TimeZone），否则时间相关命令/日志错乱；
+     * 3. /etc/apt/keyrings/ —— 创建并尽量从 rootfs 自带 ubuntu-archive-keyring 复制，供 signed-by 源验证包签名。
+     * 均幂等、失败非致命。
+     */
+    private fun setupMiscFiles(context: Context, rootfs: File) {
+        try {
+            val etc = File(rootfs, "etc").apply { mkdirs() }
+            // /etc/hosts
+            val hosts = File(etc, "hosts")
+            if (!hosts.exists()) {
+                hosts.writeText(
+                    "127.0.0.1 localhost\n" +
+                    "::1 localhost ip6-localhost ip6-loopback\n" +
+                    "ff02::1 ip6-allnodes\n" +
+                    "ff02::2 ip6-allrouters\n"
+                )
+            }
+            // /etc/timezone（设备当前时区）
+            val tz = java.util.TimeZone.getDefault().id ?: "UTC"
+            File(etc, "timezone").writeText("$tz\n")
+            // /etc/apt/keyrings
+            val keyrings = File(etc, "apt/keyrings").apply { mkdirs() }
+            val ubuntuKey = File(rootfs, "usr/share/keyrings/ubuntu-archive-keyring.gpg")
+            if (ubuntuKey.isFile && !File(keyrings, ubuntuKey.name).exists()) {
+                ubuntuKey.copyTo(File(keyrings, ubuntuKey.name), overwrite = false)
+            }
+            Log.i(TAG, "✅ setupMiscFiles：hosts/timezone($tz)/apt keyrings 已补齐")
+        } catch (e: Exception) {
+            Log.w(TAG, "setupMiscFiles 失败（非致命）: ${e.message}")
+        }
+    }
+
+    /**
+     * 绕过被阻断的 DNS 53 端口：在**宿主进程内**用 Android 自身可用的 DNS（Private DNS/DoT 或运营商 DNS）
+     * 解析一组开发必需的主机名，把 `IP 主机名` 直接写进 rootfs 的 `/etc/hosts`。
+     *
+     * 用户根因链：「DNS 53 端口被阻断 → apt 无法解析域名(mirrors.aliyun.com) → apt-get update 超时 →
+     * 所有包安装失败」。容器内 glibc 按 nsswitch `hosts: files dns` 先查 /etc/hosts，命中即直连 IP，
+     * 不再发任何 53 查询，从而彻底绕开端口阻断。覆盖 apt 源 + 常见 pip/npm/git/go 主机，
+     * 使 apt-get update / pip install / npm i 等核心流程可用。
+     *
+     * 每次启动刷新（prepareRuntimeExtras）；用标记行 `# quro-dns-bootstrap` 隔离自写条目，不破坏用户/系统其它 hosts。
+     * 宿主侧当前离线导致全部解析失败时不动文件（保留上一次有效结果），非致命。
+     */
+    /** 需要静态写进 /etc/hosts 的开发主机清单（绕开被阻断的 53 端口）。覆盖 apt 源 + 语言包/CDN/工具链。 */
+    private fun curatedDevHosts(context: Context): List<String> = buildList {
+        addAll(listOf(
+            // apt 源（arm64 用 ports.ubuntu.com）
+            "mirrors.aliyun.com", "mirrors.tuna.tsinghua.edu.cn",
+            "archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com", "extras.ubuntu.com",
+            "azure.archive.ubuntu.com", "deb.debian.org", "security.debian.org",
+            "launchpad.net", "ppa.launchpadcontent.net",
+            // pip
+            "pypi.org", "files.pythonhosted.org", "pypi.python.org",
+            // npm / yarn / pnpm
+            "registry.npmjs.org", "registry.npmjs.com", "registry.yarnpkg.com",
+            "registry.npmmirror.com", "cdn.jsdelivr.net",
+            // git
+            "github.com", "objects.githubusercontent.com", "codeload.github.com", "raw.githubusercontent.com",
+            "gist.githubusercontent.com",
+            // go
+            "proxy.golang.org", "sum.golang.org", "goproxy.cn", "goproxy.io",
+            // rust / cargo
+            "static.crates.io", "crates.io", "static.rust-lang.org", "sh.rustup.rs",
+            // maven / gradle / android
+            "repo1.maven.org", "maven.aliyun.com", "maven.google.com",
+            "services.gradle.org", "dl.google.com",
+            // node / deno
+            "nodejs.org", "deno.land",
+            // conda / docker
+            "repo.anaconda.com", "download.docker.com",
+            // 通用
+            "google.com",
+        ))
+        // 动态纳入「用户所选 apt 镜像」与默认镜像候选，确保无论选哪个源都被预解析（绕 53 端口）
+        runCatching { add(hostOf(getSelectedAptMirror(context))) }
+        UBUNTU_APT_MIRRORS.forEach { runCatching { add(hostOf(it)) } }
+    }.distinct()
+
+    private fun bootstrapHosts(context: Context, rootfs: File) {
+        try {
+            val resolved = resolveHostIps(curatedDevHosts(context))
+            if (resolved.isEmpty()) {
+                Log.w(TAG, "bootstrapHosts：宿主侧全部解析失败（可能离线），保留现有 /etc/hosts")
+                return
+            }
+            val n = writeHostsBootstrap(rootfs, resolved)
+            Log.i(TAG, "✅ bootstrapHosts：注入 $n 条主机解析（绕过 53 端口）")
+        } catch (e: Exception) {
+            Log.w(TAG, "bootstrapHosts 失败（非致命）: ${e.message}")
+        }
+    }
+
+    /**
+     * 把解析结果（host→ipv4）合并写入 rootfs /etc/hosts，复用 `# quro-dns-bootstrap` 标记隔离自写条目。
+     *
+     * 保留 localhost 等基础行与历史非 bootstrap 行（如用户手动添加的主机、setupMiscFiles 写的 localhost），
+     * 不破坏系统/用户其它 hosts；解析为空则不动文件（保留上一次有效结果）。供 [bootstrapHosts] 与
+     * [bootstrapHostsByDoH] 两条解析路径共用，确保两条路径结果落到同一份 /etc/hosts 且互相幂等覆盖。
+     */
+    private fun writeHostsBootstrap(rootfs: File, resolved: Map<String, String>): Int {
+        if (resolved.isEmpty()) return 0
+        val hosts = File(rootfs, "etc/hosts")
+        val marker = "# quro-dns-bootstrap"
+        val kept = if (hosts.exists()) {
+            hosts.readLines().filter { it.isNotBlank() && !it.contains(marker) }
+        } else {
+            mutableListOf("127.0.0.1 localhost", "::1 localhost ip6-localhost ip6-loopback")
+        }
+        val sb = StringBuilder()
+        kept.forEach { sb.append(it).append("\n") }
+        resolved.forEach { (h, ip) -> sb.append("$ip $h $marker\n") }
+        hosts.writeText(sb.toString())
+        return resolved.size
+    }
+
+    /**
+     * 应用层 DNS API（DNS-over-HTTPS HTTP 接口，走 443）解析开发镜像/CDN 主机名 → 写 /etc/hosts 静态映射。
+     *
+     * 这是比 [bootstrapHosts]（宿主 InetAddress 系统解析器）更彻底的 53 端口绕行路径：
+     * 直接以 HTTPS 请求国内可达的公共 DoH 解析器（如阿里 `dns.alidns.com`）拿到 A 记录 IP，
+     * 完全不经过 Android 系统 DNS stub 与容器内 53 端口——即便宿主 Private DNS 异常或系统解析器不可用，
+     * 也能靠 DoH 拿到镜像 IP 并静态写进 /etc/hosts，使 apt-get update / pip / npm 按 IP 直连。
+     * 与 bootstrapHosts 共用 `# quro-dns-bootstrap` 标记写入，结果合并进同一份 hosts（互不冲突）。
+     */
+    private fun bootstrapHostsByDoH(context: Context, rootfs: File) {
+        try {
+            val resolved = resolveHostIpsByDoH(curatedDevHosts(context))
+            if (resolved.isEmpty()) {
+                Log.w(TAG, "bootstrapHostsByDoH：DoH 全部解析失败（可能离线/DoH 不可达），保留现有 /etc/hosts")
+                return
+            }
+            val n = writeHostsBootstrap(rootfs, resolved)
+            Log.i(TAG, "✅ bootstrapHostsByDoH：注入 $n 条主机解析（应用层 DoH DNS，绕 53 端口）")
+        } catch (e: Exception) {
+            Log.w(TAG, "bootstrapHostsByDoH 失败（非致命）: ${e.message}")
+        }
+    }
+
+    /**
+     * 通过应用层 DNS-over-HTTPS API 解析主机名 → A 记录 IPv4 映射。
+     * 依次尝试多个 DoH 端点（国内可达解析器优先：阿里/360/腾讯，Google/Cloudflare 仅兜底），
+     * 单个端点/主机失败则跳到下一个，整体非致命。走 443 HTTPS，与 Android 系统 DNS stub
+     * 及容器内 53 端口无关，是彻底的 53 绕行路径。端点已按国内可达性排序，自动选最优可用者。
+     */
+    private fun resolveHostIpsByDoH(hosts: List<String>): Map<String, String> {
+        val out = linkedMapOf<String, String>()
+        for (h in hosts) {
+            val ip = dohResolveOne(h) ?: continue
+            out[h] = ip
+        }
+        return out
+    }
+
+    /**
+     * 应用层 DoH 端点（均走 443 HTTPS），返回 Google 风格 application/dns-json 响应。
+     * 按国内可达性排序：阿里/360/腾讯 优先，Google/Cloudflare 仅作最后兜底（国内多被墙）。
+     * 不支持 JSON 的端点（如腾讯/360 若只支持 RFC8484）会解析失败并自动跳到下一个，无副作用。
+     */
+    private val DOH_JSON_ENDPOINTS = listOf(
+        "https://dns.alidns.com/resolve?name=%s&type=A",      // 阿里公共 DNS，国内首选，支持 JSON API
+        "https://doh.360.cn/resolve?name=%s&type=A",          // 360 公共 DNS
+        "https://119.29.29.29/resolve?name=%s&type=A",        // 腾讯公共 DNS（IP 直连）
+        "https://dns.google/resolve?name=%s&type=A",          // Google（兜底）
+        "https://cloudflare-dns.com/dns-query?name=%s&type=A",// Cloudflare（兜底）
+    )
+
+    /** 对单个主机名走 DoH 解析，返回首个成功解析的合法 IPv4；全部端点失败返回 null。 */
+    private fun dohResolveOne(host: String): String? {
+        for (tmpl in DOH_JSON_ENDPOINTS) {
+            // 端点已按国内可达性排序，第一个成功者即「最优可用」，直接返回避免不必要等待。
+            val ip = runCatching { dohQuery(tmpl, host) }.getOrNull() ?: continue
+            if (ip.isNotBlank()) return ip
+        }
+        return null
+    }
+
+    /** 单次 DoH JSON 查询；返回首个合法 IPv4，异常/非 200/无答案返回 null。 */
+    private fun dohQuery(tmpl: String, host: String): String? {
+        val url = java.net.URL(tmpl.format(host))
+        val conn = (url.openConnection() as? java.net.HttpURLConnection) ?: return null
+        conn.requestMethod = "GET"
+        conn.connectTimeout = 5_000
+        conn.readTimeout = 5_000
+        conn.instanceFollowRedirects = true
+        conn.setRequestProperty("Accept", "application/dns-json")
+        val code = runCatching { conn.responseCode }.getOrElse { -1 }
+        if (code != 200) { runCatching { conn.disconnect() }; return null }
+        val txt = runCatching { conn.inputStream.bufferedReader().use { it.readText() } }.getOrNull()
+        runCatching { conn.disconnect() }
+        if (txt.isNullOrBlank()) return null
+        return parseDohAnswer(txt)
+    }
+
+    /** 解析 DoH JSON 响应，提取首个 A 记录（type=1）合法 IPv4；Status!=0（解析失败）返回 null。 */
+    private fun parseDohAnswer(json: String): String? {
+        return try {
+            val obj = org.json.JSONObject(json)
+            if (obj.optInt("Status", -1) != 0) return null // 0 = NOERROR
+            val answers = obj.optJSONArray("Answer") ?: return null
+            for (i in 0 until answers.length()) {
+                val a = answers.optJSONObject(i) ?: continue
+                if (a.optInt("type") == 1) { // A 记录
+                    val data = a.optString("data").trim()
+                    if (data.matches(Regex("^\\d{1,3}(\\.\\d{1,3}){3}\$"))) return data
+                }
+            }
+            null
+        } catch (_: Throwable) { null }
+    }
+
+    /** 宿主侧解析主机名 → 优先 IPv4（apt 用 ForceIPv4）。失败的主机跳过。 */
+    private fun resolveHostIps(hosts: List<String>): Map<String, String> {
+        val out = linkedMapOf<String, String>()
+        for (h in hosts) {
+            try {
+                val addrs = java.net.InetAddress.getAllByName(h)
+                val ip = addrs.firstOrNull { it is java.net.Inet4Address }?.hostAddress
+                    ?: addrs.firstOrNull()?.hostAddress
+                if (!ip.isNullOrBlank()) out[h] = ip
+            } catch (_: Throwable) { }
+        }
+        return out
+    }
+
+    /** 从 apt 源 URL（如 http://mirrors.aliyun.com/ubuntu-ports）提取主机名。 */
+    private fun hostOf(url: String): String {
+        return url.substringAfter("://").substringBefore("/").substringBefore(":").trim()
+    }
+
+    /**
+     * dnscrypt-proxy 上游候选：国内可达优先，Google/Cloudflare 仅兜底（国内多被墙）。
+     * - providerName：DoH 服务器的 TLS SNI / 主机名；
+     * - path：DoH 路径（RFC8484，dnscrypt-proxy 原生支持）；
+     * - bootstrapIp：解析器 IP，写入 stamp 的 BootstrapIP 字段，dnscrypt-proxy 直接连此 IP 并以
+     *   providerName 作 SNI 完成 TLS，从而**完全不依赖被阻断的系统 DNS 做引导**；为空则在宿主侧
+     *   实时解析 providerName 并内嵌（见 [resolveBootstrapIp]）。
+     */
+    private data class DohUpstream(
+        val name: String,
+        val providerName: String,
+        val path: String,
+        val bootstrapIp: String?,
+    )
+
+    private val DOH_UPSTREAMS = listOf(
+        DohUpstream("alidns", "dns.alidns.com", "/dns-query", null),
+        DohUpstream("dot360", "doh.360.cn", "/dns-query", null),
+        DohUpstream("baidu", "doh.baidu.com", "/dns-query", null),
+        DohUpstream("tencent", "119.29.29.29", "/dns-query", "119.29.29.29"),
+        DohUpstream("google", "dns.google", "/dns-query", "8.8.8.8"),
+        DohUpstream("cloudflare", "cloudflare-dns.com", "/dns-query", "1.1.1.1"),
+    )
+
+    /**
+     * 宿主侧解析 DoH 提供方主机名 → IPv4，作为 stamp 的 BootstrapIP（内嵌后 dnscrypt-proxy 直连，
+     * 不再依赖被阻断的系统 DNS）。解析失败返回 null（stamp 退化为仅用 providerName，由 proxy 自行引导）。
+     */
+    private fun resolveBootstrapIp(providerName: String): String? = runCatching {
+        java.net.InetAddress.getAllByName(providerName)
+            .firstOrNull { it is java.net.Inet4Address }?.hostAddress
+    }.getOrNull()
+
+    /** 构造 dnscrypt-proxy 的 DoH stamp（sdns://，proto=0x02）。Addr 留空，BootstrapIP=解析器 IP。 */
+    private fun buildDohStamp(providerName: String, path: String, bootstrapIp: String?): String {
+        val out = java.io.ByteArrayOutputStream()
+        out.write(0x02) // proto = DoH
+        out.write(0); out.write(0) // props (uint16 LE) = 0（无特殊属性声明）
+        val pn = providerName.toByteArray(Charsets.UTF_8)
+        out.write(pn.size); out.write(pn) // providerName
+        appendStampIp(out, null) // Addr 留空（由 BootstrapIP 引导）
+        val p = path.toByteArray(Charsets.UTF_8)
+        out.write(p.size); out.write(p) // path
+        appendStampIp(out, bootstrapIp) // BootstrapIP（内嵌解析器 IP，避免系统 DNS）
+        val raw = out.toByteArray()
+        return "sdns://" + android.util.Base64.encodeToString(
+            raw, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING
+        )
+    }
+
+    /** 按 [android.util.Base64] stamp 格式写入长度+地址（4=IPv4，16=IPv6，0=空）。 */
+    private fun appendStampIp(out: java.io.ByteArrayOutputStream, ip: String?) {
+        if (ip.isNullOrBlank()) { out.write(0); return }
+        val bytes = runCatching { java.net.InetAddress.getByName(ip).address }.getOrNull()
+        if (bytes == null) { out.write(0); return }
+        out.write(bytes.size); out.write(bytes)
+    }
+
+    /**
+     * 测量到上游 :443 的 TCP 建连延迟（ms）；不可达返回 Long.MAX_VALUE。
+     * 用于把 dnscrypt-proxy 的 server_names 按「实际可达性 + 延迟」排序，自动选最优上游。
+     */
+    private fun measureDohLatency(bootstrapIp: String): Long {
+        if (bootstrapIp.isBlank()) return Long.MAX_VALUE
+        return runCatching {
+            val t0 = System.nanoTime()
+            java.net.Socket().use { it.connect(java.net.InetSocketAddress(bootstrapIp, 443), 1_500) }
+            (System.nanoTime() - t0) / 1_000_000
+        }.getOrDefault(Long.MAX_VALUE)
+    }
+
+    /**
+     * 生成 dnscrypt-proxy 配置：监听 127.0.0.1:53，向上走 DoH(443) 解析**任意**域名，彻底绕开被阻断的 53 端口。
+     * stamp 内嵌 BootstrapIP（`ignore_system_dns=true` 不依赖系统 DNS 引导）；server_names 按宿主侧实测
+     * 延迟排序（国内可达解析器优先），实现「自动选最优」；全部不可达时退化为默认顺序（仍会尝试）。
+     */
+    private fun buildDnscryptConf(context: Context): String {
+        val ranked = DOH_UPSTREAMS.map { up ->
+            val ip = up.bootstrapIp ?: resolveBootstrapIp(up.providerName)
+            val cost = if (ip != null) measureDohLatency(ip) else Long.MAX_VALUE
+            up to (ip to cost)
+        }.sortedBy { it.second.second }
+        val names = ranked.joinToString(", ") { "'${it.first.name}'" }
+        val blocks = ranked.joinToString("\n") { (up, ipCost) ->
+            val stamp = buildDohStamp(up.providerName, up.path, ipCost.first)
+            "[static.'${up.name}']\nstamp = '$stamp'"
+        }
+        return """listen_addresses = ['127.0.0.1:53']
+ipv4_servers = true
+ipv6_servers = false
+dnscrypt_servers = true
+doh_servers = true
+ignore_system_dns = true
+server_names = [$names]
+$blocks
+"""
+    }
+
+    /**
+     * 通用 DNS（彻底绕开被阻断的 53 端口）：在容器内拉起 dnscrypt-proxy，向上走 DoH(443) 解析 ANY 域名，
+     * 监听 127.0.0.1:53；随后把 resolv.conf 指向 127.0.0.1（设备真实 DNS 作兜底），使 apt/pip/npm 对任意域名都可联网
+     * （不再依赖 /etc/hosts 预列清单）。依赖 setup 阶段 apt 安装 dnscrypt-proxy（/etc/hosts 已使 apt 可用）。
+     * DoH 上游为国内可达解析器（阿里/360/百度/腾讯，Google/Cloudflare 兜底），按宿主实测延迟自动选最优。
+     *
+     * 全链路非致命 + 可自愈：代理不可用/探测失败时仍保留 127.0.0.1 首选项（/etc/hosts 预列主机经 files 优先解析兜底）；
+     * 每次命令前 prepareRuntimeExtras 都会重跑，代理若被回收会在下条命令前自动重启。
+     */
+    private fun ensureDnsProxy(context: Context, rootfs: File) {
+        try {
+            val bin = listOf("usr/sbin/dnscrypt-proxy", "usr/bin/dnscrypt-proxy")
+                .map { File(rootfs, it) }.firstOrNull { it.canExecute() }
+            if (bin == null) {
+                Log.i(TAG, "ensureDnsProxy：dnscrypt-proxy 未安装，跳过（/etc/hosts 兜底）")
+                return
+            }
+            // 按宿主侧实测延迟生成配置（国内可达解析器优先，自动选最优上游），每次都重写以保证顺序最新。
+            val cfg = File(rootfs, "etc/dnscrypt-proxy.toml")
+            cfg.writeText(buildDnscryptConf(context))
+            // 后台拉起（setsid 脱离 proot 进程组，避免命令结束后被一起杀；失败则静默退出，旧实例保留）
+            val launch = "if command -v setsid >/dev/null 2>&1; then setsid nohup ${bin.absolutePath} -config ${cfg.absolutePath} >/dev/null 2>&1 & else nohup ${bin.absolutePath} -config ${cfg.absolutePath} >/dev/null 2>&1 & fi"
+            runProot(context, launch, timeoutMs = 10_000)
+            // resolv.conf 优先走本地 DoH 代理（127.0.0.1:53）；代理不可用时退回到设备真实 DNS（部分网络 53 仍可达）。
+            // 始终保留 127.0.0.1 在前，确保代理一旦拉起即接管通用 DNS（任意域名不再依赖 /etc/hosts 预列）。
+            File(rootfs, "etc/resolv.conf").writeText(buildResolvConf(context))
+            // 探测：用 curl 经代理解析并连接一个 /etc/hosts 没有、且国内可达的域名（端到端验证代理）。
+            // 注：不用 getent —— 它在 libc-bin 里，最小 rootfs 可能没装；curl 是 setup 必装，且能真正走代理解析。
+            var ok = false
+            for (i in 1..8) {
+                Thread.sleep(700)
+                val r = runProot(
+                    context,
+                    "curl -sI --max-time 5 https://dns.alidns.com >/dev/null 2>&1; printf 'PROXY_OK=%s\\n' $?",
+                    timeoutMs = 9_000,
+                )
+                if (r.second.contains("PROXY_OK=0")) { ok = true; break }
+            }
+            if (ok) {
+                Log.i(TAG, "✅ ensureDnsProxy：DoH 代理已起，resolv.conf → 127.0.0.1（国内可达上游，通用 DNS 生效）")
+            } else {
+                Log.w(TAG, "ensureDnsProxy：代理探测失败（/etc/hosts 静态映射仍兜底，通用域名解析受限）")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "ensureDnsProxy 失败（非致命）: ${e.message}")
+        }
+    }
+
+    /** 生成容器 resolv.conf：本地 DoH 代理优先，设备真实 DNS 兜底（仅当代理异常且 53 部分可达时生效）。 */
+    private fun buildResolvConf(context: Context): String = buildString {
+        appendLine("nameserver 127.0.0.1")
+        deviceDnsServers(context).take(2).forEach { appendLine("nameserver $it") }
+        appendLine("options timeout:1 attempts:2")
+    }
+
+    /** 确保 /etc/nsswitch.conf 含 hosts: files dns，否则 getaddrinfo 可能不查 DNS（网络修复之一）。 */
+    private fun ensureNsswitch(rootfs: File) {
+        try {
+            val etc = File(rootfs, "etc"); etc.mkdirs()
+            val f = File(etc, "nsswitch.conf")
+            if (!f.exists()) {
+                f.writeText("passwd: files\ngroup: files\nhosts: files dns\nnetworks: files dns\n")
+            }
+        } catch (_: Throwable) { }
+    }
+
+    /**
+     * 取设备当前网络真实 DNS 服务器列表（含 IPv4/IPv6），供 rootfs resolv.conf 使用。
+     * 需要 [android.Manifest.permission.ACCESS_NETWORK_STATE]（已在 app 与 aidl-aci-browser 两处 manifest 声明）。
+     */
+    private fun deviceDnsServers(context: Context): List<String> {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return emptyList()
+            val net = cm.activeNetwork ?: return emptyList()
+            val lp = cm.getLinkProperties(net) ?: return emptyList()
+            lp.dnsServers.mapNotNull { it.hostAddress?.takeIf { h -> h.isNotBlank() } }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    /**
+     * 终端内 getprop 垫片脚本（Linux 环境没有 Android 的 getprop）。
+     * 数据来自 [prepareRuntimeExtras] 写入的 /etc/quro_props.prop，并回落读只读绑入的
+     * /system/build.prop；无参时打印全部属性（与 Android getprop 行为一致）。
+     */
+    private const val GETPROP_SHIM = """#!/bin/sh
+# QuroAI getprop shim (proot/Linux) — 把宿主 App 在启动时抓取的 ro.* 属性暴露给沙箱。
+PROPS="/etc/quro_props.prop"
+if [ ${'$'}# -ge 1 ]; then
+  key="${'$'}1"
+  val=$(grep -m1 "^${'$'}{key}=" "${'$'}PROPS" 2>/dev/null | cut -d= -f2-)
+  if [ -z "${'$'}val" ] && [ -r /system/build.prop ]; then
+    val=$(grep -m1 "^${'$'}{key}=" /system/build.prop 2>/dev/null | cut -d= -f2-)
+  fi
+  if [ -z "${'$'}val" ] && [ ${'$'}# -ge 2 ]; then
+    val="${'$'}2"
+  fi
+  printf '%s\n' "${'$'}val"
+else
+  cat "${'$'}PROPS" 2>/dev/null
+  if [ -r /system/build.prop ]; then cat /system/build.prop; fi
+fi
+"""
+
+    /**
+     * 反射读取隐藏 API `android.os.SystemProperties.get`，用于补全 [Build] 未直接暴露的属性
+     * （如 ro.build.date、ro.serialno、persist.sys.timezone 等）。失败（无权限/API 变动）返回 null。
+     */
+    private fun sysprop(name: String): String? = try {
+        val c = Class.forName("android.os.SystemProperties")
+        val m = c.getMethod("get", String::class.java, String::class.java)
+        val v = m.invoke(null, name, "") as? String
+        v?.takeIf { it.isNotBlank() }
+    } catch (_: Throwable) { null }
+
+    /** 从 [Build] + SystemProperties 反射构造 ro.* 属性快照（最常见的查询全部覆盖）。 */
+    private fun buildProps(context: Context): LinkedHashMap<String, String> {
+        val m = LinkedHashMap<String, String>()
+        fun put(k: String, v: String?) { if (v != null && v.isNotBlank()) m[k] = v }
+        put("ro.build.version.sdk", Build.VERSION.SDK_INT.toString())
+        put("ro.build.version.release", Build.VERSION.RELEASE)
+        put("ro.build.version.incremental", Build.VERSION.INCREMENTAL)
+        put("ro.build.version.codename", Build.VERSION.CODENAME)
+        put("ro.build.version.preview_sdk", Build.VERSION.PREVIEW_SDK_INT.toString())
+        put("ro.build.version.security_patch", Build.VERSION.SECURITY_PATCH)
+        put("ro.build.version.base_os", Build.VERSION.BASE_OS)
+        put("ro.build.id", Build.ID)
+        put("ro.build.display.id", Build.DISPLAY)
+        put("ro.build.user", Build.USER)
+        put("ro.build.host", Build.HOST)
+        put("ro.build.type", Build.TYPE)
+        put("ro.build.tags", Build.TAGS)
+        put("ro.build.fingerprint", Build.FINGERPRINT)
+        put("ro.product.model", Build.MODEL)
+        put("ro.product.brand", Build.BRAND)
+        put("ro.product.name", Build.PRODUCT)
+        put("ro.product.device", Build.DEVICE)
+        put("ro.product.board", Build.BOARD)
+        put("ro.product.manufacturer", Build.MANUFACTURER)
+        put("ro.product.hardware", Build.HARDWARE)
+        put("ro.hardware", Build.HARDWARE)
+        put("ro.product.cpu.abi", Build.SUPPORTED_ABIS.firstOrNull())
+        put("ro.product.cpu.abilist", Build.SUPPORTED_ABIS.joinToString(","))
+        put("ro.product.cpu.abilist32", Build.SUPPORTED_32_BIT_ABIS.joinToString(","))
+        put("ro.product.cpu.abilist64", Build.SUPPORTED_64_BIT_ABIS.joinToString(","))
+        for (k in listOf(
+            "ro.build.date", "ro.build.date.utc", "ro.serialno", "ro.kernel.qemu",
+            "ro.config.low_ram", "persist.sys.timezone", "ro.crypto.state",
+            "ro.crypto.type", "ro.debuggable", "ro.secure", "ro.bootmode",
+            "ro.revision", "ro.build.characteristics",
+        )) {
+            sysprop(k)?.let { put(k, it) }
+        }
+        return m
+    }
+
+    /**
+     * 每次启动终端/执行命令前，把运行期需要的「额外资产」刷进 rootfs：
+     * 1. resolv.conf —— 用设备真实 DNS + 公共兜底（网络修复，见 [writeResolvConf]）；
+     * 2. /etc/ssl/certs + ca-certificates.crt —— 复制 Android 系统 CA 库，使 HTTPS 校验通过（见 [syncCaCerts]）；
+     * 3. /etc/nsswitch.conf —— hosts: files dns，保证 getaddrinfo 查 DNS（见 [ensureNsswitch]）；
+     * 4. /etc/quro_props.prop —— ro.* 属性快照（getprop 垫片数据源）；
+     * 5. /usr/local/bin/getprop —— 垫片脚本，使 `getprop ro.build.version.sdk` 等可用（[GETPROP_SHIM]）。
+     *
+     * rootfs 在 setup 时已 makeWritable，且均在应用私有目录，写操作安全；任何一步失败都只记日志，不致命。
+     */
+    /**
+     * 创建 usr/bin/ 目录和符号链接（参考上游 proot 实现）。
+     * 将 nativeLibraryDir 中的二进制链接到 usr/bin/，使 proot 环境内可直接使用。
+     */
+    private fun createUsrBinSymlinks(context: Context, sandboxDir: File) {
+        val usrDir = File(sandboxDir, "usr")
+        val binDir = File(usrDir, "bin")
+        binDir.mkdirs()
+
+        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+
+        // 需要创建符号链接的二进制文件
+        // 注意：只链接实际存在的库，不存在的跳过（ZorvAI 只有 proot 和 loader）
+        val libraries = mapOf(
+            "libproot.so" to "proot",
+            "libproot-loader.so" to "loader"
+            // ZorvAI 不包含 libbash.so、libbusybox.so、libtalloc.so
+            // bash 通过 apt-get install 安装，busybox/talloc 不需要
+        )
+
+        libraries.forEach { (libName, linkName) ->
+            val libFile = File(nativeLibDir, libName)
+            val linkFile = File(binDir, linkName)
+
+            Log.i(TAG, "检查 $libName: ${libFile.absolutePath}, exists=${libFile.exists()}")
+
+            if (!libFile.exists()) {
+                Log.w(TAG, "⚠ 原生库不存在: $libName")
+                return@forEach
+            }
+
+            try {
+                // 删除已存在的文件或损坏的符号链接
+                if (linkFile.exists() || linkFile.toPath().let { java.nio.file.Files.isSymbolicLink(it) }) {
+                    linkFile.delete()
+                }
+
+                // 设置可执行权限
+                libFile.setExecutable(true, false)
+
+                // 创建符号链接
+                java.nio.file.Files.createSymbolicLink(linkFile.toPath(), libFile.toPath())
+                Log.i(TAG, "✅ 创建符号链接: $linkName -> ${libFile.absolutePath}")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ 创建符号链接失败: $linkName, 错误: ${e.message}")
+            }
+        }
+    }
+
+    private fun prepareRuntimeExtras(context: Context, rootfs: File) {
+        try {
+            // 每次启动都刷新 DNS / CA 证书 / nsswitch / 基础文件（与 setup 同级），
+            // 避免一次快照过期导致 apt/pip/npm 再次超时（用户「容器内缺 SSL 证书 → 联网超时」根因）。
+            writeResolvConf(rootfs, context)
+            syncCaCerts(context, rootfs)
+            ensureNsswitch(rootfs)
+            setupMiscFiles(context, rootfs)
+            // 每次启动刷新 /etc/hosts（宿主侧解析，绕过被阻断的 53 端口 DNS）。
+            // 该解析是阻塞网络调用，放进 IO scope 异步执行，避免在主线程调用 prepareRuntimeExtras 时 ANR；
+            // setup 路径（setupInternal）则是同步调用，保证 apt-get update 前 hosts 已就绪。
+            scope.launch(Dispatchers.IO) { bootstrapHosts(context, rootfs) }
+            // 应用层 DoH（443）解析镜像 IP → /etc/hosts，与 bootstrapHosts 合并，更彻底的 53 绕行
+            scope.launch(Dispatchers.IO) { bootstrapHostsByDoH(context, rootfs) }
+            // 通用 DNS：若已装 dnscrypt-proxy，确保 DoH 代理在跑并接管 resolv.conf（覆盖任意域名）。
+            // 含阻塞网络探测，放进 IO scope 异步执行避免主线程 ANR；setup 路径为同步（保证部署即生效）。
+            scope.launch(Dispatchers.IO) { ensureDnsProxy(context, rootfs) }
+            // 创建共享存储挂载点（/sdcard），否则 proot --bind 因目标不存在而整体启动失败。
+            File(rootfs, SHARED_STORAGE_MOUNT.trimStart('/')).mkdirs()
+            // 创建应用私有目录挂载点（/quro，issue #11 ③），理由同上：
+            // proot 的 --bind 要求 guest 侧路径已存在，否则整条启动参数作废。
+            File(rootfs, APP_PRIVATE_MOUNT.trimStart('/')).mkdirs()
+            val props = buildProps(context)
+            File(rootfs, "etc").mkdirs()
+            File(rootfs, "etc/quro_props.prop").writeText(
+                props.entries.joinToString("\n") { "${it.key}=${it.value}" } + "\n"
+            )
+            val bin = File(rootfs, "usr/local/bin"); bin.mkdirs()
+            val shim = File(bin, "getprop")
+            // GETPROP_SHIM 是源码里的原始字符串；Windows 工作区 CRLF 会让 sh 执行出错，强转 LF。
+            shim.writeText(GETPROP_SHIM.normalizeLineEndings())
+            shim.setExecutable(true, false)
+        } catch (e: Exception) {
+            Log.w(TAG, "prepareRuntimeExtras 部分失败（非致命）: ${e.message}")
+        }
+    }
+
+    /**
+     * 把 proot 二进制本身打进 rootfs（/usr/local/bin/proot，并链到 /usr/bin/proot），
+     * 使 Linux 环境内部可直接调用 proot —— 容器运行时自持，不再依赖外部 PATH 上的 proot。
+     *
+     * 这是 ULFA「零外部依赖」要求的落地：以前 fusion/脚本层要 execlp("proot")，
+     * 一旦 PATH 没继承到子进程就 exit 127；现在 rootfs 内自带，绝对路径可调。
+     *
+     * 纯新增动作，任何失败都只打日志，不影响既有终端启动链路。
+     */
+    fun installProotIntoRootfs(context: Context, rootfs: File) {
+        try {
+            if (!rootfs.isDirectory) return
+            val src = File(prootPath(context))
+            if (!src.exists() || src.length() < 100_000L) {
+                Log.w(TAG, "installProotIntoRootfs 跳过：proot 源不可用 ${src.absolutePath}")
+                return
+            }
+            val target = File(rootfs, "usr/local/bin/proot").apply { parentFile?.mkdirs() }
+            if (!target.exists() || target.length() != src.length()) {
+                src.inputStream().use { input ->
+                    FileOutputStream(target).use { output -> input.copyTo(output) }
+                }
+                // ownerOnly=false → 0755，容器内非 root 用户也要能执行
+                target.setExecutable(true, false)
+                target.setReadable(true, false)
+            }
+            val usrBin = File(rootfs, "usr/bin")
+            if (usrBin.isDirectory) {
+                val alias = File(usrBin, "proot")
+                if (!alias.exists()) {
+                    try {
+                        java.nio.file.Files.createSymbolicLink(
+                            alias.toPath(),
+                            java.nio.file.Paths.get("/usr/local/bin/proot")
+                        )
+                    } catch (_: Exception) {
+                        // rootfs 所在分区可能不支持符号链接（sdcard/FAT），退化成硬拷贝
+                        target.copyTo(alias, overwrite = true)
+                        alias.setExecutable(true, false)
+                    }
+                }
+            }
+            Log.i(TAG, "✅ proot 已内置到 rootfs: /usr/local/bin/proot (${target.length()} bytes)")
+        } catch (e: Exception) {
+            Log.w(TAG, "installProotIntoRootfs 失败（非致命）: ${e.message}")
+        }
+    }
+
+    /**
+     * 设置伪造系统数据（fake sysdata）。
+     * Android 限制了部分 /proc 入口，Linux 程序（如 apt、dpkg）需要这些数据才能正常运行。
+     */
+    private fun setupFakeSysdata(context: Context, rootfs: File) {
+        try {
+            // 从 assets 复制 setup_fake_sysdata.sh 到 rootfs
+            val scriptTarget = File(rootfs, "tmp/setup_fake_sysdata.sh")
+            scriptTarget.parentFile?.mkdirs()
+
+            try {
+                context.assets.open("linux_env/setup_fake_sysdata.sh").use { input ->
+                    FileOutputStream(scriptTarget).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                scriptTarget.setExecutable(true, false)
+                Log.i(TAG, "✅ setup_fake_sysdata.sh 已复制到 rootfs")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠ 从 assets 复制 setup_fake_sysdata.sh 失败: ${e.message}")
+                // 回退：直接在 rootfs 中创建基本的伪造数据
+                createFakeSysdataInline(rootfs)
+                return
+            }
+
+            // 通过 proot 执行 setup_fake_sysdata.sh
+            val result = runProot(context,
+                "INSTALLED_ROOTFS_DIR=/ distro_name=root " +
+                "DEFAULT_FAKE_KERNEL_RELEASE=6.2.1-qrot " +
+                "DEFAULT_FAKE_KERNEL_VERSION='#1 SMP PREEMPT_DYNAMIC' " +
+                "bash /tmp/setup_fake_sysdata.sh",
+                timeoutMs = 15_000
+            )
+            if (result.first == 0) {
+                Log.i(TAG, "✅ setup_fake_sysdata 执行成功")
+            } else {
+                Log.w(TAG, "⚠ setup_fake_sysdata 执行失败，使用内联回退: ${result.second.take(200)}")
+                createFakeSysdataInline(rootfs)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠ setupFakeSysdata 失败（非致命）: ${e.message}")
+            createFakeSysdataInline(rootfs)
+        }
+    }
+
+    /**
+     * 内联创建基本的伪造系统数据（当 setup_fake_sysdata.sh 不可用时的回退方案）。
+     */
+    private fun createFakeSysdataInline(rootfs: File) {
+        try {
+            val procDir = File(rootfs, "proc")
+            procDir.mkdirs()
+
+            // /proc/loadavg
+            File(procDir, ".loadavg").writeText("0.12 0.07 0.02 2/165 765\n")
+
+            // /proc/stat - 最小化版本
+            File(procDir, ".stat").writeText(buildString {
+                appendLine("cpu  1957 0 2877 93280 262 342 254 87 0 0")
+                appendLine("cpu0 31 0 226 12027 82 10 4 9 0 0")
+                appendLine("ctxt 140223")
+                appendLine("btime 1680020856")
+                appendLine("processes 772")
+                appendLine("procs_running 2")
+                appendLine("procs_blocked 0")
+            })
+
+            // /proc/uptime
+            File(procDir, ".uptime").writeText("124.08 932.80\n")
+
+            // /proc/version
+            File(procDir, ".version").writeText(
+                "Linux version 6.2.1-qrot (proot@quro) (gcc (GCC) 13.3.0, GNU ld (GNU Binutils) 2.42) #1 SMP PREEMPT_DYNAMIC\n"
+            )
+
+            // /proc/sys/kernel/cap_last_cap
+            val sysDir = File(rootfs, "proc/sys/kernel")
+            sysDir.mkdirs()
+            File(sysDir, "cap_last_cap").writeText("40\n")
+
+            Log.i(TAG, "✅ 内联伪造系统数据创建完成")
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠ 内联伪造系统数据创建失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 修复 Android 权限兼容性（fix permissions）。
+     * Android 的组 ID 在 Ubuntu 中可能不存在，导致 "cannot find name for group ID" 警告。
+     */
+    private fun fixPermissions(context: Context, rootfs: File) {
+        try {
+            // 获取当前进程的组 ID
+            val groups = try {
+                val process = Runtime.getRuntime().exec(arrayOf("id", "-G"))
+                val output = process.inputStream.bufferedReader().readText().trim()
+                process.waitFor()
+                output.split(" ").filter { it.isNotEmpty() }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠ 获取组 ID 失败: ${e.message}")
+                emptyList()
+            }
+
+            if (groups.isEmpty()) {
+                Log.w(TAG, "⚠ 未获取到组 ID，跳过权限修复")
+                return
+            }
+
+            // 读取当前 /etc/group
+            val groupFile = File(rootfs, "etc/group")
+            if (!groupFile.exists()) {
+                Log.w(TAG, "⚠ /etc/group 不存在，跳过权限修复")
+                return
+            }
+
+            val existingGroups = groupFile.readText()
+            var modified = false
+
+            // 为每个 Android 组 ID 添加条目（如果不存在）
+            for (gid in groups) {
+                if (!existingGroups.contains(":$gid:")) {
+                    groupFile.appendText("android_group_$gid:x:$gid:\n")
+                    modified = true
+                }
+            }
+
+            if (modified) {
+                Log.i(TAG, "✅ Android 权限修复完成，添加了 ${groups.size} 个组 ID")
+            } else {
+                Log.i(TAG, "✅ 权限已正确，无需修复")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠ fixPermissions 失败（非致命）: ${e.message}")
+        }
+    }
+
+    private fun writeAptSources(rootfs: File, mirrorBase: String) {
+        val aptDir = File(rootfs, "etc/apt")
+        aptDir.mkdirs()
+        Log.i(TAG, "writeAptSources: 配置apt源 $mirrorBase")
+        
+        // Ubuntu 24.04 用 DEB822 格式（/etc/apt/sources.list.d/ubuntu.sources），
+        // 但也兼容传统 sources.list。必须删除 DEB822 格式，否则 apt 会优先读取它。
+        val sourcesListD = File(aptDir, "sources.list.d")
+        if (sourcesListD.exists()) {
+            Log.i(TAG, "sources.list.d 目录存在，列出所有文件:")
+            sourcesListD.listFiles()?.forEach { file ->
+                Log.i(TAG, "  文件: ${file.name} (${file.length()} bytes)")
+                if (file.name.endsWith(".sources") || file.name.endsWith(".list")) {
+                    val deleted = file.delete()
+                    Log.i(TAG, "  删除${if (deleted) "成功" else "失败"}: ${file.absolutePath}")
+                }
+            }
+        } else {
+            Log.i(TAG, "sources.list.d 目录不存在")
+        }
+        
+        // 写入传统 sources.list 格式
+        val sourcesContent = "deb $mirrorBase/ $UBUNTU_CODENAME main restricted universe multiverse\n" +
+            "deb $mirrorBase/ ${UBUNTU_CODENAME}-updates main restricted universe multiverse\n" +
+            "deb $mirrorBase/ ${UBUNTU_CODENAME}-security main restricted universe multiverse\n" +
+            "deb $mirrorBase/ ${UBUNTU_CODENAME}-backports main restricted universe multiverse\n"
+        File(aptDir, "sources.list").writeText(sourcesContent)
+        Log.i(TAG, "写入sources.list: $mirrorBase")
+        
+        // 关闭签名验证（proot 环境下 GPG 公钥可能不完整）
+        // 同时配置超时和重试（手机网络不稳定）
+        File(aptDir, "apt.conf.d").mkdirs()
+        File(aptDir, "apt.conf.d/99no-check-gpg").writeText(
+            "Acquire::Check-Valid-Until \"false\";\n" +
+            "APT::Get::AllowUnauthenticated \"true\";\n" +
+            "Acquire::http::Timeout \"60\";\n" +
+            "Acquire::https::Timeout \"60\";\n" +
+            "Acquire::ftp::Timeout \"60\";\n" +
+            "Acquire::Retries \"5\";\n" +
+            "Acquire::http::Dl-Limit \"256\";\n" +
+            "Acquire::ForceIPv4 \"true\";\n" +
+            "Acquire::http::Pipeline-Depth \"0\";\n"
+        )
+        Log.i(TAG, "写入99no-check-gpg + 超时重试配置")
+    }
+
+    /** 读取最近一次部署的诊断日志。 */
+    fun getDiagLog(context: Context): String? {
+        return try {
+            val logFile = File(sandboxDir(context), "setup-diag.log")
+            if (logFile.exists()) logFile.readText() else null
+        } catch (_: Throwable) { null }
+    }
+
+    /** 重置沙箱（清掉 rootfs 与状态）。 */
+    fun reset(context: Context) {
+        scope.launch {
+            sandboxDir(context).deleteRecursively()
+            _state.value = SandboxState.NotInstalled
+        }
+    }
+}

@@ -1,0 +1,161 @@
+# ============================================================================
+# PenAi 云端发布（release）
+#
+# 触发：push tag v*（如 v1.0.0 / v1.1.8）
+# 内容：与 build.yml 同款 SDK 环境 → Secrets 注入签名凭证 → :app:assembleFullRelease
+#       （Gradle 直签，与基座 v1.0.86+ 已发布包同链路）→ scripts/sign.sh 幂等校验/补签
+#       → 产物附带到对应 GitHub Release。
+#
+# 签名红线（基座 AGENTS.md，优先级高于本文件任何配置）：
+#   · workflow 内不写死任何密钥/口令，全部经 GitHub Secrets 注入环境变量；
+#   · 凭证变量名与基座 scripts/sign.sh / scripts/lib/common.sh 完全对齐
+#     （ZORV_KEYSTORE / ZORV_KEY_ALIAS / ZORV_STORE_PASS / ZORV_KEY_PASS），
+#     common.sh 的凭证解析优先级：调用方环境变量（即本 CI 注入）> keystore.properties
+#     > ~/.zorvai-signing/env.sh，因此 CI 注入优先生效；
+#   · 日志中禁止回显口令；仅允许输出公开的证书 SHA-256 指纹。
+#   Secrets 清单与配置方法见同目录 README.md。
+# ============================================================================
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # gh release 创建/上传产物需要
+
+env:
+  # 同 build.yml：阿里云镜像优先策略由 settings.gradle.kts（依赖/插件）与
+  # gradle-wrapper.properties（发行包）承载，CI 不改写仓库地址。
+  GRADLE_OPTS: "-Dfile.encoding=UTF-8"
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    # 超时预估：release 只构建 full 风味（仍含 MNN+llama.cpp+app 三处 NDK 编译），
+    # 冷缓存约 30~50 分钟 + 签名校验，留 120 分钟余量。
+    timeout-minutes: 120
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 17（Temurin）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: 安装 Android SDK 组件
+        uses: android-actions/setup-android-sdk@v3
+        with:
+          packages: |
+            cmdline-tools;latest
+            platforms;android-36
+            build-tools;36.0.0
+            ndk;27.0.12077973
+            cmake;3.22.1
+
+      - name: 缓存 Gradle 依赖与 wrapper（actions/cache）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties', 'gradle/libs.versions.toml') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: 安装 Gradle（含依赖/构建缓存）
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 确保 gradlew 可执行
+        run: chmod +x ./gradlew
+
+      # 先校验 Secrets 配齐再跑 40 分钟构建，fail fast；只列变量名不涉及任何值。
+      - name: 预检签名 Secrets
+        run: |
+          missing=()
+          [ -n "${{ secrets.ZORV_KEYSTORE_BASE64 }}" ] || missing+=("ZORV_KEYSTORE_BASE64（密钥库 .jks 的 base64）")
+          [ -n "${{ secrets.ZORV_STORE_PASS }}" ] || missing+=("ZORV_STORE_PASS（keystore 口令）")
+          [ -n "${{ secrets.ZORV_KEY_PASS }}" ] || missing+=("ZORV_KEY_PASS（私钥口令）")
+          [ -n "${{ secrets.ZORV_KEY_ALIAS }}" ] || missing+=("ZORV_KEY_ALIAS（key 别名）")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::缺少 Secrets：${missing[*]}；配置方法见 .github/workflows/README.md"
+            exit 1
+          fi
+          echo "签名 Secrets 已配置（值不回显）"
+
+      # 密钥库内容经 base64 Secret 解码落到 runner 临时目录（600 权限），
+      # 路径通过 ZORV_KEYSTORE 注入，不落项目目录、不进 git。
+      - name: 解码签名密钥库
+        env:
+          KEYSTORE_B64: ${{ secrets.ZORV_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/penai-signing"
+          printf %s "$KEYSTORE_B64" | base64 -d > "${RUNNER_TEMP}/penai-signing/penai-release.jks"
+          chmod 600 "${RUNNER_TEMP}/penai-signing/penai-release.jks"
+          echo "密钥库已解码（${#KEYSTORE_B64} 字节 base64 → penai-release.jks）"
+
+      # 与基座符号对齐的凭证环境变量：sign.sh / common.sh 直接消费这四个名字。
+      # keystore.properties 供 app/build.gradle.kts 的 signingConfigs 使用
+      # （同样是配置期强制求值，与 build.yml 的占位文件是同一个机制，但这里是真凭证）；
+      # 该文件已被 .gitignore 忽略，不会提交。
+      - name: 写入 keystore.properties
+        env:
+          ZORV_KEYSTORE: ${{ runner.temp }}/penai-signing/penai-release.jks
+          ZORV_KEY_ALIAS: ${{ secrets.ZORV_KEY_ALIAS }}
+          ZORV_STORE_PASS: ${{ secrets.ZORV_STORE_PASS }}
+          ZORV_KEY_PASS: ${{ secrets.ZORV_KEY_PASS }}
+        run: |
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$ZORV_KEYSTORE" "$ZORV_STORE_PASS" "$ZORV_KEY_ALIAS" "$ZORV_KEY_PASS" \
+            > keystore.properties
+          echo "keystore.properties 已生成（口令不回显）"
+
+      # 宿主 release：full 风味是唯一有 release 变体的风味（fdroid 无 release），
+      # 与基座 scripts/sign.sh 内部使用的任务名一致（:app:assembleFullRelease）。
+      - name: 构建 Full Release（Gradle 直签）
+        run: ./gradlew :app:assembleFullRelease --stacktrace
+
+      # scripts/sign.sh 幂等：产物已与目标密钥同签名则跳过重签，并做最终
+      # 「APK 证书指纹 == 密钥库证书指纹」一致性校验；若万一未签（-Punsigned
+      # 路径或配置漂移）则自动 zipalign + apksigner 补签到 outputs/.../signed/。
+      # 命令行传 APK 路径时 sign.sh 跳过内部构建，不会重复 40 分钟编译。
+      - name: 签名校验 / 幂等补签（scripts/sign.sh）
+        env:
+          ZORV_KEYSTORE: ${{ runner.temp }}/penai-signing/penai-release.jks
+          ZORV_KEY_ALIAS: ${{ secrets.ZORV_KEY_ALIAS }}
+          ZORV_STORE_PASS: ${{ secrets.ZORV_STORE_PASS }}
+          ZORV_KEY_PASS: ${{ secrets.ZORV_KEY_PASS }}
+        run: |
+          apk="$(find app/build/outputs/apk/full/release -maxdepth 1 -name '*.apk' | head -n1)"
+          [ -n "$apk" ] || { echo "::error::未找到 full/release APK 产物"; exit 1; }
+          scripts/sign.sh "$apk"
+
+      - name: 计算 SHA-256 校验和
+        run: |
+          find app/build/outputs/apk -name '*.apk' | sort | xargs sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 上传 Release 产物（workflow artifact）
+        uses: actions/upload-artifact@v4
+        with:
+          name: penai-full-release
+          path: |
+            app/build/outputs/apk/**/*.apk
+            SHA256SUMS.txt
+          retention-days: 30
+
+      # 附带到 git tag 对应的 GitHub Release；tag 未预创建 Release 时自动创建。
+      - name: 附带产物到 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "PenAi $tag" --generate-notes
+          fi
+          apks="$(find app/build/outputs/apk -name '*.apk' | sort | tr '\n' ' ')"
+          # shellcheck disable=SC2086
+          gh release upload "$tag" $apks SHA256SUMS.txt --clobber
+          echo "已上传至 Release：$tag"

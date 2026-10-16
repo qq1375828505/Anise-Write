@@ -1,0 +1,457 @@
+PenAi
+Copyright 2025-2026 PenAi (qq1375828505)
+
+This product includes software developed by third parties. PenAi is a
+derivative work based on the ZorvAI codebase (see the first section
+below). The upstream source code is provided under the Apache License,
+Version 2.0. Bundled third-party components retain their own licenses,
+summarized below. Where a component is distributed under a copyleft
+license (GPL / LGPL / MPL / EPL), the corresponding source is made
+available alongside this repository in accordance with that license's
+obligations.
+
+----------------------------------------------------------------------
+UPSTREAM BASE ATTRIBUTION
+----------------------------------------------------------------------
+
+ZorvAI (upstream base of PenAi)
+  License: Apache-2.0
+  Copyright: 2025-2026 Quro AI
+  Source:  https://github.com/Quor-a/ZorvAI
+  Note:    PenAi is derived from this codebase (web-novel writing AI
+           Agent positioning). All third-party attribution entries of
+           the upstream NOTICE are inherited below in full; see
+           "ADDITIONAL COMPONENTS" for entries added during the Phase 7a
+           license audit.
+
+PenAi (this application)
+  License: Apache-2.0
+  Source:  https://github.com/qq1375828505/PenAi
+
+AndroidX / Jetpack / Jetpack Compose / Material Components
+  License: Apache-2.0
+  Copyright: Google LLC
+
+OkHttp
+  License: Apache-2.0
+  Copyright: Square, Inc.
+
+Kotlin / Kotlin Coroutines
+  License: Apache-2.0
+  Copyright: JetBrains s.r.o.
+
+Shizuku (dev.rikka.shizuku:api / :provider)
+  License: Apache-2.0
+  Copyright: Rikka
+
+android-image-cropper
+  License: Apache-2.0
+  Copyright: Vanniktech
+
+Apache Commons Compress
+  License: Apache-2.0
+  Copyright: The Apache Software Foundation
+
+Apache POI (poi / poi-ooxml)
+  License: Apache-2.0
+  Copyright: The Apache Software Foundation
+  Note:    Spreadsheet/Word document reading for document processing
+           (docx/xlsx parsing).
+
+stax-api
+  License: Apache-2.0
+  Copyright: The Apache Software Foundation
+  Note:    Streaming API for XML (StAX) used by Apache POI.
+
+QuickJS
+  License: MIT
+  Copyright: Fabrice Bellard
+
+Sherpa-NCNN (k2-fsa)
+  License: Apache-2.0 / BSD-3-Clause
+
+ncnn (Tencent)
+  License: BSD-3-Clause
+  Source:  https://github.com/Tencent/ncnn
+
+GeckoView (Mozilla)
+  License: MPL-2.0 (file-level copyleft; unmodified upstream build, source
+           available from Mozilla per MPL-2.0 §3.2)
+  Source:  https://maven.mozilla.org/maven2/
+  Note:    Optional built-in browser engine. Per the PenAi planning
+           document §2.7, general rendering can fall back to the system
+           WebView; if this dependency is removed in a later phase, this
+           entry is removed accordingly.
+
+Health Connect (Google)
+  License: Apache-2.0
+  Copyright: Google LLC
+  Note:    Android health data connection client (connect-client).
+
+JUnit
+  License: EPL-2.0 (Eclipse Public License 2.0)
+  Copyright: JUnit team
+  Note:    Unit testing framework (testImplementation only).
+
+ZXing (com.google.zxing:core)
+  License: Apache-2.0
+  Copyright: ZXing authors
+  Note:    QR/barcode scanning (core only).
+
+Eclipse JGit (org.eclipse.jgit)
+  License: EPL-2.0 (Eclipse Public License 2.0)
+  Copyright: Eclipse Foundation
+  Note:    Pure-Java Git implementation used by the Scripting GitHostApi
+           (init/status/add/commit/log/branch/checkout). Runtime dependency
+           of the on-device scripting sandbox.
+
+----------------------------------------------------------------------
+OFFLINE AI MODEL ENGINES (source-compiled, full flavor only)
+----------------------------------------------------------------------
+
+MNN (Mobile Neural Network, Alibaba)
+  License: Apache-2.0
+  Copyright: 2018 Alibaba Group
+  Source:  https://github.com/alibaba/MNN
+  Note:    Build pulls in KleidiAI (Arm) as a CMake sub-dependency
+           (Apache-2.0 / BSD-3-Clause, https://gitlab.arm.com/kleidiai).
+
+llama.cpp
+  License: MIT
+  Copyright: 2023-2026 The ggml authors
+  Source:  https://github.com/ggml-org/llama.cpp
+
+----------------------------------------------------------------------
+FRONTEND ASSETS (JavaScript libraries bundled in assets/www/)
+----------------------------------------------------------------------
+
+Three.js
+  License: MIT
+  Copyright: 2010-2021 Three.js Authors
+  Source:  https://github.com/mrdoob/three.js
+  Note:    3D rendering engine used for GLB avatar display.
+
+Draco (Google)
+  License: Apache-2.0
+  Copyright: Google LLC
+  Source:  https://github.com/google/draco
+  Note:    3D data compression/decompression library (draco_decoder.wasm).
+
+CodeMirror 5.65.16
+  License: MIT
+  Source:  https://github.com/codemirror/codemirror
+  Note:    Code editor component used in the built-in editor.
+
+Brython
+  License: BSD-3-Clause
+  Copyright: 2017-2023 Pierre Quentel
+  Source:  https://github.com/brython-dev/brython
+  Note:    Browser Python runtime (brython.min.js).
+
+Mermaid
+  License: MIT
+  Source:  https://github.com/mermaid-js/mermaid
+  Note:    Diagram/chart rendering library (mermaid.min.js).
+
+Chart.js
+  License: MIT
+  Source:  https://github.com/chartjs/Chart.js
+  Note:    Charting library (assets/libs/chart.min.js).
+
+D3.js
+  License: ISC
+  Copyright: Mike Bostock
+  Source:  https://github.com/d3/d3
+  Note:    Data-driven document manipulation (assets/libs/d3.min.js).
+
+ECharts (Apache)
+  License: Apache-2.0
+  Copyright: Apache Software Foundation / Baidu
+  Source:  https://github.com/apache/echarts
+  Note:    Charting library (assets/libs/echarts.min.js).
+
+Plotly.js
+  License: MIT
+  Source:  https://github.com/plotly/plotly.js
+  Note:    Scientific charting library (assets/libs/plotly.min.js).
+
+KaTeX
+  License: MIT
+  Copyright: Khan Academy
+  Source:  https://github.com/KaTeX/KaTeX
+  Note:    Math typesetting (assets/libs/katex.min.js / katex.min.css).
+
+marked.js
+  License: MIT
+  Copyright: Christopher Jeffrey
+  Source:  https://github.com/markedjs/marked
+  Note:    Markdown parser/renderer (assets/libs/marked.min.js).
+
+highlight.js
+  License: BSD-3-Clause
+  Copyright: Ivan Sagalaev
+  Source:  https://github.com/highlightjs/highlight.js
+  Note:    Syntax highlighting (assets/libs/highlight.min.js).
+
+----------------------------------------------------------------------
+GENERATIVE UI RUNTIME (bundled in genui/src/main/assets/genui/lib/)
+----------------------------------------------------------------------
+
+React / ReactDOM
+  License: MIT
+  Copyright: Meta Platforms, Inc.
+  Source:  https://github.com/facebook/react
+  Note:    UI runtime for AI-generated components (zorv/ui code blocks).
+           Bundled version 18.3.1.
+
+Recharts
+  License: MIT
+  Source:  https://github.com/recharts/recharts
+  Note:    Charting components inside the generative UI runtime.
+
+Lucide (icons)
+  License: ISC
+  Source:  https://github.com/lucide-icons/lucide
+  Note:    Icon set used by the generative UI runtime.
+
+Sucrase
+  License: MIT
+  Copyright: Alan Pierce
+  Source:  https://github.com/alangpierce/sucrase
+  Note:    JSX/TS transpiler used to run AI-generated code on-device.
+
+----------------------------------------------------------------------
+ANDROID UI / LAYOUT DEPENDENCIES (Gradle, compile-time)
+----------------------------------------------------------------------
+
+Coil (io.coil-kt:coil-compose)
+  License: Apache-2.0
+  Copyright: Coil contributors
+  Source:  https://github.com/coil-kt/coil
+  Note:    Image loading/async decoding in Compose UI (coil-compose).
+
+Facebook Yoga (com.facebook.yoga:yoga)
+  License: MIT
+  Copyright: Meta Platforms, Inc.
+  Source:  https://github.com/facebook/yoga
+  Note:    Flexbox layout engine backing the GenUI native canvas
+           (io.gencanvas).
+
+AndroidSVG (com.caverock:androidsvg)
+  License: Apache-2.0
+  Copyright: Caverock Ltd.
+  Source:  https://github.com/BigBadaboom/androidsvg
+  Note:    SVG rendering fallback for the GenUI native canvas.
+
+----------------------------------------------------------------------
+DOCUMENT PROCESSING LIBRARIES (bundled in assets/docs/)
+----------------------------------------------------------------------
+
+pdf.js (Mozilla)
+  License: Apache-2.0
+  Copyright: 2023 Mozilla Foundation
+  Source:  https://github.com/nicolo-ribaudo/pdfjs-dist
+  Note:    PDF rendering engine (pdf.min.js, pdf.worker.min.js, cmaps/).
+
+Adobe CMap Resources
+  License: BSD-3-Clause (Adobe Systems BSD-like license)
+  Copyright: 1990-2009 Adobe Systems Incorporated
+  Note:    PDF character map files (assets/docs/cmaps/*.bcmap).
+
+Mammoth.js
+  License: BSD-2-Clause
+  Copyright: 2013-2024 Michael Williamson
+  Source:  https://github.com/mwilliamson/mammoth.js
+  Note:    DOCX to HTML converter (mammoth.js).
+
+SheetJS (xlsx.js)
+  License: Apache-2.0
+  Copyright: 2013-present SheetJS
+  Source:  https://github.com/SheetJS/sheetjs
+  Note:    Spreadsheet parser/writer (xlsx.full.min.js).
+
+----------------------------------------------------------------------
+PDF FONTS (bundled in assets/docs/standard_fonts/)
+----------------------------------------------------------------------
+
+Liberation Sans
+  License: SIL Open Font License 1.1
+  Copyright: 2010 Google Corporation, 2012 Red Hat, Inc.
+  Source:  https://github.com/liberationfonts/liberation-fonts
+  Note:    Standard PDF font (LiberationSans-*.ttf).
+
+Foxit PDF Fonts
+  License: BSD-3-Clause
+  Copyright: 2014 PDFium Authors (Google)
+  Note:    PDF standard fonts (Foxit*.pfb).
+
+----------------------------------------------------------------------
+NATIVE TOOL LIBRARIES (pre-compiled .so, full flavor only)
+----------------------------------------------------------------------
+
+proot
+  License: GPL-2.0-or-later
+  Copyright: 2013 STMicroelectronics
+  Source:  https://github.com/proot-me/proot
+  Note:    Distributed as pre-compiled libproot.so. Corresponding source
+           is available at the upstream repository per GPL-2.0 obligations.
+
+talloc
+  License: LGPL-3.0-or-later
+  Copyright: 2004-2005 Andrew Tridgell, 2006 Stefan Metzmacher
+  Source:  https://talloc.samba.org
+  Note:    Distributed as pre-compiled libtalloc.so, dynamically linked.
+           Source available at upstream per LGPL-3.0 obligations.
+
+Alpine Linux Environment (bundled in assets/linux_env/alpine.tar.gz)
+  License: GPL-2.0+ / MIT / BSD (mixed)
+  Note:    Contains musl libc (MIT), BusyBox (GPL-2.0), apk package
+           manager, and other system utilities for the in-app Linux
+           environment (proot + Alpine aarch64).
+
+----------------------------------------------------------------------
+ON-DEVICE PYTHON 3.14 RUNTIME (bundled in app/src/full/, full flavor)
+----------------------------------------------------------------------
+
+CPython 3.14 (libpython3.14.so + stdlib assets)
+  License: PSF-2.0 (Python Software Foundation License 2.0)
+  Copyright: 2001-2026 Python Software Foundation
+  Source:  https://www.python.org
+  Note:    On-device Python interpreter powering the dialog Python
+           runner (PyEngine) and the Scripting sandbox. Standard library
+           modules (lib-dynload/*.so) distributed under the same license.
+
+OpenSSL (libssl_python.so / libcrypto_python.so)
+  License: Apache-2.0 (OpenSSL 3.x)
+  Copyright: The OpenSSL Project Authors
+  Source:  https://github.com/openssl/openssl
+  Note:    TLS/crypto backend linked into the Python build.
+
+SQLite (libsqlite3_python.so)
+  License: Public Domain
+  Copyright: SQLite Consortium
+  Source:  https://www.sqlite.org
+  Note:    Embedded SQL database linked into the Python build.
+
+libbash.so
+  License: MIT (bash, distributed with GNU GPL-3.0-or-later core)
+  Note:    Shell binary used by the in-app terminal / scripting sandbox.
+
+busybox (libbusybox.so)
+  License: GPL-2.0-or-later
+  Copyright: Erik Andersen / BusyBox authors
+  Note:    Multi-call binary providing core Unix utilities in the
+           on-device Linux environment.
+
+org.json — org.json:json:20240303
+  License: Public Domain
+  Note:    Upstream removed the "The Software shall be used for Good, not Evil"
+           JSON License clause in version 20220924; this pinned version
+           (20240303) is released to the public domain. The Android platform
+           also bundles org.json under AOSP Apache-2.0, so this explicit Maven
+           dependency is optional for compile-time.
+
+----------------------------------------------------------------------
+ADDITIONAL COMPONENTS (added by the PenAi Phase 7a NOTICE audit;
+declared in the build files but missing from the inherited upstream list)
+----------------------------------------------------------------------
+
+Room (androidx.room:room-runtime / room-ktx / room-compiler)
+  License: Apache-2.0
+  Copyright: Google LLC
+  Note:    Persistence layer of :cluster-storage. The :cluster-* modules
+           are scheduled for hard trimming in Phase 9; this entry will be
+           removed together with them.
+
+SQLCipher (net.zetetic:sqlcipher-android)
+  License: BSD-style license
+  Copyright: (c) 2016 Zetetic, LLC
+  Source:  https://github.com/sqlcipher/sqlcipher-android
+  Note:    Encrypted database engine used by :cluster-storage
+           (arm64-v8a build only, see abiFilters).
+
+SQLite KTX (androidx.sqlite:sqlite-ktx)
+  License: Apache-2.0
+  Copyright: Google LLC
+
+Markwon (io.noties.markwon:core / ext-tables / ext-strikethrough)
+  License: Apache-2.0
+  Copyright: Markwon contributors (noties.io)
+  Source:  https://github.com/noties/Markwon
+  Note:    Markdown rendering (tables / strikethrough) in the built-in
+           GenUI agent.
+
+kaml (com.charleskorn.kaml)
+  License: Apache-2.0
+  Copyright: Charles Korn
+  Source:  https://github.com/charleskorn/kaml
+  Note:    YAML parsing for the GenUI FlatDoc renderer.
+
+Bouncy Castle (bcpkix-jdk18on / bcprov-jdk18on)
+  License: Bouncy Castle Licence (MIT-style)
+  Copyright: (c) 2000-2024 The Legion of the Bouncy Castle Inc.
+  Source:  https://www.bouncycastle.org
+  Note:    On-device signing engine (keystore / X.509): the platform
+           org.bouncycastle is namespaced since API 28 and unreachable
+           from app code.
+
+WorkManager (androidx.work:work-runtime-ktx)
+  License: Apache-2.0
+  Copyright: Google LLC
+  Note:    Background periodic tasks (provider health checks, heartbeat).
+
+Navigation Compose (androidx.navigation:navigation-compose)
+  License: Apache-2.0
+  Copyright: Google LLC
+
+androidx.webkit (androidx.webkit:webkit)
+  License: Apache-2.0
+  Copyright: Google LLC
+  Note:    WebViewAssetLoader for in-app document preview (pdf.js worker
+           same-origin fix).
+
+androidx.concurrent (concurrent-futures)
+  License: Apache-2.0
+  Copyright: Google LLC
+  Note:    Explicit keep of AbstractResolvableFuture for R8.
+
+kotlinx.serialization (kotlinx-serialization-json)
+  License: Apache-2.0
+  Copyright: JetBrains s.r.o.
+
+Robolectric (org.robolectric:robolectric)
+  License: Apache-2.0
+  Copyright: The Robolectric Authors
+  Source:  https://github.com/robolectric/robolectric
+  Note:    Android-framework unit testing (testImplementation only).
+
+----------------------------------------------------------------------
+TRADEMARKS
+----------------------------------------------------------------------
+
+"Quro AI" and the Quro logo are trademarks of Quro AI. This license does
+not grant rights to use these trademarks except as required to describe
+the origin of the software.
+
+"PenAi" is the project name of this derivative work. This NOTICE does not
+grant rights to use the upstream trademarks above.
+
+----------------------------------------------------------------------
+PENAI PHASE 7a LICENSE AUDIT RECORD (2026-10, maintenance note only)
+----------------------------------------------------------------------
+（中文工程留痕，非法律条款）
+
+1. 审计范围：对照 gradle/libs.versions.toml、各模块 build.gradle.kts 的
+   dependencies、assets/ 内置资源、预编译 .so 与上游 NOTICE 逐项比对。
+2. 审计结论：上游 NOTICE 已覆盖绝大多数组件；缺口（本文 ADDITIONAL
+   COMPONENTS 一节补齐）为 Room、SQLCipher、SQLite KTX、Markwon、kaml、
+   BouncyCastle、WorkManager、Navigation Compose、androidx.webkit、
+   androidx.concurrent、kotlinx.serialization、Robolectric（仅测试期）。
+3. 待跟踪：
+   · Phase 9 硬裁剪 :cluster-* 后，Room / SQLCipher / SQLite KTX 条目
+     需同步移除；
+   · 本清单按 full 风味全量列示；fdroid 风味不含预编译原生库与本地
+     推理引擎；
+   · GeckoView（MPL-2.0）为可选依赖，若后续移除，对应条目同步删除；
+   · 大型二进制资源（模型文件）走 Release Assets，不进 git、不在本
+     清单重复列示（其许可证以各自上游为准）。

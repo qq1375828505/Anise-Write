@@ -1,0 +1,10 @@
+{
+  "__note": "zxwidget 两份编译器的已知漂移基线。由 zxwidget_parity_check.js --bless 生成。这不是「允许的差异」，而是「尚未收敛、且已冻结」：两侧任一改动都会让校验 FAIL，逼你同步另一边或再次 --bless（并说明为什么）。收敛掉一条就 --bless 一次。",
+  "module": "app/src/main/assets/zx/zxwidget.js",
+  "card": "app/src/main/assets/zx_card_runtime.html",
+  "total_blocks": {
+    "module": 61,
+    "card": 61
+  },
+  "blocks": {}
+}

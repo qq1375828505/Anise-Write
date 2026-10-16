@@ -1,0 +1,265 @@
+package com.ai.assistance.mnn
+
+/**
+ * MNN LLM Engine Native JNI 接口
+ * 基于 MNN 官方 LLM 引擎实现
+ */
+object MNNLlmNative {
+    
+    init {
+        MNNLibraryLoader.loadLibraries()
+    }
+    
+    /**
+     * 从配置文件创建 LLM 实例（不加载模型）
+     * @param configPath 配置文件路径 (llm_config.json)
+     * @return LLM 指针，失败返回 0
+     * 注意：创建后需要先调用 nativeSetConfig 设置配置，然后调用 nativeLoadLlm 加载模型
+     */
+    @JvmStatic
+    external fun nativeCreateLlm(configPath: String): Long
+    
+    /**
+     * 加载 LLM 模型（必须在设置配置后调用）
+     * @param llmPtr LLM 指针
+     * @return 是否加载成功
+     */
+    @JvmStatic
+    external fun nativeLoadLlm(llmPtr: Long): Boolean
+    
+    /**
+     * 释放 LLM 实例
+     * @param llmPtr LLM 指针
+     */
+    @JvmStatic
+    external fun nativeReleaseLlm(llmPtr: Long)
+    
+    /**
+     * 将文本编码为 token IDs
+     * @param llmPtr LLM 指针
+     * @param text 输入文本
+     * @return token ID 数组
+     */
+    @JvmStatic
+    external fun nativeTokenize(llmPtr: Long, text: String): IntArray?
+    
+    /**
+     * 将单个 token ID 解码为文本
+     * @param llmPtr LLM 指针
+     * @param token token ID
+     * @return 解码后的文本
+     */
+    @JvmStatic
+    external fun nativeDetokenize(llmPtr: Long, token: Int): String?
+
+    @JvmStatic
+    external fun nativeCountTokens(llmPtr: Long, text: String): Int
+    
+    /**
+     * 生成文本（非流式）
+     * @param llmPtr LLM 指针
+     * @param prompt 输入提示
+     * @param maxTokens 最大生成 token 数
+     * @param callback 回调接口（用于流式输出）
+     * @return 生成的完整文本
+     */
+    @JvmStatic
+    external fun nativeGenerate(
+        llmPtr: Long,
+        prompt: String,
+        maxTokens: Int,
+        callback: GenerationCallback?
+    ): String?
+    
+    /**
+     * 流式生成文本（带历史记录）
+     * @param llmPtr LLM 指针
+     * @param history 对话历史 (Pair<role, content>)
+     * @param maxTokens 最大生成 token 数
+     * @param callback 回调接口
+     * @return 是否成功
+     */
+    @JvmStatic
+    external fun nativeGenerateStream(
+        llmPtr: Long,
+        history: List<Pair<String, String>>,
+        maxTokens: Int,
+        callback: GenerationCallback
+    ): Boolean
+
+    @JvmStatic
+    external fun nativeGenerateStreamStructured(
+        llmPtr: Long,
+        messagesJson: String,
+        toolsJson: String?,
+        maxTokens: Int,
+        callback: GenerationCallback
+    ): Boolean
+
+    @JvmStatic
+    external fun nativeApplyChatTemplateWithHistory(
+        llmPtr: Long,
+        history: List<Pair<String, String>>
+    ): String?
+
+    @JvmStatic
+    external fun nativeApplyChatTemplateWithStructuredMessages(
+        llmPtr: Long,
+        messagesJson: String,
+        toolsJson: String?
+    ): String?
+
+    @JvmStatic
+    external fun nativeCountTokensWithHistory(
+        llmPtr: Long,
+        history: List<Pair<String, String>>
+    ): Int
+
+    @JvmStatic
+    external fun nativeCountTokensWithStructuredMessages(
+        llmPtr: Long,
+        messagesJson: String,
+        toolsJson: String?
+    ): Int
+
+    /**
+     * 导出当前生效的 LLM 配置。
+     * @param llmPtr LLM 指针
+     * @return JSON 字符串，失败返回 null
+     */
+    @JvmStatic
+    external fun nativeDumpConfig(llmPtr: Long): String?
+
+    /**
+     * 导出最近一次推理上下文信息。
+     * @param llmPtr LLM 指针
+     * @return JSON 字符串，失败返回 null
+     */
+    @JvmStatic
+    external fun nativeGetContextInfo(llmPtr: Long): String?
+    
+    /**
+     * 应用聊天模板
+     * @param llmPtr LLM 指针
+     * @param userContent 用户输入内容
+     * @return 应用模板后的文本
+     */
+    @JvmStatic
+    external fun nativeApplyChatTemplate(llmPtr: Long, userContent: String): String?
+    
+    /**
+     * 重置 LLM 状态（清除 KV-Cache 和历史）
+     * @param llmPtr LLM 指针
+     */
+    @JvmStatic
+    external fun nativeReset(llmPtr: Long)
+    
+    /**
+     * 设置 LLM 配置（用于运行时修改配置）
+     * @param llmPtr LLM 指针
+     * @param configJson JSON 格式的配置字符串
+     * @return 是否设置成功
+     */
+    @JvmStatic
+    external fun nativeSetConfig(llmPtr: Long, configJson: String): Boolean
+
+    /**
+     * 注入模型**真实**使用的思考段标签（开 / 闭两组）。
+     *
+     * 原生分流器（ThinkSplitter）默认只认 `<think>` / `<thinking>` / 全角三种形态，
+     * 而真实模型可能用 `[THINK]`、`<|channel|>analysis<|message|>` 之类 ——
+     * 不注入的话，那些模型的思考段在原生**根本不被识别**，整段推理当正文上屏；
+     * 而 Kotlin 侧的能力探测已经判为"会产出思考段"，于是症状变成
+     * "开关开了、剥离却没生效"，极难定位。
+     *
+     * 幂等：重复调用不会打断进行中的段。
+     * @return 注入是否被接受（空数组也算成功 —— 那是"探测不到标签"的常态）
+     */
+    external fun nativeSetThinkMarkers(
+        llmPtr: Long,
+        openTags: Array<String>,
+        closeTags: Array<String>
+    ): Boolean
+
+    /**
+     * 注册或清除音频数据回调。
+     * @param llmPtr LLM 指针
+     * @param callback 为 null 时表示清除回调
+     * @return 是否设置成功
+     */
+    @JvmStatic
+    external fun nativeSetAudioDataCallback(
+        llmPtr: Long,
+        callback: AudioDataCallback?
+    ): Boolean
+
+    /**
+     * 触发语音波形生成。
+     * 仅对支持语音输出的模型有效。
+     * @param llmPtr LLM 指针
+     * @return 是否执行成功
+     */
+    @JvmStatic
+    external fun nativeGenerateWavform(llmPtr: Long): Boolean
+    
+    /**
+     * 取消当前的生成任务
+     * @param llmPtr LLM 指针
+     */
+    @JvmStatic
+    external fun nativeCancel(llmPtr: Long)
+
+    /**
+     * 取走最近一次原生失败的原因（读后即清）。
+     *
+     * 存在原因：[nativeGenerateStreamStructured] 只能返回 boolean，失败细节全落在 logcat，
+     * 而手机侧没有 adb，用户只能看到「未产生任何输出」这种没有信息量的提示。
+     *
+     * @param llmPtr LLM 指针
+     * @return `"错误码|英文补充说明"`，无错误时返回 null。错误码见
+     *   [MnnNativeError]（E_MNN_NO_MESSAGES / E_MNN_BAD_MESSAGES / E_MNN_NO_VALID_MESSAGE /
+     *   E_MNN_TEMPLATE_THROW / E_MNN_TEMPLATE_EMPTY / E_MNN_EMPTY_TOKENS / E_MNN_STREAM_THROW）。
+     */
+    @JvmStatic
+    external fun nativeGetLastError(llmPtr: Long): String?
+    
+    /**
+     * 生成回调接口
+     */
+    interface GenerationCallback {
+        /**
+         * 当生成新的 token 时调用
+         * @param token 生成的文本片段
+         * @return true 继续生成，false 停止生成
+         */
+        fun onToken(token: String): Boolean
+
+        /**
+         * 思考段增量（模型 `<think>…</think>` 内部内容）。
+         *
+         * 引擎侧 L4 分流器已经把思考标签吃掉、并把内容拆成两个通道，
+         * 所以这里拿到的是**不带标签的纯净思考文本**，直接送 UI 的「思考区」即可。
+         *
+         * 声明为**抽象方法**而不是给默认实现，是刻意的：
+         * 若默认实现转调 [onToken]，未升级的实现类会把不带标签的思考原文当正文
+         * 吐出去（实时上屏），而且编译期毫无提示。
+         * 抽象方法能让**所有实现类编译报错**，强制每个实现点显式处理这个通道。
+         *
+         * 原生侧按 `onThinking(Ljava/lang/String;)Z` 用 GetMethodID 探测，
+         * 探测不到时会退化成"把思考内容包回 `<think>` 标签走 onToken"，
+         * 因此这里**必须**与原生签名严格一致。
+         *
+         * @return true 继续生成，false 停止生成
+         */
+        fun onThinking(token: String): Boolean
+    }
+
+    /**
+     * 当模型输出音频波形时触发。
+     * 返回 true 表示继续，false 表示停止音频输出。
+     */
+    interface AudioDataCallback {
+        fun onAudioData(audioData: FloatArray, isLastChunk: Boolean): Boolean
+    }
+}
+

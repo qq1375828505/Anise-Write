@@ -1,0 +1,202 @@
+package com.ai.assistance.quro.core.agent.loop
+import com.ai.assistance.quro.R
+import com.ai.assistance.quro.util.qstr
+
+import android.content.Context
+import com.ai.assistance.quro.core.agent.QuroAgentTrace
+
+/**
+ * 闭环执行器（感知-判断-执行-反馈-校验-修正 的统一主循环）。
+ *
+ * 它不关心"怎么跑工具"，只负责：
+ * 1. 调用上层提供的 [execOnce]（真正的执行体，并负责把"是否真执行"分类成 [ExecResult]）；
+ * 2. 用 [Verifier] 判断"结果是否符合预期"；
+ * 3. 用 [ScenarioFailurePolicy] 按失败类型+轮次自动决策 重试/修正/回滚/升级；
+ * 4. 全程经 [LoopTrace] 发射轨迹、终端失败时经 [ClosedLoopDiag] 落盘。
+ *
+ * 这是把 GenUI 的 verifyGenUI 闭环推广到「所有 Agent/Tool 执行层」的通用件。
+ */
+class ClosedLoopExecutor(
+    private val trace: LoopTrace = LoopTrace,
+    private val diag: ClosedLoopDiag = ClosedLoopDiag,
+) {
+
+    /** issue #16：长耗时工具/子代理的进度心跳间隔（毫秒）。工具跑超过此阈值后开始每间隔发一条「执行中」。 */
+    private companion object {
+        const val HEARTBEAT_INTERVAL_MS = 5000L
+    }
+
+
+    /**
+     * 单工具调用的闭环运行。
+     *
+     * @param scenario 场景键（如 "tool"/"skill"/"plugin"/"network"/"file"），用于查 [FailurePolicyRegistry]。
+     * @param name 工具名。
+     * @param arguments 入参 JSON。
+     * @param execOnce 真正执行体：跑一次并把结果分类为 [ExecResult]。
+     * @param verifier 校验器，默认 [DefaultVerifier]。
+     * @param onModelCorrect 当策略决定 CORRECT 时回调（把修正指令压回模型）。返回 true 表示已处理、可进入下一轮。
+     * @return 最终 [ToolOutcome]。
+     */
+    suspend fun dispatch(
+        context: Context?,
+        scenario: String,
+        name: String,
+        arguments: String,
+        execOnce: suspend (attempt: Int) -> ExecResult,
+        verifier: Verifier = DefaultVerifier,
+        onModelCorrect: (suspend (ToolOutcome.Failure) -> Boolean)? = null,
+    ): ToolOutcome {
+        val policy = FailurePolicyRegistry.policyFor(scenario)
+        var attempt = 0
+        val history = mutableListOf<String>()
+
+        while (true) {
+            attempt++
+            if (attempt > policy.maxAttempts) {
+                val f = ToolOutcome.Failure(
+                    FailureType.UNKNOWN,
+                    "超出最大尝试次数(${policy.maxAttempts})，停止自动处理",
+                    attempt = attempt,
+                )
+                trace.status(name, "闭环终止·超预算", f.message)
+                diag.dump(context, name, arguments, history + f.message, scenario)
+                return f
+            }
+
+            trace.act(name, "执行 第${attempt}次", arguments.take(200))
+            // issue #16：长耗时工具/子代理的进度心跳。工具/子代理跑超过阈值后，
+            // 每 HEARTBEAT_INTERVAL_MS 发一条「执行中」状态到 AI 行动追踪面板，
+            // 用户不再面对「转圈但不知在干嘛」的黑洞。子代理复用本执行器，自动获得心跳。
+            val hbStart = System.currentTimeMillis()
+            val heartbeat = Thread {
+                try {
+                    while (!Thread.currentThread().isInterrupted) {
+                        Thread.sleep(HEARTBEAT_INTERVAL_MS)
+                        val secs = (System.currentTimeMillis() - hbStart) / 1000
+                        QuroAgentTrace.status(name, "⏳ 执行中·心跳", "工具 $name 已运行 ${secs}s")
+                    }
+                } catch (_: InterruptedException) { /* 正常结束 */
+                } catch (_: Throwable) { }
+            }
+            heartbeat.start()
+            val r = execOnce(attempt)
+            heartbeat.interrupt()
+
+            when (r) {
+                is ExecResult.Completed -> {
+                    trace.feedback(name, qstr(R.string.qk_01011), r.raw.take(300))
+                    val issues = verifier.verify(name, arguments, r.raw, attempt)
+                    val errors = issues.filter { it.severity == LoopIssue.Severity.ERROR }
+                    if (errors.isEmpty()) {
+                        val warns = issues.filter { it.severity == LoopIssue.Severity.WARN }.map { it.message }
+                        trace.verify(name, "校验通过·闭环成功", warns.joinToString("；").ifBlank { "OK" })
+                        return ToolOutcome.Success(r.raw, warns)
+                    }
+                    val msg = "校验未通过：" + errors.joinToString("；") { "${it.code}:${it.message}" }
+                    trace.verify(name, "校验发现不符合预期", msg)
+                    handleFailure(
+                        context, scenario, name, arguments, policy, attempt, history,
+                        ToolOutcome.Failure(FailureType.BUSINESS, msg, r.raw, attempt = attempt),
+                        onModelCorrect,
+                    )?.let { return it }
+                }
+
+                is ExecResult.Failed -> {
+                    trace.judge(name, "执行失败·${r.type}", r.message)
+                    handleFailure(
+                        context, scenario, name, arguments, policy, attempt, history,
+                        ToolOutcome.Failure(r.type, r.message, r.raw, r.cause, attempt),
+                        onModelCorrect,
+                    )?.let { return it }
+                }
+
+                is ExecResult.Terminal -> {
+                    // 不可恢复（未知工具 / 权限缺失且无法弹窗）：直接终止，不重试。
+                    trace.judge(name, "不可恢复·${r.type}", r.message)
+                    val f = ToolOutcome.Failure(r.type, r.message, attempt = attempt)
+                    diag.dump(context, name, arguments, history + "TERMINAL:${r.message}", scenario)
+                    return f
+                }
+            }
+        }
+    }
+
+    /**
+     * 失败决策：根据 policy 决定下一步。
+     * 返回非 null = 终态（直接返回调用方）；返回 null = 继续循环（重试/修正）。
+     */
+    private suspend fun handleFailure(
+        context: Context?,
+        scenario: String,
+        name: String,
+        arguments: String,
+        policy: ScenarioFailurePolicy,
+        attempt: Int,
+        history: MutableList<String>,
+        failure: ToolOutcome.Failure,
+        onModelCorrect: (suspend (ToolOutcome.Failure) -> Boolean)?,
+    ): ToolOutcome? {
+        val action = policy.decide(failure.failureType, attempt)
+        return when (action) {
+            RecoveryAction.RETRY -> {
+                // issue #16：重试对用户可见 —— 明确告知第几次失败、失败类型、还剩几次机会，
+                // 避免「同一工具静默重试多次」让用户以为卡死。
+                trace.status(
+                    name, "↻ 重试",
+                    "第${attempt}次执行失败（${failure.failureType}），正在自动重试（共 ${policy.maxAttempts} 次）",
+                )
+                history.add("a$attempt ${failure.failureType}→重试")
+                null
+            }
+            RecoveryAction.CORRECT -> {
+                if (onModelCorrect != null && onModelCorrect(failure)) {
+                    trace.correct(name, "决策·模型修正", "已压回模型修正指令")
+                    history.add("a$attempt ${failure.failureType}→模型修正")
+                    // 🔴 本轮**立即终止**并把失败交还上层，而不是 continue 空转：
+                    //   修正需要模型改参数后**重发一次完整调用**，引擎侧拿不到新参数，
+                    //   继续循环只会用同一份错参数重试到 maxAttempts，纯浪费预算。
+                    //   上层（QuroTool.execute）会把修正方向拼进 tool result，
+                    //   模型下一轮据此重发 —— 那才是「修正」真正发生的地方。
+                    return failure
+                } else {
+                    // 没有模型修正通道（如纯工具批处理）：退化为升级。
+                    trace.status(name, "决策·升级", "模型修正通道不可用，升级")
+                    val f = failure.copy(message = failure.message + "（需模型修正但当前不可用，已升级）")
+                    diag.dump(context, name, arguments, history + "a$attempt ${failure.failureType}→升级(无修正通道)", scenario)
+                    f
+                }
+            }
+            RecoveryAction.ROLLBACK -> {
+                trace.status(name, "决策·回滚", "不应用本次结果")
+                diag.dump(context, name, arguments, history + "a$attempt ${failure.failureType}→回滚", scenario)
+                failure
+            }
+            RecoveryAction.ESCALATE -> {
+                trace.status(name, "决策·升级", failure.message)
+                diag.dump(context, name, arguments, history + "a$attempt ${failure.failureType}→升级", scenario)
+                failure
+            }
+        }
+    }
+}
+
+/**
+ * 单次执行结果的分类（由 [ClosedLoopExecutor.dispatch] 的 execOnce 提供）。
+ * 这是闭环"感知"阶段的产物：把"是否真正执行"明确表达出来。
+ */
+sealed interface ExecResult {
+    /** 工具跑完且引擎判定为成功（具体是否符合预期由 Verifier 决定）。 */
+    data class Completed(val raw: String) : ExecResult
+
+    /** 执行出现故障，可按策略重试/升级。 */
+    data class Failed(
+        val type: FailureType,
+        val message: String,
+        val raw: String? = null,
+        val cause: Throwable? = null,
+    ) : ExecResult
+
+    /** 不可恢复的终止态（未知工具 / 权限缺失且无法弹窗）：不应重试。 */
+    data class Terminal(val type: FailureType, val message: String) : ExecResult
+}

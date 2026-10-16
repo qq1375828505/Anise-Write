@@ -1,0 +1,47 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace = "com.ai.assistance.quro.plugin.contract"
+    compileSdk = 36
+
+    defaultConfig {
+        minSdk = 26
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig = false
+    }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
+}
+
+// ★ 契约层必须是「纯接口 + 极小依赖」：插件 APK 与宿主各自持有同一个 contract jar 的副本，
+//   所以这里只用 compileOnly/implementation 的最小集合，不要让 contract 传递出任何重依赖，
+//   否则插件编译 classpath 会与宿主冲突。
+dependencies {
+    implementation(libs.coroutines.core)
+    // ★ 仅编译期可见 Compose 运行时注解（@Composable）：
+    //   插件渲染函数以 @Composable 声明，契约层要能引用该注解；
+    //   但契约 jar 本身不打 Compose 类（宿主已含 androidx.*，运行时由宿主提供）。
+    compileOnly(platform(libs.compose.bom))
+    compileOnly(libs.compose.runtime)
+}

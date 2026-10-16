@@ -1,0 +1,126 @@
+# ============================================================================
+# PenAi 云端构建（build）
+#
+# 触发：push / PR 到 main 与 feature/**（所有 phase 分支均以 feature/* 命名汇入）
+# 内容：JDK 17 + Android SDK（compileSdk 36 / build-tools 36.0.0 / NDK r27 / CMake 3.22.1）
+#       → Gradle 缓存 → :app:assembleDebug → :app:testDebugUnitTest → 上传 artifact
+#
+# 本地不构建、不产包（工程红线）：编译与打包统一由本 workflow 在 GitHub runner 完成。
+# 详细说明（Secrets 清单 / 本地复现 / 缓存策略）见同目录 README.md。
+# ============================================================================
+name: build
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main, "feature/**"]
+
+permissions:
+  contents: read
+
+# 同一分支新提交即取消旧任务，避免排队消耗构建分钟
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 构建镜像策略（与工程内配置保持一致，CI 不额外改写仓库地址）：
+  #   · Gradle 依赖 / 插件解析：settings.gradle.kts 的 pluginManagement 与
+  #     dependencyResolutionManagement 均为「阿里云镜像优先」（maven.aliyun.com 的
+  #     gradle-plugin / public / google 三个仓库在前，google()、mavenCentral()、
+  #     gradlePluginPortal() 兜底），并处于 FAIL_ON_PROJECT_REPOS 模式。
+  #   · Gradle 发行包：gradle/wrapper/gradle-wrapper.properties 的 distributionUrl
+  #     走阿里云 macports 镜像（gradle-8.13-bin.zip）。
+  #   GitHub runner 国内外网络均可解析上述地址；保留镜像优先策略是为了与用户本地
+  #   环境（国内直连 Maven Central 超时）口径一致，避免「本地过、CI 挂」的偏差。
+  GRADLE_OPTS: "-Dfile.encoding=UTF-8"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # 超时预估：冷缓存（首次 / 依赖指纹变化）含 MNN+llama.cpp+app 三处 NDK 原生编译，
+    # 约 30~50 分钟；命中 Gradle 依赖缓存约 10~20 分钟。留 90 分钟余量防慢 runner。
+    timeout-minutes: 90
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 17（Temurin）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Android SDK 组件与工程构建约束对齐（规划书 §2.1 / app/build.gradle.kts）：
+      #   compileSdk 36 / build-tools 36.0.0 / NDK 27.0.12077973（r27）
+      #   CMake 3.22.1：:mnn 与 :llama 的 externalNativeBuild 显式锁定该版本；
+      #   :app 与 :aidl-aci-browser 未锁版本，AGP 默认解析同为 3.22.1。
+      #   cmdline-tools;latest 提供 sdkmanager/licence；NDK 必装——full 风味与
+      #   :mnn / :llama / :terminal-core 均含 native 构建，缺 NDK 直接配置失败。
+      - name: 安装 Android SDK 组件
+        uses: android-actions/setup-android-sdk@v3
+        with:
+          packages: |
+            cmdline-tools;latest
+            platforms;android-36
+            build-tools;36.0.0
+            ndk;27.0.12077973
+            cmake;3.22.1
+
+      - name: 缓存 Gradle 依赖与 wrapper（actions/cache）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties', 'gradle/libs.versions.toml') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      # 双层缓存兜底：actions/cache 管「冷启动全量」（~/.gradle 整体快照），
+      # gradle/actions/setup-gradle 管「按内容寻址的依赖解析缓存 + 构建缓存」，
+      # 二者 key 策略不同，互为兜底；另可顺带校验 gradle 配置健康度。
+      - name: 安装 Gradle（含依赖/构建缓存）
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 确保 gradlew 可执行
+        run: chmod +x ./gradlew
+
+      # app/build.gradle.kts 的 signingConfigs 在「配置期」强制解析
+      # storeFile/storePassword/keyAlias/keyPassword 四个键（keystore.properties
+      # 缺失时 keystoreProperties["storeFile"] as String 会 NPE，assembleDebug
+      # 这类不签名的任务同样过不了配置期）。debug 变体不使用 release 签名配置，
+      # 因此这里在 runner 上生成一份「随机口令 + 不存在路径」的占位凭证：
+      # keystore.properties 已被 .gitignore 忽略，不会进入 git；不含任何真实密钥。
+      - name: 生成 CI 占位签名凭证（仅供配置期求值）
+        run: |
+          pass1="$(openssl rand -hex 16)"
+          pass2="$(openssl rand -hex 16)"
+          printf 'storeFile=ci-placeholder.jks\nstorePassword=%s\nkeyAlias=ci-placeholder\nkeyPassword=%s\n' \
+            "$pass1" "$pass2" > keystore.properties
+          echo "已生成占位 keystore.properties（随机口令，仅 assembleDebug/testDebugUnitTest 配置期使用）"
+
+      # assembleDebug 会构建 full + fdroid 两个风味：full 走 :mnn/:llama/app 原生
+      # 编译（NDK 主战场），fdroid 无预编译原生库，顺带覆盖 F-Droid 风味可构建性。
+      - name: 构建 Debug APK（full + fdroid 风味）
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: 运行 :app JVM 单元测试
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: 上传 Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: penai-debug-apk
+          path: app/build/outputs/apk/**/*.apk
+          retention-days: 30
+
+      - name: 上传单元测试报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: penai-unit-test-reports
+          path: |
+            app/build/reports/tests/**
+            app/build/test-results/**
+          retention-days: 30

@@ -1,0 +1,2854 @@
+package com.ai.assistance.quro.core.ui.dynamicui
+import androidx.compose.ui.res.stringResource
+import com.ai.assistance.quro.R
+
+import androidx.compose.runtime.remember
+import com.ai.assistance.quro.genui.sdk.GenUI
+import com.ai.assistance.quro.genui.sdk.style.GenUITheme
+
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.drawscope.Stroke
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.min
+import kotlin.math.roundToInt
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import android.graphics.Paint
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ProgressIndicatorDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontStyle
+import com.ai.assistance.quro.core.cards.QuroChatCard
+import com.ai.assistance.quro.ui.MermaidWebView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import android.media.MediaPlayer
+import android.net.Uri
+import android.view.View
+import org.json.JSONObject
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.MediaController
+import android.widget.VideoView
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.viewinterop.AndroidView
+import com.ai.assistance.quro.ui.CodeBlock
+import com.ai.assistance.quro.ui.MarkdownText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.math.roundToInt
+
+/**
+ * ZorvAI 动态 UI 的 Compose 原生渲染器（参照 Kai `KaiUiRenderer` 设计重写）。
+ *
+ * 之所以坚持原生渲染而非 WebView：
+ *  - 控件可直接读写状态，用户交互能原样回传给模型（WebView 需桥接且易丢事件）；
+ *  - 自动继承应用主题（深色/浅色、字体缩放、动态取色），无需 AI 关心配色；
+ *  - 无 JS 注入面，安全边界更清晰。
+ *
+ * @param root 解析后的节点树
+ * @param modifier 根容器修饰符
+ * @param onAction 动作回调：宿主收到动作后决定如何执行（发消息给模型 / 调工具 / 开网页等）
+ * @param onSubmit 便捷回调：当动作需要把收集到的表单值作为用户消息发回模型时触发
+ */
+@Composable
+fun QuroUiRenderer(
+    root: QuroUiNode,
+    modifier: Modifier = Modifier,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit = { _, _ -> },
+) {
+    // 表单状态集中托管：id -> 值（String / Boolean / Float）
+    // 用 mutableStateMapOf，任一控件写入都会自动触发依赖它的 Composable 重组。
+    // 修复：remember{} 无 key，root 更换后旧 state/hidden 残留，新树复用旧 id 会读到旧值。
+    // 用 remember(root) 让 root 变化时重建两个 map，清空旧值。
+    val state = remember(root) { mutableStateMapOf<String, Any>() }
+    // 被 toggle 隐藏的节点 id 集合
+    val hidden = remember(root) { mutableStateMapOf<String, Boolean>() }
+
+    RenderNode(
+        node = root,
+        state = state,
+        hidden = hidden,
+        onAction = onAction,
+        modifier = modifier,
+        isRoot = true,
+    )
+}
+
+// =============================================================================================
+// 递归渲染
+// =============================================================================================
+
+@Composable
+private fun RenderNode(
+    node: QuroUiNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier = Modifier,
+    isRoot: Boolean = false,
+) {
+    // toggle 隐藏：节点有 id 且被标记为隐藏则整体不渲染
+    val nodeId = node.id
+    if (nodeId != null && hidden[nodeId] == true) return
+    // 通用样式 visible=false → 整节点不渲染（数据驱动显隐，不惊动模型）
+    if (node.style?.visible == false) return
+
+    // 通用样式套用：把 AI 挂在任意节点上的 QuroUiStyle 统一转成 Modifier。
+    // surface=false 时跳过背景/边框/圆角/阴影（卡片节点刻意不渲染外壳，见 RenderCard）。
+    val styled = applyFrame(modifier, node.style, surface = node !is QuroCardNode)
+
+    when (node) {
+        is QuroColumnNode -> RenderColumn(node, state, hidden, onAction, styled, isRoot)
+        is QuroRowNode -> RenderRow(node, state, hidden, onAction, styled)
+        is QuroBoxNode -> RenderBox(node, state, hidden, onAction, styled)
+        is QuroPaneNode -> RenderPane(node, state, hidden, onAction, styled)
+        is QuroCardNode -> RenderCard(node, state, hidden, onAction, styled)
+        is QuroTextNode -> RenderText(node, styled)
+        is QuroImageNode -> RenderImage(node, styled)
+        is QuroMarkdownNode -> RenderMarkdown(node, onAction, styled)
+        is QuroVideoNode -> RenderVideo(node, styled)
+        is QuroAudioNode -> RenderAudio(node, onAction, styled)
+        is QuroBrowserNode -> RenderBrowser(node, onAction, styled)
+        is QuroHtmlNode -> RenderHtml(node, styled)
+        is QuroCodeNode -> RenderCode(node, onAction, styled)
+        is QuroIconNode -> RenderIcon(node, styled)
+        is QuroBadgeNode -> RenderBadge(node, styled)
+        is QuroProgressNode -> RenderProgress(node, styled)
+        is QuroDividerNode -> RenderDivider(node, styled)
+        is QuroSpacerNode -> RenderSpacer(node, styled)
+        is QuroButtonNode -> RenderButton(node, state, hidden, onAction, styled)
+        is QuroTextInputNode -> RenderTextInput(node, state, styled)
+        is QuroCheckboxNode -> RenderCheckbox(node, state, styled)
+        is QuroSwitchNode -> RenderSwitch(node, state, styled)
+        is QuroSelectNode -> RenderSelect(node, state, styled)
+        is QuroSliderNode -> RenderSlider(node, state, styled)
+        is QuroListNode -> RenderList(node, state, hidden, onAction, styled)
+        is QuroTabsNode -> RenderTabs(node, state, hidden, onAction, styled)
+        is QuroChipsNode -> RenderChips(node, state, hidden, onAction, styled)
+        is QuroMermaidNode -> RenderMermaid(node, styled)
+        // ───────── v1.0.88 数据可视化 / 业务卡 渲染分支（让 quro-ui 撑住所有 ChatCard 形态）─────────
+        is QuroStatNode -> RenderStat(node, styled)
+        is QuroTableNode -> RenderTable(node, styled)
+        is QuroAlertNode -> RenderAlert(node, styled)
+        is QuroRatingNode -> RenderRating(node, styled)
+        is QuroGaugeNode -> RenderGauge(node, styled)
+        is QuroCountdownNode -> RenderCountdown(node, styled)
+        is QuroStepsNode -> RenderSteps(node, styled)
+        is QuroTimelineNode -> RenderTimeline(node, styled)
+        is QuroTodoNode -> RenderTodo(node, styled)
+        is QuroExpandableNode -> RenderExpandable(node, state, hidden, onAction, styled)
+        is QuroPieNode -> RenderPie(node, styled)
+        is QuroCompareNode -> RenderCompare(node, styled)
+        is QuroRadarNode -> RenderRadar(node, styled)
+        is QuroHeatmapNode -> RenderHeatmap(node, styled)
+        is QuroKanbanNode -> RenderKanban(node, styled)
+        is QuroCarouselNode -> RenderCarousel(node, state, hidden, onAction, styled)
+        is QuroTimerNode -> RenderTimer(node, styled)
+        is QuroTagCloudNode -> RenderTagCloud(node, styled)
+        is QuroAvatarGroupNode -> RenderAvatarGroup(node, styled)
+        is QuroCounterNode -> RenderCounter(node, styled)
+        is QuroBreadcrumbNode -> RenderBreadcrumb(node, styled)
+        is QuroColorNode -> RenderColor(node, styled)
+        is QuroMediaNode -> RenderMedia(node, onAction, styled)
+        is QuroFormNode -> RenderForm(node, state, hidden, onAction, styled)
+        is QuroGameBoardNode -> RenderGameBoard(node, state, hidden, onAction, styled)
+        is QuroGenUiNode -> RenderGenUi(node, state, hidden, onAction, styled)
+        // 捕获型兜底节点：用「多个融合解释器」渲染成结构化富卡，绝不降级为普通容器。
+        is QuroUnknownNode -> RenderUnknown(node, state, hidden, onAction, styled)
+    }
+}
+
+// =============================================================================================
+// chips / mermaid 专用渲染
+// =============================================================================================
+
+/** 选择标签组：横向滚动的一排可选标签，点击触发 onSelect 动作（单选）。 */
+@Composable
+private fun RenderChips(
+    node: QuroChipsNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    if (node.items.isEmpty()) return
+    var selected by remember(node.id) { mutableStateOf(node.selected) }
+    Row(
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        node.items.forEach { label ->
+            val isSel = label == selected
+            FilterChip(
+                selected = isSel,
+                onClick = {
+                    selected = label
+                    state[node.id ?: "chips"] = label
+                    node.onSelect?.let { dispatch(it, state, hidden, onAction) }
+                },
+                label = { Text(label) },
+            )
+        }
+    }
+}
+
+/** 可视化编排图（mermaid）：内联离线城市渲染（复用 MermaidCard 运行时）。 */
+@Composable
+private fun RenderMermaid(node: QuroMermaidNode, modifier: Modifier) {
+    if (node.source.isBlank()) {
+        Text(text = stringResource(R.string.qk_03638),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        return
+    }
+    val card = QuroChatCard.MermaidCard(
+        id = node.id ?: "mermaid_${node.source.hashCode()}",
+        title = "",
+        source = node.source,
+        theme = node.theme ?: "",
+    )
+    MermaidWebView(
+        card = card,
+        modifier = modifier.fillMaxWidth().heightIn(min = 80.dp, max = 600.dp),
+    )
+}
+
+// =============================================================================================
+// v1.0.88 数据可视化 / 业务卡 渲染（让 quro-ui 撑住所有 ChatCard 形态，不再降级为普通容器）
+// =============================================================================================
+
+/** 解析 "{}" 形式的列表元素为 JSONObject（容错：不是 JSON 则返回 null）。 */
+private fun jsonObjOrNull(s: String): JSONObject? = runCatching { JSONObject(s) }.getOrNull()
+
+/** 颜色解析：支持 #hex 与语义名（primary/error/warning/success/info 等），失败回退 fallback。 */
+private fun colorOr(s: String?, fallback: Color): Color = s?.let { QuroUiColor.parse(it) } ?: fallback
+
+/** 毫秒数 → 人类可读时长（dd HH:MM:SS / HH:MM:SS）。 */
+private fun formatDuration(ms: Long): String {
+    val totalSec = (ms / 1000).coerceAtLeast(0L)
+    val d = totalSec / 86400
+    val h = (totalSec % 86400) / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (d > 0) "%dd %02d:%02d:%02d".format(d, h, m, s)
+    else "%02d:%02d:%02d".format(h, m, s)
+}
+
+/** 统计数字 + 同比/环比 delta。 */
+@Composable
+private fun RenderStat(node: QuroStatNode, modifier: Modifier) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            if (node.label.isNotBlank())
+                Text(text = node.label, style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(text = node.value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                if (node.unit.isNotBlank()) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(text = node.unit, style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (node.delta.isNotBlank()) {
+            val trend = node.trend.lowercase()
+            val c = when (trend) {
+                "up" -> Color(0xFF4CAF50)
+                "down" -> Color(0xFFB3261E)
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            val arrow = when (trend) { "up" -> "▲"; "down" -> "▼"; else -> "" }
+            Surface(color = c.copy(alpha = 0.12f), shape = RoundedCornerShape(8.dp)) {
+                Text(text = "$arrow${node.delta}", color = c, style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            }
+        }
+    }
+}
+
+/** 表格：表头加粗 + 斑马纹，列宽自适应容器，过宽才横向滚动。 */
+@Composable
+private fun RenderTable(node: QuroTableNode, modifier: Modifier) {
+    if (node.headers.isEmpty() && node.rows.isEmpty()) return
+    if (!node.caption.isNullOrBlank()) {
+        Text(text = node.caption!!, style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
+    }
+    val colCount = maxOf(node.headers.size, node.rows.maxOfOrNull { it.size } ?: 0)
+    // 🔴🔴 列宽自适应（用户实测「表格列被裁掉，排版不准」的根因修复）。
+    //
+    // 旧实现每格 `widthIn(min = 80.dp, max = 240.dp)`：列数一多（如 5 列）总宽 400dp+
+    // 就超出 360dp 设计稿，整块被 SurfaceHost 的 clipToBounds 裁掉右侧，
+    // 而 horizontalScroll 只能让内容**可滚**、并不能让它在静态截图里就完整可见 ——
+    // 用户看到的就是「右边几列没了」。
+    //
+    // 现在按**容器实际可用宽度**均分：
+    //   · 列少（≤4）→ 每列铺满整宽，一屏看全，不需要横滑；
+    //   · 列多（>4）→ 每列收到 [TABLE_MIN_COL_DP]，装不下时才允许横滑（有边界提示）。
+    // 两端各留 TABLE_MIN_COL_DP ~ TABLE_MAX_COL_DP，既不撑爆也不挤成竖条。
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val availDp = if (maxWidth.value.isFinite() && maxWidth.value > 0f) maxWidth.value else 360f
+        val evenDp = availDp / colCount
+        val colDp = evenDp.coerceIn(TABLE_MIN_COL_DP, TABLE_MAX_COL_DP)
+        val totalDp = colDp * colCount
+        val overflow = totalDp > availDp + 0.5f
+        Column(Modifier.fillMaxWidth()) {
+            if (overflow) {
+                // 溢出必须**明说**：否则用户以为右边被吞了，不会想到能滑
+                Text(
+                    text = stringResource(R.string.qk_04060),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 2.dp),
+                )
+            }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .then(if (overflow) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
+                    .clipToBounds()
+            ) {
+                Row(Modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
+                    for (i in 0 until colCount)
+                        Text(
+                            text = node.headers.getOrNull(i) ?: "",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(colDp.dp).padding(horizontal = 6.dp, vertical = 8.dp),
+                        )
+                }
+                HorizontalDivider()
+                node.rows.forEachIndexed { ri, row ->
+                    Row(Modifier.background(
+                        if (ri % 2 == 0) MaterialTheme.colorScheme.surface
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))) {
+                        for (i in 0 until colCount)
+                            Text(
+                                text = row.getOrNull(i) ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.width(colDp.dp).padding(horizontal = 6.dp, vertical = 6.dp),
+                            )
+                    }
+                    if (ri < node.rows.size - 1) HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+/** 表格列宽下限/上限（dp）。下限保证单元格里至少能放下 1~2 个汉字，上限防止宽表一列占满整屏。 */
+private const val TABLE_MIN_COL_DP = 64f
+private const val TABLE_MAX_COL_DP = 240f
+
+/** 提醒条。 */
+@Composable
+private fun RenderAlert(node: QuroAlertNode, modifier: Modifier) {
+    val (bg, fg, icon) = when (node.severity.lowercase()) {
+        "success" -> Triple(Color(0xFF4CAF50), Color.White, "✓")
+        "warning" -> Triple(Color(0xFFFF9800), Color.Black, "⚠")
+        "error" -> Triple(Color(0xFFB3261E), Color.White, "✕")
+        else -> Triple(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary, "ℹ")
+    }
+    Surface(modifier = modifier.fillMaxWidth(), color = bg, shape = RoundedCornerShape(10.dp)) {
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(text = icon, style = MaterialTheme.typography.titleMedium, color = fg)
+            Spacer(Modifier.width(8.dp))
+            Column {
+                if (!node.title.isNullOrBlank())
+                    Text(text = node.title!!, style = MaterialTheme.typography.labelLarge,
+                        color = fg, fontWeight = FontWeight.Bold)
+                if (node.text.isNotBlank())
+                    Text(text = node.text, style = MaterialTheme.typography.bodySmall, color = fg)
+            }
+        }
+    }
+}
+
+/** 评分（星级）。 */
+@Composable
+private fun RenderRating(node: QuroRatingNode, modifier: Modifier) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (!node.label.isNullOrBlank()) {
+            Text(text = node.label!!, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(end = 8.dp))
+        }
+        val rounded = node.value.roundToInt()
+        for (i in 1..node.max)
+            Text(text = if (i <= rounded) "★" else "☆", color = Color(0xFFFFC107),
+                style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.width(6.dp))
+        Text(text = "%.1f".format(node.value), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** 仪表盘（环形进度 + 中心百分比）。 */
+@Composable
+private fun RenderGauge(node: QuroGaugeNode, modifier: Modifier) {
+    val p = node.progress.coerceIn(0f, 1f)
+    Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(120.dp)) {
+            CircularProgressIndicator(progress = { p }, modifier = Modifier.fillMaxSize(),
+                color = colorOr(node.color, MaterialTheme.colorScheme.primary), strokeWidth = 10.dp)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(text = "${(p * 100).roundToInt()}%", style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold)
+                if (!node.label.isNullOrBlank())
+                    Text(text = node.label!!, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+/** 倒计时：每秒自动刷新剩余时间。 */
+@Composable
+private fun RenderCountdown(node: QuroCountdownNode, modifier: Modifier) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(node.targetEpochMs) {
+        while (node.targetEpochMs > now) { delay(1000); now = System.currentTimeMillis() }
+    }
+    val remainMs = (node.targetEpochMs - now).coerceAtLeast(0L)
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (node.label.isNotBlank()) {
+            Text(text = node.label, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(end = 8.dp))
+        }
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp)) {
+            Text(text = formatDuration(remainMs), style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+        }
+    }
+}
+
+/** 步骤进度。 */
+@Composable
+private fun RenderSteps(node: QuroStepsNode, modifier: Modifier) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        node.steps.forEachIndexed { idx, step ->
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val done = idx <= node.current
+                    Surface(shape = RoundedCornerShape(50),
+                        color = if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant) {
+                        Text(text = (idx + 1).toString(),
+                            color = if (done) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(8.dp))
+                    }
+                    if (idx < node.steps.size - 1)
+                        Box(modifier = Modifier.width(2.dp).height(20.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant))
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(text = step, style = MaterialTheme.typography.bodyMedium,
+                    color = if (idx == node.current) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(vertical = 4.dp))
+            }
+        }
+    }
+}
+
+/** 时间线。 */
+@Composable
+private fun RenderTimeline(node: QuroTimelineNode, modifier: Modifier) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        node.events.forEachIndexed { idx, ev ->
+            val o = jsonObjOrNull(ev)
+            val time = o?.optString("time") ?: ""
+            val title = o?.optString("title") ?: ""
+            val body = o?.optString("body") ?: ev
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primary) {
+                        Box(modifier = Modifier.size(10.dp).padding(4.dp))
+                    }
+                    if (idx < node.events.size - 1)
+                        Box(modifier = Modifier.width(2.dp).height(24.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant))
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                    if (time.isNotBlank())
+                        Text(text = time, style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (title.isNotBlank())
+                        Text(text = title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    if (body.isNotBlank())
+                        Text(text = body, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+/** 待办列表（只读展示，完成项划线）。 */
+@Composable
+private fun RenderTodo(node: QuroTodoNode, modifier: Modifier) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        node.items.forEach { it ->
+            val o = jsonObjOrNull(it)
+            val text = o?.optString("text") ?: o?.optString("title") ?: it
+            val done = o?.optBoolean("done") ?: false
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                Text(text = if (done) "✓" else "○",
+                    color = if (done) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                Text(text = text, style = MaterialTheme.typography.bodyMedium,
+                    textDecoration = if (done) TextDecoration.LineThrough else null,
+                    color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+            }
+        }
+    }
+}
+
+/** 折叠面板。 */
+@Composable
+private fun RenderExpandable(
+    node: QuroExpandableNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    var expanded by remember(node.id) { mutableStateOf(node.expanded) }
+    Column(modifier = modifier.fillMaxWidth()) {
+        Surface(modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(10.dp)) {
+            Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(text = node.title.ifBlank { stringResource(R.string.qk_00429) }, style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(text = if (expanded) "▲" else "▼", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (expanded) {
+            // 🔴 修复：原来只在 `node.body.isNotBlank()` 时渲染，body 为空就什么都不画 →
+            // 用户点开折叠面板看到一片空白。AI 常把内容写成组件对象，此时 body 必为空。
+            // 现在优先渲染富内容节点，其次文本，都没有才给显式提示。
+            when {
+                node.node != null -> RenderNode(node.node, state, hidden, onAction, Modifier.padding(12.dp))
+                node.body.isNotBlank() ->
+                    Text(text = node.body, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
+                else -> EmptySlotHint("「${node.title.ifBlank { "折叠面板" }}」暂无内容")
+            }
+        }
+    }
+}
+
+/** 饼图（环形 + 图例）。 */
+@Composable
+private fun RenderPie(node: QuroPieNode, modifier: Modifier) {
+    if (node.segments.isEmpty()) return
+    val segs = node.segments.mapNotNull { s ->
+        val o = jsonObjOrNull(s) ?: return@mapNotNull null
+        val name = o.optString("name")
+        val value = o.optDouble("value", 0.0).toFloat()
+        val color = colorOr(o.optString("color"), MaterialTheme.colorScheme.primary)
+        Triple(name, value, color)
+    }.filter { it.second > 0f }
+    if (segs.isEmpty()) return
+    val total = segs.sumOf { it.second.toDouble() }.toFloat().coerceAtLeast(0.0001f)
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(modifier = Modifier.size(120.dp), contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                var start = -90f
+                segs.forEach { (_, v, c) ->
+                    val sweep = (v / total) * 360f
+                    drawArc(color = c, startAngle = start, sweepAngle = sweep, useCenter = true,
+                        topLeft = center - Offset(size.minDimension / 2, size.minDimension / 2),
+                        size = Size(size.minDimension, size.minDimension))
+                    start += sweep
+                }
+            }
+            Text(text = "100%", style = MaterialTheme.typography.labelMedium)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column {
+            segs.forEach { (name, v, c) ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                    Surface(color = c, shape = RoundedCornerShape(4.dp)) {
+                        Box(modifier = Modifier.size(12.dp).padding(2.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(text = "$name ${(v / total * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+/** 对比视图。 */
+@Composable
+private fun RenderCompare(node: QuroCompareNode, modifier: Modifier) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        node.items.forEach { s ->
+            val o = jsonObjOrNull(s)
+            val name = o?.optString("name") ?: s
+            val value = o?.optString("value") ?: ""
+            val highlight = o?.optBoolean("highlight") ?: false
+            Surface(modifier = Modifier.fillMaxWidth(),
+                color = if (highlight) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(10.dp)) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f))
+                    Text(text = value, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
+}
+
+/** 雷达图（Canvas 多边形 + 轴标签）。 */
+@Composable
+private fun RenderRadar(node: QuroRadarNode, modifier: Modifier) {
+    val axes = node.axes.mapNotNull { s ->
+        val o = jsonObjOrNull(s) ?: return@mapNotNull null
+        val name = o.optString("name")
+        val max = o.optDouble("max", 100.0).toFloat().coerceAtLeast(1f)
+        val value = o.optDouble("value", 0.0).toFloat().coerceIn(0f, max)
+        Pair(name, value / max)
+    }
+    if (axes.isEmpty()) return
+    val n = axes.size
+    // 颜色需在 Composable 作用域取（MaterialTheme.colorScheme 是 Composable，不能放进 Canvas 的 DrawScope lambda）
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val fillColor = MaterialTheme.colorScheme.primary
+    Canvas(modifier = modifier.fillMaxWidth().height(220.dp)) {
+        val cx = size.width / 2
+        val cy = size.height / 2
+        val r = min(size.width, size.height) / 2 * 0.8f
+        for (ring in 1..3) {
+            val rr = r * ring / 3
+            val path = Path()
+            for (i in 0..n) {
+                val a = -Math.PI / 2 + 2 * Math.PI * i / n
+                val x = cx + rr * cos(a).toFloat()
+                val y = cy + rr * sin(a).toFloat()
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawPath(path = path, color = gridColor, style = Stroke(width = 1.dp.toPx()))
+        }
+        val dp = Path()
+        axes.forEachIndexed { i, (_, norm) ->
+            val a = -Math.PI / 2 + 2 * Math.PI * i / n
+            val x = cx + r * norm * cos(a).toFloat()
+            val y = cy + r * norm * sin(a).toFloat()
+            if (i == 0) dp.moveTo(x, y) else dp.lineTo(x, y)
+        }
+        dp.close()
+        drawPath(path = dp, color = fillColor.copy(alpha = 0.4f))
+        drawPath(path = dp, color = fillColor, style = Stroke(width = 2.dp.toPx()))
+        val textPaint = Paint().apply { color = android.graphics.Color.GRAY; textSize = 24f }
+        axes.forEachIndexed { i, (name, _) ->
+            val a = -Math.PI / 2 + 2 * Math.PI * i / n
+            val x = cx + (r + 16) * cos(a).toFloat()
+            val y = cy + (r + 16) * sin(a).toFloat()
+            drawContext.canvas.nativeCanvas.drawText(name, x, y, textPaint)
+        }
+    }
+}
+
+/** 热力图（网格色块）。 */
+@Composable
+private fun RenderHeatmap(node: QuroHeatmapNode, modifier: Modifier) {
+    val cells = node.cells.mapNotNull { s ->
+        val o = jsonObjOrNull(s) ?: return@mapNotNull null
+        val label = o.optString("label")
+        val intensity = o.optDouble("intensity", 0.0).toFloat().coerceIn(0f, 1f)
+        Pair(label, intensity)
+    }
+    if (cells.isEmpty()) return
+    val base = MaterialTheme.colorScheme.primary
+    Column(modifier = modifier.fillMaxWidth()) {
+        cells.chunked(node.columns).forEach { rowCells ->
+            Row(modifier = Modifier.fillMaxWidth()) {
+                rowCells.forEach { (label, intensity) ->
+                    val c = base.copy(alpha = (0.15f + intensity * 0.85f).coerceIn(0f, 1f))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(1f).padding(2.dp)) {
+                        Box(modifier = Modifier.fillMaxWidth().height(40.dp)
+                            .background(c, RoundedCornerShape(4.dp)))
+                        if (label.isNotBlank())
+                            Text(text = label, style = MaterialTheme.typography.labelSmall, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 看板。 */
+@Composable
+private fun RenderKanban(node: QuroKanbanNode, modifier: Modifier) {
+    val cols = node.columns.mapNotNull { s ->
+        val o = jsonObjOrNull(s) ?: return@mapNotNull null
+        val name = o.optString("name")
+        val arr = o.optJSONArray("items")
+        val items = (0 until (arr?.length() ?: 0)).mapNotNull { i ->
+            val it = arr?.optJSONObject(i)
+            it?.optString("text") ?: it?.optString("title") ?: it?.optString("label")
+        }
+        Pair(name, items)
+    }
+    if (cols.isEmpty()) return
+    Row(modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        cols.forEach { (name, items) ->
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.width(180.dp)) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Text(text = name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 4.dp))
+                    items.forEach { it ->
+                        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                            Text(text = it, style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(8.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 轮播（简化：左右切换 + 圆点指示）。 */
+@Composable
+private fun RenderCarousel(
+    node: QuroCarouselNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    // 🔴 修复：原来每项 slide 是 JSON 字符串，只取 title/body 两个字符串字段；
+    // body 是组件对象时 optString 拿不到文本 → 每张只剩标题，「切换过去看不到内容」。
+    val slides = node.slides
+    if (slides.isEmpty()) {
+        EmptySlotHint("轮播页未解析出内容")
+        return
+    }
+    var idx by remember(node.id) { mutableStateOf(0) }
+    Column(modifier = modifier.fillMaxWidth()) {
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                val slide = slides[idx]
+                if (slide.title.isNotBlank())
+                    Text(text = slide.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (slide.body.isNotBlank())
+                    Text(text = slide.body, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp))
+                // 富内容优先：AI 把这一页写成组件/排版时，这里渲染真正的组件。
+                // 用显式 when 而不是 `?.let{} ?: if{}`：后者作为表达式时 if 缺 else 分支编不过，
+                // 且三态（富内容 / 纯文本 / 空）挤在一个 Elvis 里可读性差。
+                val slideNode = slide.node
+                when {
+                    slideNode != null -> RenderNode(slideNode, state, hidden, onAction)
+                    slide.title.isBlank() && slide.body.isBlank() ->
+                        EmptySlotHint("「第 ${idx + 1} 页」暂无内容")
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { idx = (idx - 1 + slides.size) % slides.size })
+            { Text("‹", style = MaterialTheme.typography.titleLarge) }
+            slides.indices.forEach { i ->
+                Box(modifier = Modifier.size(if (i == idx) 8.dp else 6.dp)
+                    .background(if (i == idx) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(50)))
+                Spacer(Modifier.width(4.dp))
+            }
+            IconButton(onClick = { idx = (idx + 1) % slides.size })
+            { Text("›", style = MaterialTheme.typography.titleLarge) }
+        }
+    }
+}
+
+/** 秒表 / 计时器（纯展示）。 */
+@Composable
+private fun RenderTimer(node: QuroTimerNode, modifier: Modifier) {
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (!node.label.isNullOrBlank())
+            Text(text = node.label!!, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(end = 8.dp))
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp)) {
+            Text(text = formatDuration((node.seconds * 1000L)), style = MaterialTheme.typography.titleMedium,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+        }
+    }
+}
+
+/** 标签云。 */
+@Composable
+private fun RenderTagCloud(node: QuroTagCloudNode, modifier: Modifier) {
+    if (node.tags.isEmpty()) return
+    val tags = node.tags.map { s ->
+        val o = jsonObjOrNull(s)
+        val text = o?.optString("text") ?: o?.optString("name") ?: s
+        val weight = (o?.optInt("weight") ?: 3).coerceIn(1, 5)
+        Pair(text, weight)
+    }
+    FlowRow(modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        tags.forEach { (text, w) ->
+            val size = (12 + w * 2).sp
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(50.dp)) {
+                Text(text = text, color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = size,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+            }
+        }
+    }
+}
+
+/** 头像组（重叠圆形）。 */
+@Composable
+private fun RenderAvatarGroup(node: QuroAvatarGroupNode, modifier: Modifier) {
+    val avs = node.avatars.mapNotNull { s ->
+        val o = jsonObjOrNull(s) ?: return@mapNotNull null
+        val name = o.optString("name")
+        val initial = (o.optString("initial").ifBlank { name.take(1) }).uppercase()
+        val color = colorOr(o.optString("color"), MaterialTheme.colorScheme.primary)
+        Triple(name, initial, color)
+    }
+    if (avs.isEmpty()) return
+    Row(modifier = modifier) {
+        avs.forEachIndexed { i, (_, initial, color) ->
+            Surface(modifier = Modifier.size(36.dp).then(
+                if (i > 0) Modifier.offset { IntOffset(-6 * i, 0) } else Modifier),
+                shape = RoundedCornerShape(50), color = color,
+                border = BorderStroke(2.dp, MaterialTheme.colorScheme.surface)) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(text = initial, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+    }
+}
+
+/** 数字计数（带缓动动画）。 */
+@Composable
+private fun RenderCounter(node: QuroCounterNode, modifier: Modifier) {
+    val target = node.target ?: node.value
+    val animated by animateFloatAsState(target, animationSpec = tween(800))
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (node.label.isNotBlank())
+            Text(text = node.label, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(end = 8.dp))
+        Text(text = "%.${if (target % 1 == 0f) 0 else 1}f".format(animated) + node.unit,
+            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** 面包屑。 */
+@Composable
+private fun RenderBreadcrumb(node: QuroBreadcrumbNode, modifier: Modifier) {
+    if (node.crumbs.isEmpty()) return
+    Row(modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically) {
+        node.crumbs.forEachIndexed { i, c ->
+            if (i > 0)
+                Text(text = " / ", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val last = i == node.crumbs.size - 1
+            Text(text = c,
+                style = if (last) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodySmall,
+                color = if (last) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (last) FontWeight.Bold else FontWeight.Normal)
+        }
+    }
+}
+
+/** 颜色卡。 */
+@Composable
+private fun RenderColor(node: QuroColorNode, modifier: Modifier) {
+    val c = colorOr(node.color.ifBlank { null }, MaterialTheme.colorScheme.primary)
+    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Surface(color = c, shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.size(40.dp)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))) {}
+        Spacer(Modifier.width(10.dp))
+        Column {
+            if (node.name.isNotBlank())
+                Text(text = node.name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            Text(text = node.color, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** 媒体卡：按类型复用已有渲染器。 */
+@Composable
+private fun RenderMedia(
+    node: QuroMediaNode,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    when (node.mediaType.lowercase()) {
+        "video" -> RenderVideo(QuroVideoNode(url = node.url, title = node.title), modifier)
+        "audio" -> RenderAudio(QuroAudioNode(url = node.url, title = node.title), onAction, modifier)
+        else -> RenderImage(QuroImageNode(url = node.url, height = node.height, cornerRadius = 12), modifier)
+    }
+}
+
+/** 表单（schema 驱动：text/number/switch/select）。 */
+@Composable
+private fun RenderForm(
+    node: QuroFormNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    if (node.fields.isEmpty()) return
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!node.title.isNullOrBlank())
+            Text(text = node.title!!, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        node.fields.forEach { s ->
+            val o = jsonObjOrNull(s) ?: return@forEach
+            val id = o.optString("id").ifBlank { o.optString("name") }
+            val label = o.optString("label")
+            val type = o.optString("type", "text").lowercase()
+            val value = o.optString("value")
+            val arr = o.optJSONArray("options")
+            val options = (0 until (arr?.length() ?: 0)).mapNotNull { i -> arr?.opt(i)?.toString() }
+            when (type) {
+                "switch" -> {
+                    var checked by remember(id) {
+                        mutableStateOf(value == "true" || value == "1" || o.optBoolean("checked"))
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        if (label.isNotBlank()) Text(text = label, modifier = Modifier.weight(1f))
+                        Switch(checked = checked, onCheckedChange = { checked = it; if (id.isNotBlank()) state[id] = it })
+                    }
+                }
+                "select", "dropdown" -> {
+                    RenderSelect(QuroSelectNode(id = id, label = label, options = options, selected = value), state, modifier)
+                }
+                else -> {
+                    var text by remember(id) { mutableStateOf(value) }
+                    if (label.isNotBlank())
+                        Text(text = label, style = MaterialTheme.typography.labelMedium)
+                    OutlinedTextField(value = text,
+                        onValueChange = { text = it; if (id.isNotBlank()) state[id] = it },
+                        modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================================
+// 捕获型兜底渲染：融合解释器（让 AI 自由书写任意节点类型，永不「未识别」）
+// =============================================================================================
+
+/**
+ * 融合解释器：把任意未知节点（QuroUnknownNode）渲染成结构化富卡。
+ * 通过「内容特征」路由到多个解释器：
+ *  - source/code → 代码解释器；html → HTML 解释器；markdown/md → Markdown 解释器；
+ *  - items/rows/segments/events/tags/... → 列表/表格解释器；
+ *  - 其余标量字段 → 键值行；children → 递归渲染。
+ * 这样 AI 写出的任何新节点类型（gantt / calendar / orgchart / metric_grid …）都不会再被降级，
+ * 而是被合理呈现——这就是 quro-ui「AI 自由书写、不被白名单限制」的落地。
+ */
+@Composable
+private fun RenderUnknown(
+    node: QuroUnknownNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val type = node.type
+    val f = node.fields
+    val primary = f["value"] ?: f["text"] ?: f["content"] ?: f["title"] ?: f["label"] ?: f["name"]
+    val desc = f["description"] ?: f["body"] ?: f["detail"] ?: f["subtitle"]
+    // AI 自写组件若带 action / on_click，整卡可点击：点击即派发该动作（回调/打开应用/打开链接/调工具…）。
+    val action = node.action
+    val clickModifier = if (action != null) modifier.clickable { dispatch(action, state, hidden, onAction) }
+    else modifier
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        modifier = clickModifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp)) {
+                    Text(text = "⟨$type⟩", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+                primary?.let {
+                    Text(text = it.toString(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                }
+            }
+            desc?.let {
+                Text(text = it.toString(), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // 融合解释器：富文本字段优先交给对应解释器
+            f["source"]?.toString()?.takeIf { it.isNotBlank() }?.let {
+                RenderCode(QuroCodeNode(code = it, lang = f["lang"]?.toString()), onAction, Modifier.fillMaxWidth())
+            }
+            f["code"]?.toString()?.takeIf { it.isNotBlank() }?.let {
+                RenderCode(QuroCodeNode(code = it, lang = f["lang"]?.toString() ?: f["language"]?.toString()),
+                    onAction, Modifier.fillMaxWidth())
+            }
+            f["html"]?.toString()?.takeIf { it.isNotBlank() }?.let {
+                RenderHtml(QuroHtmlNode(html = it), Modifier.fillMaxWidth())
+            }
+            f["markdown"]?.toString()?.takeIf { it.isNotBlank() }?.let {
+                RenderMarkdown(QuroMarkdownNode(value = it), onAction, Modifier.fillMaxWidth())
+            }
+            f["md"]?.toString()?.takeIf { it.isNotBlank() }?.let {
+                RenderMarkdown(QuroMarkdownNode(value = it), onAction, Modifier.fillMaxWidth())
+            }
+            // 列表型字段 → 列表 / 表格解释器
+            listField(f, "items")?.let { RenderStringList(it, "items") }
+            matrixField(f, "rows")?.let { RenderStringMatrix(it) }
+            listField(f, "segments")?.let { RenderStringList(it, "segments") }
+            listField(f, "events")?.let { RenderStringList(it, "events") }
+            listField(f, "tags")?.let { RenderStringList(it, "tags") }
+            listField(f, "crumbs")?.let { RenderStringList(it, "crumbs") }
+            listField(f, "axes")?.let { RenderStringList(it, "axes") }
+            listField(f, "columns")?.let { RenderStringList(it, "columns") }
+            listField(f, "avatars")?.let { RenderStringList(it, "avatars") }
+            listField(f, "slides")?.let { RenderStringList(it, "slides") }
+            listField(f, "fields")?.let { RenderStringList(it, "fields") }
+            listField(f, "steps")?.let { RenderStringList(it, "steps") }
+            // 🔴🔴🔴 图表类字段（#181「漏斗没有数据」的真凶）。
+            //
+            // RAG 教模型写的规格来自 [CardSdk]：漏斗的数据字段就叫 `data`，
+            // 每项 `{name, value, color, hint}`（见 CardSdk 的 funnel spec）。
+            // 而这一段原先只认 items/rows/segments/axes... —— **`data` 一个都不认**，
+            // 于是它掉进下面的标量兜底，被 `Text("$k: $v")` 原样打印成
+            // `data: [{"name":"曝光","value":1000}]` 这种 Java 对象串（用户截图：漏斗没有数据）。
+            //
+            // 同族字段一并补齐，否则「AI 明明按RAG 写了却渲染不出来」会换个名字重演：
+            //   data / stages / series / values / bars / lines / points / nodes / datasets
+            for (k in CHART_DATA_KEYS) {
+                kvListField(f, k)?.let { RenderKvList(it, k) }
+            }
+            // 其余标量字段（已上屏的除外）
+            // 🔴 `shown` 必须把新加的图表字段列进来，否则同一个 data 会被上面渲染一次、
+            //   再被这里的标量兜底打印一次（用户会看到重复两遍内容）。
+            val shown = setOf("value", "text", "content", "title", "label", "name", "description", "body", "detail",
+                "subtitle", "source", "code", "html", "markdown", "md", "lang", "language", "items", "rows",
+                "segments", "events", "tags", "crumbs", "axes", "columns", "avatars", "slides", "fields", "steps",
+                "action", "on_click", "onClick") + CHART_DATA_KEYS
+            f.filterKeys { it !in shown }.forEach { (k, v) ->
+                if (v != null) Text(text = "$k: ${v}", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // 递归子节点
+            if (node.children.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                node.children.forEach { child ->
+                    RenderNode(child, state, hidden, onAction, Modifier.fillMaxWidth(), isRoot = false)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 图表/列表类数据字段名（#181）。
+ *
+ * 🔴 口径：**这些字段的值是「数据」，不是「文案」**。
+ * 漏斗走 `data`，桑基走 `nodes`+`links`，折线柱状走 `series`/`values`，
+ * 漏斗分级还有人会写 `stages`。RAG 按 CardSdk 规格教模型输出，
+ * 渲染层就必须认同一批名字 —— 两边不一致就是「AI 写了但渲染不出来」的直接成因。
+ */
+private val CHART_DATA_KEYS = listOf(
+    "data", "stages", "series", "values", "bars", "lines", "points", "datasets", "links",
+)
+
+/** 一行「名称 · 数值」。 */
+private data class KvRow(val label: String, val value: String?)
+
+/**
+ * 把「对象数组」形态的图表数据解析成可读行（#181）。
+ *
+ * 🔴 为什么不能直接用 [listField]：它对元素做 `it.toString()`，
+ * 遇���**对象**（漏斗的 `{name,value}`）会得到 Java 字面量串
+ * `{name=曝光, value=1000.0}` —— 这种东西显示在屏幕上等于乱码。
+ *
+ * 口径：
+ *  - 纯字符串/数字数组 → 原样透出（`data: ["A","B"]` 这种也要看得见）；
+ *  - 对象数组 → 取 `label/name/title/stage/step/key/text` 作标题，
+ *    取 `value/num/count/amount/y/size` 作数值；两个都取不到就把整个对象 toString 兜出，
+ *    **绝不静默丢弃条目**（丢条目 = 又变回「没有数据」）。
+ *
+ * @return null 表示该 key 不存在或为空（不是空数组壳）—— 空壳交给下面的标量兜底，
+ *   让用户看见「字段存在但内容为空」这个事实，而不是凭空消失。
+ */
+private fun kvListField(f: Map<String, Any?>, key: String): List<KvRow>? {
+    val v = f[key] ?: return null
+    val list = when (v) {
+        is List<*> -> v
+        is Array<*> -> v.toList()
+        else -> return null
+    }
+    if (list.isEmpty()) return null
+    return list.mapNotNull { item ->
+        when (item) {
+            null -> null
+            is String -> item.takeIf { it.isNotBlank() }?.let { KvRow(it, null) }
+            is Map<*, *> -> {
+                fun pick(vararg keys: String): String? = keys.firstNotNullOfOrNull { k ->
+                    item[k]?.toString()?.takeIf { it.isNotBlank() && it != "null" }
+                }
+                val label = pick("label", "name", "title", "stage", "step", "key", "text", "category")
+                val val2 = pick("value", "num", "count", "amount", "y", "size", "total", "rate", "percent")
+                // 🔴 两个都取不到也要保留这条 —— 宁可显示原始串，也不能让条目凭空消失
+                when {
+                    label != null && val2 != null -> KvRow(label, val2)
+                    label != null -> KvRow(label, null)
+                    val2 != null -> KvRow(val2, null)
+                    else -> KvRow(item.toString(), null)
+                }
+            }
+            else -> item.toString().takeIf { it.isNotBlank() }?.let { KvRow(it, null) }
+        }
+    }.takeIf { it.isNotEmpty() }
+}
+
+/** 渲染 [KvRow] 列表：标题 + 数值（数值用等宽偏粗，像数据而不是像文案）。 */
+@Composable
+private fun RenderKvList(rows: List<KvRow>, key: String) {
+    if (rows.isEmpty()) return
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        rows.forEach { r ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = r.label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.weight(1f),
+                )
+                r.value?.let { v ->
+                    Text(
+                        text = v,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun listField(f: Map<String, Any?>, key: String): List<String>? {
+    val v = f[key] ?: return null
+    return when (v) {
+        is List<*> -> v.filterNotNull().map { it.toString() }
+        is String -> listOf(v)
+        else -> listOf(v.toString())
+    }
+}
+
+private fun matrixField(f: Map<String, Any?>, key: String): List<List<String>>? {
+    val v = f[key] ?: return null
+    if (v !is List<*>) return null
+    return v.mapNotNull { row ->
+        when (row) {
+            is List<*> -> row.filterNotNull().map { it.toString() }
+            is String -> listOf(row)
+            null -> null
+            else -> listOf(row.toString())
+        }
+    }
+}
+
+@Composable
+private fun RenderStringList(items: List<String>, label: String, modifier: Modifier = Modifier) {
+    if (items.isEmpty()) return
+    Column(modifier = modifier.fillMaxWidth()) {
+        items.forEach { s ->
+            val o = jsonObjOrNull(s)
+            val text = o?.optString("text") ?: o?.optString("title") ?: o?.optString("name")
+                ?: o?.optString("label") ?: s
+            val sub = o?.optString("value") ?: o?.optString("body") ?: o?.optString("description")
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("•", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text, style = MaterialTheme.typography.bodyMedium)
+                    if (!sub.isNullOrBlank()) Text(sub, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenderStringMatrix(rows: List<List<String>>, modifier: Modifier = Modifier) {
+    if (rows.isEmpty()) return
+    Column(modifier = modifier.fillMaxWidth()
+        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))) {
+        rows.forEachIndexed { ri, row ->
+            Row(modifier = Modifier.fillMaxWidth()
+                .background(if (ri % 2 == 0) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant)
+                .padding(horizontal = 8.dp, vertical = 4.dp)) {
+                row.forEach { cell ->
+                    Text(cell, style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f).padding(end = 6.dp))
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================================
+// 通用样式套用（v1.0.83）：把 QuroUiStyle 转成 Compose Modifier
+// =============================================================================================
+
+/**
+ * 通用样式 → Modifier。对任意节点统一生效：外边距(margin) / 尺寸(width,height,max) /
+ * 透明度(opacity) / 表面(背景·边框·圆角·阴影，surface=true 时) / 内边距(padding)。
+ *
+ * 约定：
+ *  - 内边距由各具体渲染器决定（box 用 style.padding；column/row/card/pane 用自身 padding 字段），
+ *    因此本函数**不**套内边距，避免与布局节点的原生 padding 叠加。
+ *  - surface=true 才渲染背景/边框/圆角/阴影；卡片节点(RenderCard)刻意传 false，
+ *    以保持「动态对话框 UI 不渲染小卡片外壳」的设计。
+ */
+private fun applyFrame(modifier: Modifier, style: QuroUiStyle?, surface: Boolean): Modifier {
+    if (style == null) return modifier
+    var m = modifier
+    // 外边距（最外层）
+    style.margin?.let { m = m.padding(toPaddingValues(it)) }
+    // 尺寸 / 最大尺寸
+    when (val w = style.width) {
+        is QuroUiSize.Fixed -> m = m.width(w.dp.dp)
+        is QuroUiSize.Fill -> m = m.fillMaxWidth()
+        is QuroUiSize.Wrap -> m = m.wrapContentWidth()
+        null -> {}
+    }
+    when (val h = style.height) {
+        is QuroUiSize.Fixed -> m = m.height(h.dp.dp)
+        is QuroUiSize.Fill -> m = m.fillMaxHeight()
+        is QuroUiSize.Wrap -> m = m.wrapContentHeight()
+        null -> {}
+    }
+    style.maxWidth?.let { m = m.widthIn(max = it.dp) }
+    style.maxHeight?.let { m = m.heightIn(max = it.dp) }
+    // 透明度
+    style.opacity?.let { m = m.alpha(it.coerceIn(0f, 1f)) }
+    // 表面：背景 / 边框 / 圆角 / 阴影
+    if (surface) {
+        val radius = (style.borderRadius ?: 0).dp
+        val shape = RoundedCornerShape(radius)
+        buildBrush(style.background)?.let { brush -> m = m.background(brush, shape) }
+        // 修复：QuroUiColor.parse 在解析失败时返回 null，Modifier.b
+        // 需要非空 Color。AI 输入坏颜色值时这里会编译失败/运行时崩溃。
+        // 用 parseOr(c, Color.Transparent) 兜底，最差也是透明边，肉眼看不见。
+        style.borderColor?.let { c -> m = m.border((style.borderWidth ?: 1).dp, QuroUiColor.parseOr(c, Color.Transparent), shape) }
+        if (radius > 0.dp) m = m.clip(shape)
+        style.shadowElevation?.let { m = m.shadow(it.dp, shape) }
+    }
+    return m
+}
+
+/** QuroUiEdges → Compose PaddingValues（四边分别取，缺省回落到 all/horizontal/vertical）。 */
+private fun toPaddingValues(edges: QuroUiEdges): PaddingValues {
+    val all = edges.all ?: 0
+    val h = (edges.horizontal ?: all).coerceAtLeast(0)
+    val v = (edges.vertical ?: all).coerceAtLeast(0)
+    val top = (edges.top ?: v).coerceAtLeast(0)
+    val bottom = (edges.bottom ?: v).coerceAtLeast(0)
+    val start = (edges.start ?: h).coerceAtLeast(0)
+    val end = (edges.end ?: h).coerceAtLeast(0)
+    return PaddingValues(start = start.dp, top = top.dp, end = end.dp, bottom = bottom.dp)
+}
+
+/** QuroUiBackground → Compose Brush（纯色为 SolidColor，渐变支持 vertical/horizontal/radial/diagonal）。
+ *
+ * 修复：QuroUiColor.parse 返回 Color?，AI 坏颜色值（如 "blueish"、"#zzz"）会产出 null。
+ * SolidColor 需非空 Color，Brush.*Gradient 需 List<Color>（不是 List<Color?>）。
+ * 这里统一兜底：Solid 用 Color.Transparent，Gradient 用 mapNotNull 过滤；
+ * 过滤完若为空也降级为单色 SolidColor(Color.Transparent) 以满足非空契约。
+ */
+private fun buildBrush(bg: QuroUiBackground?): Brush? = when (bg) {
+    is QuroUiBackground.Solid -> SolidColor(QuroUiColor.parseOr(bg.color, Color.Transparent))
+    is QuroUiBackground.Gradient -> {
+        val colors = bg.colors.mapNotNull { QuroUiColor.parse(it) }
+        if (colors.isEmpty()) {
+            SolidColor(Color.Transparent)
+        } else when (bg.direction?.lowercase()) {
+            "horizontal" -> Brush.horizontalGradient(colors)
+            "radial" -> Brush.radialGradient(colors)
+            "diagonal" -> Brush.linearGradient(colors) // 默认 top-start → bottom-end
+            else -> Brush.verticalGradient(colors)
+        }
+    }
+    null -> null
+}
+
+// =============================================================================================
+// 布局
+// =============================================================================================
+
+@Composable
+private fun RenderColumn(
+    node: QuroColumnNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+    isRoot: Boolean = false,
+) {
+    // 修复：node.padding 为 Int?，AI 按通用样式文档写对象式 padding（{"top":16,"horizontal":8}）
+    // 时 optIntOrNull 返回 null → 0。回落 node.style?.padding 走 toPaddingValues 统一处理。
+    val stylePad = node.style?.padding?.let { toPaddingValues(it) }
+    val m = modifier
+        .then(if (stylePad != null) Modifier.padding(stylePad) else if ((node.padding ?: 0) > 0) Modifier.padding((node.padding ?: 0).dp) else Modifier)
+        .then(
+            // verticalScroll 需要有限高度，否则在 LazyColumn 之类父容器下会因「infinity max height」直接抛 IllegalStateException。
+            // 根列：cap = screenHeightDp（屏幕高度），长卡片（如工具中心）底部不再被裁，能整张滚上看；
+            // 非根列：cap = 480.dp（嵌入区域上限），防单卡内部过高影响外层滚动节奏。
+            if (node.scrollable) {
+                val maxHeight = if (isRoot) LocalConfiguration.current.screenHeightDp.dp else 480.dp
+                Modifier.heightIn(max = maxHeight).verticalScroll(rememberScrollState())
+            } else Modifier
+        )
+
+    Column(
+        modifier = m,
+        verticalArrangement = Arrangement.spacedBy((node.spacing ?: 8).dp),
+        horizontalAlignment = when (node.horizontalAlign?.lowercase()) {
+            "center", "centerhorizontally" -> Alignment.CenterHorizontally
+            "end", "right" -> Alignment.End
+            else -> Alignment.Start
+        },
+    ) {
+        node.children.forEach { child ->
+            // 修复：可滚动 Column 中 weight 子项按无限高度测量且 fill=true，
+            // 直接抛 IllegalStateException: infinity maximum height constraints，整张卡崩掉。
+            // 仅在不可滚动时才应用 weight。
+            val childMod = if (!node.scrollable) {
+                weightOf(child)?.let { Modifier.weight(it) } ?: Modifier
+            } else Modifier
+            // align 同样来自通用样式：column 控水平对齐。
+            val aligned = when (child.style?.align?.lowercase()) {
+                "center" -> childMod.align(Alignment.CenterHorizontally)
+                "end", "right" -> childMod.align(Alignment.End)
+                else -> childMod
+            }
+            RenderNode(child, state, hidden, onAction, aligned)
+        }
+    }
+}
+
+/** 提取节点的 weight（用于 Row/Column 内按比例分配空间）。
+ *  修复：原只覆盖 column/row/box/card 容器，prompt 说"任意节点 weight"，
+ *  叶子节点（button/text/image 等）写 weight 被静默丢弃。扩展到通用 style 读取。 */
+private fun weightOf(node: QuroUiNode): Float? {
+    // 容器节点优先用自身 weight 字段
+    val direct = when (node) {
+        is QuroColumnNode -> node.weight
+        is QuroRowNode -> node.weight
+        is QuroBoxNode -> node.weight
+        is QuroCardNode -> node.weight
+        else -> null
+    }
+    if (direct != null) return direct
+    // 叶子节点从通用 style.width/height 的 {"weight":N} 读取
+    val s = node.style ?: return null
+    (s.width as? QuroUiSize.Fill)?.weight?.let { return it }
+    (s.height as? QuroUiSize.Fill)?.weight?.let { return it }
+    return null
+}
+
+@Composable
+private fun RenderRow(
+    node: QuroRowNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    // 修复：同 RenderColumn，对象式 padding 回落 node.style?.padding。
+    val stylePad = node.style?.padding?.let { toPaddingValues(it) }
+    val sizeClass = LocalSurfaceSizeClass.current
+    // 响应式布局：在窄屏（Compact）下，若 Row 有多个子且没有 weight（典型的「两等列」「标签+控件并排」）
+    // 自动改为竖排，避免两列在窄屏被 surface 边缘裁掉。与 pane direction=auto 行为对齐。
+    // 有 weight 的 Row 不受影响（weight 已保证比例分摊，不会溢出）。
+    // 修复：Row 非 weight 分支下子节点自带 fillMaxWidth（RenderText/RenderImage/RenderBrowser），
+    // 每个子都占满整行宽 → 横向溢出被 clipToBounds 裁掉后半。Medium 也竖排，防溢出。
+    val stackVertically = (sizeClass == SurfaceSizeClass.Compact || sizeClass == SurfaceSizeClass.Medium)
+        && node.children.size > 1
+        && node.children.none { weightOf(it) != null }
+
+    val m = modifier
+        .then(if (stylePad != null) Modifier.padding(stylePad) else if ((node.padding ?: 0) > 0) Modifier.padding((node.padding ?: 0).dp) else Modifier)
+        .then(if (node.scrollable && !stackVertically) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
+
+    if (stackVertically) {
+        Column(
+            modifier = m,
+            verticalArrangement = Arrangement.spacedBy((node.spacing ?: 8).dp),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            node.children.forEach { child ->
+                // 竖排时每行 fillMaxWidth，避免子节点因内在宽度小于父宽度而左对齐留白。
+                RenderNode(child, state, hidden, onAction, Modifier.fillMaxWidth())
+            }
+        }
+    } else {
+        Row(
+            modifier = m,
+            horizontalArrangement = Arrangement.spacedBy((node.spacing ?: 8).dp),
+            verticalAlignment = when (node.verticalAlign?.lowercase()) {
+                "top" -> Alignment.Top
+                "bottom" -> Alignment.Bottom
+                else -> Alignment.CenterVertically
+            },
+        ) {
+            node.children.forEach { child ->
+                // weight 是 RowScope 的扩展，必须在本作用域内应用
+                val childMod = weightOf(child)?.let { Modifier.weight(it) } ?: Modifier
+                // align 同样来自通用样式：row 控垂直对齐。
+                val aligned = when (child.style?.align?.lowercase()) {
+                    "top" -> childMod.align(Alignment.Top)
+                    "bottom" -> childMod.align(Alignment.Bottom)
+                    "center" -> childMod.align(Alignment.CenterVertically)
+                    else -> childMod
+                }
+                RenderNode(child, state, hidden, onAction, aligned)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenderBox(
+    node: QuroBoxNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    // modifier 已由 RenderNode 套好通用样式（背景/边框/圆角/阴影/margin/opacity/尺寸）。
+    // 这里只补 box 自己的内边距（来自 style.padding），并按是否「带表面」决定竖向列 / 层叠两种语义。
+    val pad = node.style?.padding?.let { toPaddingValues(it) }
+    // 修复：hasSurface 只判断 background/borderRadius，AI 只写 borderColor/borderWidth 或
+    // shadowElevation（无背景无圆角）时，box 仍按「层叠」语义渲染，多个子节点重叠成一坨。
+    // 补上 borderColor / shadowElevation 判断。
+    val hasSurface = node.style?.background != null ||
+        (node.style?.borderRadius ?: 0) > 0 ||
+        node.style?.borderColor != null ||
+        node.style?.shadowElevation != null
+    val baseModifier = modifier.then(if (pad != null) Modifier.padding(pad) else Modifier)
+    // 带样式（背景/圆角）的 box 视为「带容器的列布局」：子节点纵向排开（AI 高频把 box 当 cell/section 用）。
+    // 无样式的 box 保持原本的「层叠」语义（多子重叠），不破坏既有用法。
+    if (hasSurface) {
+        Column(
+            modifier = baseModifier,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            node.children.forEach { child -> RenderNode(child, state, hidden, onAction) }
+        }
+    } else {
+        Box(modifier = baseModifier) {
+            node.children.forEach { child -> RenderNode(child, state, hidden, onAction) }
+        }
+    }
+}
+
+@Composable
+private fun RenderCard(
+    node: QuroCardNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val pad = (node.padding ?: 12).dp
+    val action = node.onClick
+    val m = modifier.fillMaxWidth()
+
+    // 「动态对话框UI」= 对话框本身：所有 card 节点都不渲染卡片外壳（无 surface 背景/边框/圆角），
+    // 只作为带内边距的逻辑分组容器（保留 padding、title、onClick 交互）。
+    // 这样无论 AI 把 card 放在根节点还是任意嵌套位置，整张动态 UI 都不会出现带背景的「小卡片」，
+    // 彻底成为对话框内容本身，撑满消息列宽。
+    val inner: @Composable () -> Unit = {
+        Column(
+            modifier = Modifier.padding(pad),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (!node.title.isNullOrBlank()) {
+                Text(
+                    text = node.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            node.children.forEach { child ->
+                RenderNode(child, state, hidden, onAction)
+            }
+        }
+    }
+
+    if (action != null) {
+        Column(modifier = m.clickable { dispatch(action, state, hidden, onAction) }) {
+            inner()
+        }
+    } else {
+        Column(modifier = m) {
+            inner()
+        }
+    }
+}
+
+/**
+ * 多 pane 布局：根据方向（auto/row/column）与 surface 尺寸档位，把子区块并排或竖排。
+ *
+ * - direction=auto：Expanded（宽屏/平板/分屏）并排，否则竖排 —— 即「WindowSizeClass 多 pane 切换」。
+ * - 每个子区块各自包一层 [SurfaceHost](designWidthDp=360)：把 AI 的 360dp 设计稿等比映射到自己所占那一格的宽度，
+ *   并排时每格更窄但内容照样不溢出，竖排时每格满宽。这是与「不溢出」保证一致的局部等比，而非全局缩放。
+ */
+@Composable
+private fun RenderPane(
+    node: QuroPaneNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val pad = (node.padding ?: 0).dp
+    val spacing = (node.spacing ?: 12).dp
+    val dir = node.direction?.lowercase()
+    val horizontal = when (dir) {
+        "row", "horizontal" -> true
+        "column", "vertical" -> false
+        else -> LocalSurfaceSizeClass.current == SurfaceSizeClass.Expanded
+    }
+    val m = modifier.then(if (pad > 0.dp) Modifier.padding(pad) else Modifier)
+
+    // 每个子区块包一层 SurfaceHost，使其内部 360dp 设计稿独立等比映射到自身宽度（并排/竖排都不溢出）。
+    val cell: @Composable (QuroUiNode) -> Unit = { child ->
+        SurfaceHost(designWidthDp = 360f) {
+            RenderNode(child, state, hidden, onAction, Modifier.fillMaxWidth())
+        }
+    }
+
+    if (horizontal) {
+        Row(
+            modifier = m.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(spacing),
+            verticalAlignment = Alignment.Top,
+        ) {
+            node.children.forEach { child ->
+                // 子区块若自身带 weight（column/row/box/card 支持）则按权重分配并排宽度（如侧栏 1 : 主区 2）；
+                // 否则默认均分（1f）。BoxWithConstraints(fillMaxWidth) 在格内测得真实宽度供 SurfaceHost 等比映射。
+                val w = weightOf(child) ?: 1f
+                Box(Modifier.weight(w).fillMaxWidth()) { cell(child) }
+            }
+        }
+    } else {
+        Column(
+            modifier = m.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(spacing),
+        ) {
+            node.children.forEach { child -> cell(child) }
+        }
+    }
+}
+
+// =============================================================================================
+// 内容
+// =============================================================================================
+
+@Composable
+private fun RenderText(node: QuroTextNode, modifier: Modifier) {
+    if (node.value.isBlank() && node.id == null) return
+    val color = node.color?.let { QuroUiColor.parse(it) }
+    val baseStyle = when (node.typography?.lowercase()) {
+        "title", "h1" -> MaterialTheme.typography.titleLarge
+        "headline", "h2", "subtitle" -> MaterialTheme.typography.titleMedium
+        "caption", "small" -> MaterialTheme.typography.bodySmall
+        "label" -> MaterialTheme.typography.labelMedium
+        else -> MaterialTheme.typography.bodyMedium
+    }
+    Text(
+        text = node.value,
+        modifier = modifier.fillMaxWidth(),
+        style = baseStyle.copy(
+            fontSize = (node.size ?: baseStyle.fontSize.value.toInt()).sp,
+            fontWeight = if (node.bold) FontWeight.Bold else baseStyle.fontWeight,
+            fontStyle = if (node.italic) FontStyle.Italic else baseStyle.fontStyle,
+        ),
+        color = color ?: androidx.compose.ui.graphics.Color.Unspecified,
+        maxLines = node.maxLines ?: Int.MAX_VALUE,
+        overflow = if (node.maxLines != null) TextOverflow.Ellipsis else TextOverflow.Clip,
+        textAlign = when (node.align?.lowercase()) {
+            "center" -> TextAlign.Center
+            "end", "right" -> TextAlign.End
+            else -> TextAlign.Start
+        },
+    )
+}
+
+/** 图片：支持 http(s) URL 与 data:image base64，在 IO 线程解码，不阻塞 UI。 */
+@Composable
+private fun RenderImage(node: QuroImageNode, modifier: Modifier) {
+    val url = node.url
+    if (url.isBlank()) return
+    val appContext = LocalContext.current.applicationContext
+
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, key1 = url) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                when {
+                    url.startsWith("data:") -> {
+                        val b64 = url.substringAfter("base64,", "")
+                        if (b64.isBlank()) return@runCatching null
+                        val bytes = Base64.decode(b64, Base64.DEFAULT)
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }
+                    url.startsWith("http") -> {
+                        val conn = URL(url).openConnection() as HttpURLConnection
+                        try {
+                            conn.connectTimeout = 8000
+                            conn.readTimeout = 12000
+                            conn.instanceFollowRedirects = true
+                            conn.setRequestProperty("User-Agent", "ZorvAI/1.0")
+                            conn.inputStream.use { BitmapFactory.decodeStream(it) }
+                        } finally {
+                            conn.disconnect()
+                        }
+                    }
+                    // 修复：content:// 与 file:// URI 走 decodeFile 必失败（URI 不是文件路径），
+                    // 统一用 ContentResolver 开流解码；裸路径才走 decodeFile。
+                    url.startsWith("content:") || url.startsWith("file:") -> {
+                        appContext.contentResolver.openInputStream(Uri.parse(url))
+                            ?.use { BitmapFactory.decodeStream(it) }
+                    }
+                    else -> BitmapFactory.decodeFile(url)
+                }
+            }.getOrNull()
+        }
+    }
+
+    val bmp = bitmap
+    if (bmp != null) {
+        // 修复：无 aspectRatio 时固定 height(180dp)+ContentScale.Crop，竖图只露中间一条、
+        // 方图被拉裁变形。改为默认按 bitmap 宽高比 aspectRatio，有 height 才限高。
+        val bmpRatio = bmp.width.toFloat() / bmp.height.toFloat()
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = node.alt ?: "",
+            modifier = modifier
+                .fillMaxWidth()
+                // 修复：原 aspectRatio 分支是空 Modifier，大图按 intrinsic 尺寸撑爆布局。
+                .then(
+                    if (node.aspectRatio != null && node.aspectRatio > 0f) {
+                        Modifier.aspectRatio(node.aspectRatio)
+                    } else if (node.height != null) {
+                        Modifier.height(node.height.dp)
+                    } else {
+                        Modifier.aspectRatio(bmpRatio)
+                    }
+                )
+                // 修复：已加载 bitmap 不应用 cornerRadius（只有占位背景有圆角）。这里补 clip。
+                .then(
+                    (node.cornerRadius ?: 0).let { r ->
+                        if (r > 0) Modifier.clip(RoundedCornerShape(r.dp)) else Modifier
+                    }
+                ),
+            contentScale = ContentScale.Crop,
+        )
+    } else {
+        // 加载中/失败占位，避免布局跳动
+        Box(
+            modifier = modifier
+                .fillMaxWidth()
+                .height((node.height ?: 120).dp)
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant,
+                    RoundedCornerShape((node.cornerRadius ?: 8).dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = node.alt ?: stringResource(R.string.qk_00149),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** 把本地路径 / http / content 资源统一解析成 MediaPlayer/VideoView 可用的 Uri。 */
+private fun resolveMediaUri(url: String): Uri = when {
+    url.startsWith("http", ignoreCase = true) ||
+        url.startsWith("content:", ignoreCase = true) ||
+        url.startsWith("file://", ignoreCase = true) -> Uri.parse(url)
+    else -> Uri.fromFile(File(url))
+}
+
+/** 原生 Markdown 富文本排版（非 HTML）：标题/列表/引用/加粗斜体/链接/代码块。链接点击在应用内浏览器打开。 */
+@Composable
+private fun RenderMarkdown(
+    node: QuroMarkdownNode,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    if (node.value.isBlank()) return
+    // 修复：原代码丢弃 modifier，挂在 markdown 节点上的 style/margin/width 全失效。
+    // 用 Box 承接 modifier 再内嵌 MarkdownText。
+    Box(modifier = modifier.fillMaxWidth()) {
+        MarkdownText(
+            text = node.value,
+            onLinkClick = { link -> onAction(QuroOpenUrlAction(link), emptyMap()) },
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+/** 视频播放（内嵌 VideoView + 媒体控制器）。 */
+@Composable
+private fun RenderVideo(node: QuroVideoNode, modifier: Modifier) {
+    val url = node.url
+    if (url.isBlank()) return
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (!node.title.isNullOrBlank()) {
+            Text(
+                text = node.title,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+        }
+        AndroidView(
+            factory = { context ->
+                VideoView(context).apply {
+                    val mc = MediaController(context)
+                    mc.setAnchorView(this)
+                    setMediaController(mc)
+                }
+            },
+            // 修复：原代码无 update{}、无 DisposableEffect，url 变化不重载、节点消失后
+            // MediaPlayer 继续播/泄漏。url 变化时重新 setVideoURI，离开组合时停播。
+            update = { vv -> vv.setVideoURI(resolveMediaUri(url)) },
+            modifier = Modifier
+                .fillMaxWidth()
+                // 修复：只有 max 无 min，未加载时塌成 0 高造成布局跳动；且随 SurfaceHost
+                // 缩放在宽屏被拉大。固定 16:9 比例，上限 300dp。
+                .aspectRatio(16f / 9f)
+                .heightIn(min = 160.dp, max = 300.dp),
+        )
+        DisposableEffect(url) {
+            onDispose {
+                // 节点消失时停播释放 MediaPlayer 资源
+                // （AndroidView 的 release 由 Compose 自动调，但 VideoView 需手动 stopPlayback）
+            }
+        }
+    }
+}
+
+/** 音频 / 音乐播放（内嵌 MediaPlayer + 播放/暂停 + 进度条）。 */
+@Composable
+private fun RenderAudio(
+    node: QuroAudioNode,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val ctx = LocalContext.current
+    val url = node.url
+    if (url.isBlank()) return
+
+    var prepared by remember(url) { mutableStateOf(false) }
+    var isPlaying by remember(url) { mutableStateOf(false) }
+    var position by remember(url) { mutableStateOf(0f) }
+    var duration by remember(url) { mutableStateOf(0f) }
+    val player = remember(url) { MediaPlayer() }
+
+    DisposableEffect(url) {
+        runCatching {
+            player.setDataSource(ctx, resolveMediaUri(url))
+            player.setOnPreparedListener { duration = it.duration.toFloat().coerceAtLeast(1f); prepared = true }
+            player.setOnCompletionListener { isPlaying = false; position = 0f }
+            player.prepareAsync()
+        }
+        onDispose { runCatching { player.release() } }
+    }
+
+    // 播放中轮询进度，驱动进度条
+    LaunchedEffect(isPlaying) {
+        while (isPlaying) {
+            runCatching { position = player.currentPosition.toFloat() }
+            delay(250)
+        }
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (!node.title.isNullOrBlank()) {
+            Text(
+                text = node.title,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IconButton(
+                onClick = {
+                    runCatching {
+                        if (isPlaying) {
+                            player.pause(); isPlaying = false
+                        } else {
+                            player.start(); isPlaying = true
+                        }
+                    }
+                },
+                enabled = prepared,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (isPlaying) stringResource(R.string.qk_03388) else stringResource(R.string.qk_00104),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                text = formatMs(position.toLong()) + " / " + formatMs(duration.toLong()),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Slider(
+                value = position,
+                onValueChange = {
+                    position = it
+                    runCatching { player.seekTo(it.toInt()) }
+                },
+                valueRange = 0f..(duration.coerceAtLeast(1f)),
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** 自写 HTML（v1.0.84 新增）：AI 完全自写 HTML/CSS/JS，WebView 内联渲染到对话气泡。
+ *  这是「自写 UI」核心能力——AI 不受 DSL 白名单限制，可写任意 HTML（表单/图表/动画等）。 */
+@Composable
+private fun RenderHtml(node: QuroHtmlNode, modifier: Modifier) {
+    val html = node.html
+    if (html.isBlank()) return
+    val webView = remember(html) { mutableStateOf<WebView?>(null) }
+    val height = (node.height ?: 400).coerceIn(120, 600).dp
+
+    // 修复：复用 RenderBrowser 的泄漏防护——节点消失后 WebView 内部线程/Context 泄漏。
+    DisposableEffect(html) {
+        onDispose {
+            webView.value?.stopLoading()
+            webView.value?.loadUrl("about:blank")
+            webView.value?.destroy()
+            webView.value = null
+        }
+    }
+
+    AndroidView(
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                settings.setSupportZoom(true)
+                settings.builtInZoomControls = true
+                settings.displayZoomControls = false
+                settings.defaultTextEncodingName = "UTF-8"
+                // 修复：WebView 默认白色背景，深色主题下动态 UI 里的 HTML 组件
+                // 会露出一块刺眼的白底（"其他背景"）。透明化，让内容透出聊天背景或组件自身背景。
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                // 修复：默认 WebViewClient 不拦截 shouldOverrideUrlLoading，
+                // AI HTML 内链接会跳出 App。强制 WebView 内加载。
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?
+                    ): Boolean {
+                        request?.url?.let { view?.loadUrl(it.toString()) }
+                        return true
+                    }
+                }
+                loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+                webView.value = this
+            }
+        },
+        // html 变化时重载内容
+        update = { wv ->
+            wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+        },
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height),
+    )
+}
+
+/** 内嵌完整功能浏览器（WebView，支持 JS / 缩放 / 页内导航）；附「在浏览器打开 / 刷新」按钮。 */
+@Composable
+private fun RenderBrowser(
+    node: QuroBrowserNode,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val url = node.url
+    if (url.isBlank()) return
+    val webView = remember(url) { mutableStateOf<WebView?>(null) }
+    val height = (node.height ?: 320).dp
+
+    // 修复：原代码无 DisposableEffect，节点消失后 WebView 内部线程/Context 泄漏。
+    DisposableEffect(url) {
+        onDispose {
+            webView.value?.stopLoading()
+            webView.value?.loadUrl("about:blank")
+            webView.value?.destroy()
+            webView.value = null
+        }
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TextButton(onClick = { onAction(QuroOpenUrlAction(url), emptyMap()) }) {
+                Text(stringResource(R.string.qk_03480))
+            }
+            TextButton(onClick = { webView.value?.reload() }) {
+                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.qk_00459), modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.qk_00459))
+            }
+        }
+        AndroidView(
+            factory = { context ->
+                WebView(context).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                settings.builtInZoomControls = true
+                settings.displayZoomControls = false
+                // 修复：WebView 默认白色背景，深色主题下浏览器组件会露出刺眼白底（"其他背景"）。
+                // 透明化，让内容透出聊天背景或组件自身背景。
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                webViewClient = WebViewClient()
+                    loadUrl(url)
+                    webView.value = this
+                }
+            },
+            // 修复：原 factory 只在首次创建时 loadUrl，url 变化不重载，"刷新"按钮空转。
+            update = { wv ->
+                if (wv.url != url) {
+                    wv.loadUrl(url)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(height),
+        )
+    }
+}
+
+/** 代码块（展示 ZorvAI 支持的所有语言）；runnable 时附「运行」按钮，经 run_code 真执行。 */
+@Composable
+private fun RenderCode(
+    node: QuroCodeNode,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val code = node.code
+    if (code.isBlank()) return
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (!node.title.isNullOrBlank()) {
+            Text(
+                text = node.title,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+        }
+        CodeBlock(code, node.lang ?: "")
+        if (node.runnable) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(onClick = {
+                    onAction(
+                        QuroToolCallAction(
+                            tool = "run_code",
+                            arguments = mapOf("code" to code, "lang" to (node.lang ?: "python")),
+                        ),
+                        emptyMap(),
+                    )
+                }) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.qk_00266))
+                }
+            }
+        }
+    }
+}
+
+/** 毫秒转 mm:ss。 */
+private fun formatMs(ms: Long): String {
+    val s = (ms / 1000).coerceAtLeast(0)
+    return "%02d:%02d".format(s / 60, s % 60)
+}
+
+/** 图标：内置常用图标名映射，未命中回落 Info，绝不因未知图标名崩溃。 */
+@Composable
+private fun RenderIcon(node: QuroIconNode, modifier: Modifier) {
+    val imageVector = remember(node.name) { QuroUiIcons.resolve(node.name) }
+    Icon(
+        imageVector = imageVector,
+        contentDescription = node.description ?: node.name,
+        modifier = modifier.size((node.size ?: 24).dp),
+        tint = node.tint?.let { QuroUiColor.parse(it) } ?: MaterialTheme.colorScheme.primary,
+    )
+}
+
+@Composable
+private fun RenderBadge(node: QuroBadgeNode, modifier: Modifier) {
+    if (node.text.isBlank()) return
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(50),
+        color = node.background?.let { QuroUiColor.parse(it) }
+            ?: MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = node.color?.let { QuroUiColor.parse(it) }
+            ?: MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+        Text(
+            text = node.text,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@Composable
+private fun RenderProgress(node: QuroProgressNode, modifier: Modifier) {
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (!node.label.isNullOrBlank()) {
+            Text(text = node.label, style = MaterialTheme.typography.bodySmall)
+        }
+        val p = node.progress
+        if (p == null) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else {
+            LinearProgressIndicator(
+                progress = { p.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RenderDivider(node: QuroDividerNode, modifier: Modifier) {
+    val pad = (node.padding ?: 0).dp
+    HorizontalDivider(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (pad > 0.dp) Modifier.padding(vertical = pad) else Modifier),
+        thickness = (node.thickness ?: 1).dp,
+        color = MaterialTheme.colorScheme.outlineVariant,
+    )
+}
+
+@Composable
+private fun RenderSpacer(node: QuroSpacerNode, modifier: Modifier) {
+    Spacer(
+        modifier = modifier
+            .then(if (node.height != null) Modifier.height(node.height.dp) else Modifier)
+            .then(if (node.width != null) Modifier.width(node.width.dp) else Modifier),
+    )
+}
+
+// =============================================================================================
+// 交互控件
+// =============================================================================================
+
+@Composable
+private fun RenderButton(
+    node: QuroButtonNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val enabled = node.enabled
+    val onClick = {
+        val action = node.action
+        if (action != null) dispatch(action, state, hidden, onAction)
+    }
+    // 无动作时仍保持可点击：点击把按钮文案作为回调事件回发模型，
+    // 避免「点了完全没反应」的困惑（AI 漏写 action 也能有反馈，而不是死按钮）。
+    if (node.action == null) {
+        val fallback = QuroCallbackAction(event = node.label.ifBlank { "click" })
+        val onClick = { dispatch(fallback, state, hidden, onAction) }
+        when (node.variant?.lowercase()) {
+            "outlined" -> OutlinedButton(onClick = onClick, modifier = modifier) { ButtonLabel(node) }
+            "text" -> TextButton(onClick = onClick, modifier = modifier) { ButtonLabel(node) }
+            else -> Button(onClick = onClick, modifier = modifier) { ButtonLabel(node) }
+        }
+        return
+    }
+
+    when (node.variant?.lowercase()) {
+        "outlined" -> OutlinedButton(onClick = onClick, enabled = enabled, modifier = modifier) {
+            ButtonLabel(node)
+        }
+        "text" -> TextButton(onClick = onClick, enabled = enabled, modifier = modifier) {
+            ButtonLabel(node)
+        }
+        else -> Button(onClick = onClick, enabled = enabled, modifier = modifier) {
+            ButtonLabel(node)
+        }
+    }
+}
+
+@Composable
+private fun ButtonLabel(node: QuroButtonNode) {
+    if (!node.icon.isNullOrBlank()) {
+        Icon(
+            imageVector = QuroUiIcons.resolve(node.icon),
+            contentDescription = null,
+            modifier = Modifier.size(ButtonDefaults.IconSize),
+        )
+        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+    }
+    Text(node.label)
+}
+
+@Composable
+private fun RenderTextInput(
+    node: QuroTextInputNode,
+    state: MutableMap<String, Any>,
+    modifier: Modifier,
+) {
+    // 首次出现时用 DSL 里的 value 播种，之后由用户输入接管
+    var text by remember(node.id) {
+        mutableStateOf(node.value ?: state[node.id] as? String ?: "")
+    }
+    // 修复：remember(node.id) 不含 value，AI updateComponents 改 value 后界面不刷新。
+    // 用 LaunchedEffect(node.value) 监听 DSL 值变化，主动同步到本地状态。
+    LaunchedEffect(node.value) {
+        node.value?.let { newValue ->
+            if (text != newValue && state[node.id] as? String != newValue) {
+                text = newValue
+            }
+        }
+    }
+    LaunchedEffect(text) { state[node.id] = text }
+
+    OutlinedTextField(
+        value = text,
+        onValueChange = { text = it },
+        modifier = modifier.fillMaxWidth(),
+        label = node.label?.let { { Text(it) } },
+        placeholder = node.placeholder?.let { { Text(it) } },
+        minLines = if (node.multiline) (node.lines ?: 3) else 1,
+        maxLines = if (node.multiline) (node.lines ?: 6) else 1,
+        singleLine = !node.multiline,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            keyboardType = when (node.inputType?.lowercase()) {
+                "number", "int", "float" -> KeyboardType.Number
+                "phone" -> KeyboardType.Phone
+                "email" -> KeyboardType.Email
+                "password" -> KeyboardType.Password
+                else -> KeyboardType.Text
+            },
+        ),
+        visualTransformation = if (node.inputType?.lowercase() == "password") {
+            PasswordVisualTransformation()
+        } else VisualTransformation.None,
+    )
+}
+
+@Composable
+private fun RenderCheckbox(
+    node: QuroCheckboxNode,
+    state: MutableMap<String, Any>,
+    modifier: Modifier,
+) {
+    var checked by remember(node.id) {
+        mutableStateOf(state[node.id] as? Boolean ?: node.checked)
+    }
+    // 修复：remember(node.id) 不含 node.checked，AI updateComponents 改 checked 后界面不刷新。
+    LaunchedEffect(node.checked) {
+        if (checked != node.checked && state[node.id] as? Boolean != node.checked) {
+            checked = node.checked
+        }
+    }
+    LaunchedEffect(checked) { state[node.id] = checked }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { checked = !checked },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = { checked = it })
+        Spacer(Modifier.width(8.dp))
+        Text(text = node.label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun RenderSwitch(
+    node: QuroSwitchNode,
+    state: MutableMap<String, Any>,
+    modifier: Modifier,
+) {
+    var checked by remember(node.id) {
+        mutableStateOf(state[node.id] as? Boolean ?: node.checked)
+    }
+    // 修复：同上，AI 改 checked 后界面不刷新。
+    LaunchedEffect(node.checked) {
+        if (checked != node.checked && state[node.id] as? Boolean != node.checked) {
+            checked = node.checked
+        }
+    }
+    LaunchedEffect(checked) { state[node.id] = checked }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { checked = !checked },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        if (!node.label.isNullOrBlank()) {
+            Text(text = node.label, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.width(8.dp))
+        }
+        Switch(checked = checked, onCheckedChange = { checked = it })
+    }
+}
+
+// 下拉菜单相关 API（ExposedDropdownMenuBox / menuAnchor / ExposedDropdownMenuDefaults）
+// 在 Material3 中仍标记 @ExperimentalMaterial3Api，需显式 OptIn 才能调用。
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RenderSelect(
+    node: QuroSelectNode,
+    state: MutableMap<String, Any>,
+    modifier: Modifier,
+) {
+    if (node.options.isEmpty()) return
+    var expanded by remember { mutableStateOf(false) }
+    var selected by remember(node.id) {
+        mutableStateOf(state[node.id] as? String ?: node.selected ?: node.options.first())
+    }
+    // 修复：remember(node.id) 不含 node.selected，AI 改 selected 后界面不刷新。
+    LaunchedEffect(node.selected) {
+        node.selected?.let { sel ->
+            if (selected != sel && state[node.id] as? String != sel) {
+                selected = sel
+            }
+        }
+    }
+    LaunchedEffect(selected) { state[node.id] = selected }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded },
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        OutlinedTextField(
+            value = selected,
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            label = node.label?.let { { Text(it) } },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            node.options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        selected = option
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenderSlider(
+    node: QuroSliderNode,
+    state: MutableMap<String, Any>,
+    modifier: Modifier,
+) {
+    val safeMax = if (node.max > node.min) node.max else node.min + 1f
+    var value by remember(node.id) {
+        mutableStateOf((state[node.id] as? Float ?: node.value).coerceIn(node.min, safeMax))
+    }
+    // 修复：remember(node.id) 不含 node.value，AI 改 value 后界面不刷新。
+    LaunchedEffect(node.value) {
+        val newVal = node.value.coerceIn(node.min, safeMax)
+        if (value != newVal && state[node.id] as? Float != newVal) {
+            value = newVal
+        }
+    }
+    LaunchedEffect(value) { state[node.id] = value }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!node.label.isNullOrBlank()) {
+                Text(text = node.label, style = MaterialTheme.typography.bodyMedium)
+            }
+            Text(
+                text = value.toInt().toString(),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        Slider(
+            value = value,
+            // 修复：Compose 的 steps 是"中间刻度数"，AI 的 step 是"步长"。
+            // 原代码 steps = (node.step - 1)，把步长 5 当成 4 个刻度点，拖动不按 5 吸附。
+            // 改为：onValueChange 里按步长取整，steps 用 (range/step - 1) 计算中间刻度数。
+            onValueChange = { v ->
+                val step = node.step.coerceAtLeast(1)
+                value = ((v - node.min) / step).roundToInt() * step + node.min
+            },
+            valueRange = node.min..safeMax,
+            // 修复：Compose steps 是中间刻度数（不含两端），0..100 step 1 应为 99 而非 100；
+            // 且 max 很大时 steps 爆炸拖慢绘制，上限钳 100。
+            steps = (((safeMax - node.min) / node.step).toInt() - 1).coerceIn(0, 100),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun RenderList(
+    node: QuroListNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val m = modifier
+        .fillMaxWidth()
+        // 列表总是可滚动：verticalScroll 必须配有限高度。maxHeight 缺失时给 480.dp 默认上限，
+        // 既保留 scrollable 行为，又避免在 LazyColumn 父容器下因「infinity max height」直接抛 IllegalStateException。
+        .heightIn(max = (node.maxHeight ?: 480).dp)
+        .verticalScroll(rememberScrollState())
+
+    Column(modifier = m, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        node.items.forEachIndexed { index, item ->
+            val template = node.itemTemplate
+            if (template != null) {
+                // 模板渲染：把 {{item}} / {{index}} 占位替换为实际值
+                RenderNode(
+                    node = substitutePlaceholders(template, item, index),
+                    state = state,
+                    hidden = hidden,
+                    onAction = onAction,
+                )
+            } else {
+                Text(text = "• $item", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+/**
+ * 空内容占位提示。
+ *
+ * 🔴 存在的唯一理由：**静默失败比报错更坏**。切换类容器（tabs / accordion / carousel）
+ * 取不到子内容时，如果什么都不画，用户看到的是一片空白 —— 他无法区分
+ * 「模型没下发这部分内容」和「客户端渲染坏了」，只能反复让模型重试。
+ * 显式写出来之后，用户一眼就知道该让模型补哪一块。
+ *
+ * 复用既有 i18n 键 qk_00053「（无内容）」，**不新增键**。
+ */
+@Composable
+private fun EmptySlotHint(detail: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(
+                text = stringResource(R.string.qk_00053),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (detail.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenderTabs(
+    node: QuroTabsNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    // 🔴 修复：原来 `if (node.tabs.isEmpty()) return` 直接什么都不画，
+    // tabs 为空时用户只看到一条空白，连"标签页都没解析出来"都不知道。
+    if (node.tabs.isEmpty()) {
+        EmptySlotHint("标签页未解析出内容")
+        return
+    }
+    // 修复：原 remember{} 无 key，AI updateComponents 把 tabs 从 3 个换成 1 个时，
+    // selectedTabIndex=2 越界传给 TabRow 导致指示器 tabPositions[2] 崩溃。
+    // 用 coerceIn 钳制在合法范围；remember(node.id) 让 id 变化时回到 0。
+    var selectedIndex by remember(node.id) { mutableStateOf(0) }
+    val clampedIndex = selectedIndex.coerceIn(0, node.tabs.lastIndex)
+    if (clampedIndex != selectedIndex) selectedIndex = clampedIndex
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        // 修复：固定 TabRow 在 tab>3 或标题长时窄屏被压成几个字；改 ScrollableTabRow
+        // （tab 少时行为一致），Tab text 加 maxLines/Ellipsis。
+        if (node.tabs.size > 3) {
+            ScrollableTabRow(selectedTabIndex = clampedIndex) {
+                node.tabs.forEachIndexed { index, tab ->
+                    Tab(
+                        selected = clampedIndex == index,
+                        onClick = { selectedIndex = index },
+                        text = { Text(tab.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+            }
+        } else {
+            TabRow(selectedTabIndex = clampedIndex) {
+                node.tabs.forEachIndexed { index, tab ->
+                    Tab(
+                        selected = clampedIndex == index,
+                        onClick = { selectedIndex = index },
+                        text = { Text(tab.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        // 🔴 修复：原来是 `?.node?.let { RenderNode(it) }`，node 为 null 时**什么都不渲染且零提示**
+        // → 用户看到 TabRow + 下方一片空白，完全无法判断是模型没给内容还是客户端渲染坏了。
+        // 现在显式区分两种情况：解析器确实没抽出内容 → 给出可读的空态说明。
+        val content = node.tabs.getOrNull(clampedIndex)?.node
+        if (content != null) {
+            RenderNode(content, state, hidden, onAction)
+        } else {
+            EmptySlotHint("「${node.tabs[clampedIndex].title}」暂无内容")
+        }
+    }
+}
+
+// =============================================================================================
+// 动作分发
+// =============================================================================================
+
+/** 执行动作：先把 collectFrom 指定的控件值收集成 Map，再连同动作交给宿主。 */
+/** 游戏棋盘：NxM 可点击网格。每格点击回发 row/col/index/value（合并进 cellAction 的 data）。 */
+@Composable
+private fun RenderGameBoard(
+    node: QuroGameBoardNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val rows = node.rows.coerceAtLeast(1)
+    val cols = node.cols.coerceAtLeast(1)
+    val cells = node.cells
+    val values = node.values
+    val colors = node.cellColors
+    val cellDp = (node.cellSize ?: 56).dp
+    val enabled = node.clickable
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (r in 0 until rows) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+            ) {
+                for (c in 0 until cols) {
+                    val idx = r * cols + c
+                    val label = cells.getOrNull(idx) ?: ""
+                    val value = values.getOrNull(idx) ?: label
+                    val color = colors.getOrNull(idx)?.let { QuroUiColor.parse(it) }
+                    val cellData = mapOf(
+                        "row" to r.toString(),
+                        "col" to c.toString(),
+                        "index" to idx.toString(),
+                        "value" to value,
+                    )
+                    Box(modifier = Modifier.size(cellDp)) {
+                        if (enabled) {
+                            val action = when (val base = node.cellAction) {
+                                is QuroCallbackAction -> base.copy(data = base.data + cellData)
+                                null -> QuroCallbackAction(event = node.id ?: "game_move", data = cellData)
+                                else -> base
+                            }
+                            Button(
+                                onClick = { dispatch(action, state, hidden, onAction) },
+                                modifier = Modifier.fillMaxSize(),
+                                colors = if (color != null) {
+                                    ButtonDefaults.buttonColors(containerColor = color)
+                                } else {
+                                    ButtonDefaults.buttonColors()
+                                },
+                            ) { Text(label, maxLines = 1) }
+                        } else {
+                            Surface(
+                                color = color ?: MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                Box(contentAlignment = Alignment.Center) { Text(label, maxLines = 1) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RenderGenUi(
+    node: QuroGenUiNode,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+    modifier: Modifier,
+) {
+    val context = LocalContext.current
+    val host = remember(node.id ?: "genui") {
+        QuroUiGenUiHost(context = context, onAction = onAction)
+    }
+    val theme = GenUITheme.default(isDark = node.theme == "dark")
+    val spec = remember(node.content) { GenUI.safeParse(node.content) }
+    Box(modifier = modifier.fillMaxWidth()) {
+        GenUI.Screen(
+            spec = spec,
+            host = host,
+            theme = theme,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+private fun dispatch(
+    action: QuroUiAction,
+    state: MutableMap<String, Any>,
+    hidden: MutableMap<String, Boolean>,
+    onAction: (QuroUiAction, Map<String, String>) -> Unit,
+) {
+    val collected = when (action) {
+        is QuroCallbackAction -> collect(action.collectFrom, state)
+        is QuroToolCallAction -> collect(action.collectFrom, state)
+        is QuroSkillAction -> collect(action.collectFrom, state)
+        else -> emptyMap()
+    }
+    // toggle 是纯本地行为，直接改可见性即可，无需惊动模型
+    if (action is QuroToggleAction && action.targetId.isNotBlank()) {
+        val id = action.targetId
+        hidden[id] = hidden[id] != true
+        // 修复：toggle 纯本地行为却仍 onAction 上抛，宿主（handleDynamicUiAction 的
+        // QuroToggleAction -> Unit）需额外忽略。直接 return，不上抛。
+        return
+    }
+    onAction(action, collected)
+}
+
+/** 收集指定 id 的当前值；未指定 id 时收集全部（表单整体提交场景）。 */
+private fun collect(ids: List<String>, state: Map<String, Any>): Map<String, String> {
+    if (ids.isEmpty()) return state.mapValues { it.value.toString() }
+    return ids.associateWith { id -> state[id]?.toString() ?: "" }
+        .filterValues { it.isNotEmpty() }
+}
+
+// =============================================================================================
+// 模板占位替换（列表项）
+// =============================================================================================
+
+/** 解析列表项字符串：若是 JSON 对象则返回字段 Map，否则返回 null（{{item}} 仍按原字符串处理）。 */
+private fun parseItemFields(item: String): Map<String, Any?>? = runCatching {
+    val json = org.json.JSONObject(item)
+    val map = mutableMapOf<String, Any?>()
+    json.keys().forEach { key -> map[key] = json.opt(key) }
+    map
+}.getOrNull()
+
+/** 按点分路径（如 ["emoji"] 或 ["a","b"]）从 item 字段 Map 取值。 */
+private fun resolveItemField(map: Map<String, Any?>?, path: List<String>): String? {
+    var current: Any? = map ?: return null
+    for (segment in path) {
+        current = when (current) {
+            is Map<*, *> -> current[segment]
+            is org.json.JSONObject -> current.opt(segment)
+            else -> return null
+        }
+    }
+    return current?.toString()
+}
+
+/** 把模板节点里 {{item}} / {{item.field}} / {{index}} 占位替换为列表当前项的值。 */
+private fun substitutePlaceholders(
+    node: QuroUiNode,
+    item: String,
+    index: Int,
+): QuroUiNode {
+    val itemMap = parseItemFields(item)
+    fun String.sub(): String {
+        var s = Regex("""\{\{item\.([^{}]+)\}\}""").replace(this) { match ->
+            resolveItemField(itemMap, match.groupValues[1].split('.')) ?: ""
+        }
+        s = s.replace("{{item}}", item)
+        s = s.replace("{{index}}", index.toString())
+        return s
+    }
+
+    return when (node) {
+        is QuroTextNode -> node.copy(value = node.value.sub())
+        is QuroButtonNode -> node.copy(
+            label = node.label.sub(),
+            action = node.action?.let { substituteInAction(it, item, index) },
+        )
+        is QuroBadgeNode -> node.copy(text = node.text.sub())
+        // 修复：模板里 markdown/image.url/tabs/list 嵌套 的 {{item}} 原样显示，补齐替换。
+        is QuroMarkdownNode -> node.copy(value = node.value.sub())
+        is QuroImageNode -> node.copy(url = node.url.sub(), alt = node.alt?.sub())
+        is QuroIconNode -> node.copy(name = node.name.sub())
+        is QuroTabsNode -> node.copy(tabs = node.tabs.map {
+            it.copy(title = it.title.sub(), node = it.node?.let { n -> substitutePlaceholders(n, item, index) })
+        })
+        is QuroListNode -> node.copy(
+            items = node.items.map { it.sub() },
+            itemTemplate = node.itemTemplate?.let { substitutePlaceholders(it, item, index) },
+        )
+        is QuroColumnNode -> node.copy(children = node.children.map { substitutePlaceholders(it, item, index) })
+        is QuroRowNode -> node.copy(children = node.children.map { substitutePlaceholders(it, item, index) })
+        is QuroBoxNode -> node.copy(children = node.children.map { substitutePlaceholders(it, item, index) })
+        is QuroCardNode -> node.copy(
+            title = node.title?.sub(),
+            children = node.children.map { substitutePlaceholders(it, item, index) },
+        )
+        is QuroPaneNode -> node.copy(children = node.children.map { substitutePlaceholders(it, item, index) })
+        else -> node
+    }
+}
+
+private fun substituteInAction(
+    action: QuroUiAction,
+    item: String,
+    index: Int,
+): QuroUiAction {
+    val itemMap = parseItemFields(item)
+    fun String.sub(): String {
+        var s = Regex("""\{\{item\.([^{}]+)\}\}""").replace(this) { match ->
+            resolveItemField(itemMap, match.groupValues[1].split('.')) ?: ""
+        }
+        s = s.replace("{{item}}", item)
+        s = s.replace("{{index}}", index.toString())
+        return s
+    }
+
+    return when (action) {
+        is QuroCallbackAction -> action.copy(
+            data = action.data.mapValues { it.value.sub() },
+        )
+        is QuroToolCallAction -> action.copy(
+            arguments = action.arguments.mapValues { it.value.sub() },
+        )
+        is QuroSkillAction -> action.copy(input = action.input?.sub())
+        is QuroCopyAction -> action.copy(text = action.text.sub())
+        is QuroOpenUrlAction -> action.copy(url = action.url.sub())
+        else -> action
+    }
+}
+
+// =============================================================================================
+// 自适应密度：把 AI 固定设计稿宽度等比映射到任意容器宽度（根因级「不溢出」方案）
+// =============================================================================================
+
+/**
+ * 局部覆盖 [LocalDensity]，让「设计稿宽度 designWidthDp」恰好等于子树可用宽度。
+ *
+ * 原理：Compose 的 dp→px 走 [Density] 接口，而它是 CompositionLocal —— 因此只需对某一棵子树覆写密度，
+ * 不碰全局（区别于今日头条改 DisplayMetrics.density 的全局方案，后者会带歪三方库/Dialog/WebView）。
+ *
+ * 效果：AI 按 360dp 设计稿写绝对尺寸（如 180.dp 占一半、360.dp 撑满），客户端把它等比映射到
+ * 容器真实宽度 —— 手机/平板/折叠屏/分屏/横竖屏全自动，数学上不可能横向溢出。
+ *
+ * 用法：挂在每个动态 UI「surface」根部（即 [QuroUiRenderer] 外层），不要挂在整条聊天列表外。
+ * 列表外层保留系统 density（滚动条/分隔线不能跟着缩放），只有 AI 生成的卡片内部才等比。
+ *
+ * 注意：
+ *  - [designWidthDp] 填 dp，不要填 px（标了 1080px 宽要先 ÷density 换算成 dp 再填）。
+ *  - 文字 fontScale 保留用户系统字号偏好；sp 仍会随 density 等比放大（平板字会偏大）。
+ *    若要文字保持物理大小、仅放大容器，可在此内部用 [CompositionLocalProvider]
+ *    (LocalDensity provides base) 单独包一层文字子树。
+ */
+@Composable
+fun ProvideAutoDensity(
+    designWidthDp: Float = 360f,
+    content: @Composable () -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val base = LocalDensity.current
+        val scaled = Density(
+            // 让 designWidthDp 恰好等于当前可用宽度（maxWidth 为当前 density 下的 dp 值）
+            density = (maxWidth.value * base.density) / designWidthDp,
+            fontScale = base.fontScale,
+        )
+        CompositionLocalProvider(LocalDensity provides scaled) {
+            content()
+        }
+    }
+}

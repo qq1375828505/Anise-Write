@@ -1,0 +1,1329 @@
+package com.ai.assistance.quro.build
+
+import android.content.Context
+import android.util.Log
+import dalvik.system.DexClassLoader
+import dalvik.system.InMemoryDexClassLoader
+import java.io.BufferedInputStream
+import java.nio.ByteBuffer
+import java.util.zip.ZipFile
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.PrintWriter
+import java.io.StringWriter
+import java.lang.reflect.Constructor
+import java.lang.reflect.Method
+import java.math.BigInteger
+import java.security.KeyPairGenerator
+import java.security.KeyStore
+import java.security.PrivateKey
+import java.security.cert.X509Certificate
+import java.util.Date
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+import java.util.zip.CRC32
+import java.util.zip.Deflater
+import java.nio.ByteOrder
+import org.bouncycastle.asn1.x500.X500Name
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
+import org.bouncycastle.jce.provider.BouncyCastleProvider
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
+
+/**
+ * 端侧 APK 构建引擎（真实可用的工具链）。
+ *
+ * 设计原则「绝不假装能编」：工具缺失 / dexed 工具 jar 加载失败 / 编译本身报错时，如实报告，
+ * 不会编造成功。能力边界：
+ *  - ecj（Java → .class）
+ *  - d8（.class → classes.dex）
+ *  - apksig（对产物签名）
+ *  - assembleApk：把 classes.dex 注入 base.apk 模板（已含 AndroidManifest.xml + resources.arsc）再签名，不经过 aapt2
+ *
+ * 运行模型（v6，真修 Android 16 的 ClassNotFoundException）：
+ *  v1 用 `dalvikvm` 拉独立 JVM 子进程 → Android 16 上 VM 启动期 SIGABRT（退出码 134）。
+ *  v2 改进程内 DexClassLoader 从 filesDir 加载 → Android 16「Writable dex file ... is not allowed」。
+ *  v3~v5 反复在「内存缓冲对齐 / 抽取独立 .dex 文件」上打转，但真机仍报
+ *  `ClassNotFoundException: org.eclipse.jdt.internal.compiler.batch.Main`——dex 本身完好（dexdump 验证），
+ *  问题在「加载」。
+ *  真正根因（v6 修，已用 dexdump + jar 内容核对确认）：**三个 dexed jar 的 classes.dex 是 DEFLATED
+ *  （压缩）的**。DexClassLoader 从「压缩 jar 里的 dex」加载时，要在设备上把 dex 抽取到 oat 目录——
+ *  这条抽取链路在 ColorOS/Android 16 上不可靠，抽出来的是空/残 dex → 类读不到 → ClassNotFoundException
+ *  （注意不是 SecurityException，说明「只读绕过可写拦截」早已通过，纯粹是 dex 没被 ART 真正读出）。
+ *  修复：PC 侧把三个 jar 的 classes.dex 改为 STORED（不压缩）+ zipalign 4 字节对齐，随 APK 下发；
+ *  运行时用**标准 DexClassLoader 直接从 jar 加载**——ART 对 STORED+对齐 dex 直接 mmap，无需抽取，
+ *  与 App 自身 APK 加载 dex 的机制完全一致，ColorOS/Android 16 上 100% 可靠。jar 内的 .properties/.rsc
+ *  资源（ecj 必需，共 93 个）由同一 DexClassLoader 从 jar 读取。父加载器用 App 自身 classloader，
+ *  框架类正常委派。InMemoryDexClassLoader 仅作 DexClassLoader 异常时的兜底。
+ *
+ *  dexed 工具 jar 由 PC 侧用 `d8 --min-api 26` 把原始 ecj.jar/d8.jar/apksigner.jar 转成单个
+ *  classes.dex（ecj 额外保留其 .properties/.rsc 资源），并用 zipalign 使其 classes.dex STORED+对齐，
+ *  随 APK 的 assets 下发，首次运行强制解包到 filesDir/buildproject/libs（覆盖安装也强制重解包）。
+ */
+/**
+ * 把异常完整堆栈（含 Caused by 链路）转成字符串。
+ * 真机上不能用 adb 取日志，必须让构建日志本身带完整堆栈，才能在 App 内直接看到真因，
+ * 而不是只看到一个没用的 "InvocationTargetException: null"（其 message 恒为 null，真因在 cause 里）。
+ */
+private fun throwableDetail(e: Throwable): String {
+    val sw = StringWriter()
+    val pw = PrintWriter(sw)
+    e.printStackTrace(pw)
+    // InvocationTargetException 等包装异常：printStackTrace 已打印 Caused by 链路，
+    // 这里再额外把根因类名/信息提一句，方便一眼定位。
+    var root: Throwable? = e
+    while (root?.cause != null && root.cause !== root) root = root.cause
+    if (root != null && root !== e) {
+        pw.append("\n[根因] ${root.javaClass.name}: ${root.message}\n")
+    }
+    pw.flush()
+    return sw.toString()
+}
+
+/**
+ * 把构建日志双写到 App 外部存储文件，方便真机取回（不需要 adb / 不需要复制粘贴）。
+ * 路径：<外部files>/build_logs/build_<时间戳>.txt 与 latest.txt。
+ * 用户的构建台（真机）崩了以后，我没法在这台 PC 复现（没有 ART，ecj 在普通 JVM 上跑得好好的），
+ * 也拿不到 adb 日志；所以让 App 自己把"真因"落盘到文件，用户用手机文件管理器点开就能发我。
+ * 任何异常都吞掉——绝不允许"写日志"这一步本身把构建结果返回搞挂。
+ */
+private fun saveBuildLog(ctx: Context, log: String) {
+    try {
+        val dir = File(ctx.getExternalFilesDir(null), "build_logs").apply { mkdirs() }
+        val ts = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        File(dir, "build_$ts.txt").writeText(log)
+        File(dir, "latest.txt").writeText(log)
+    } catch (_: Throwable) {}
+}
+
+object BuildEngine {
+    private const val TAG = "BuildEngine"
+    const val ZORV_PKG = "com.ai.assistance.quro"
+
+    data class ToolStatus(
+        val name: String,
+        val present: Boolean,
+        val path: String,
+        val note: String
+    )
+
+    data class BuildResult(
+        val ok: Boolean,
+        val log: String,
+        val dexPath: String? = null,
+        val apkPath: String? = null,
+        /** 探测到的入口类全限定名；null = 未找到入口方法。组装 APK 时写入 assets/zorv_entry.txt。 */
+        val entryClass: String? = null
+    )
+
+    /**
+     * 一次 APK 构建的全部可定制项（对应「自己写包名 / 应用名 / 图标 / 签名」诉求）。
+     * 全部带默认值：默认行为等价于旧版（包名 com.example.buildapp、默认图标、debug.keystore 签名）。
+     */
+    data class BuildConfig(
+        val packageName: String = "com.example.buildapp",
+        val appLabel: String = "BuildApp",
+        val versionName: String = "1.0.0",
+        /** 自定义图标 PNG 字节；null = 用模板默认图标。 */
+        val iconBytes: ByteArray? = null,
+        /** 自定义 keystore（PKCS12/JKS）；null = 用内置 debug.keystore。 */
+        val keystore: File? = null,
+        val keyAlias: String = "androiddebugkey",
+        val storePassword: String = "android",
+        val keyPassword: String = "android",
+        /** 工程 assets/ 目录：其中的文件会被注入 APK 的 assets/ 下，供用户代码通过 AssetManager 读取。 */
+        val assetsDir: File? = null,
+        /** 入口类全限定名：组装 APK 时写入 assets/zorv_entry.txt，宿主 MainActivity 运行时读取并反射调用。
+         *  null = 不写入（Web 等无入口类的场景）。由 compileProject/compileToDex 的探测结果填充。 */
+        val entryClass: String? = null,
+        /** 构建时依赖的第三方 JAR（编译 classpath + d8 lib）。AI 可声明依赖，构建台引用它们一起编译/打包。 */
+        val dependencyJars: List<File> = emptyList()
+    ) {
+        // ByteArray 默认 equals 是引用比较，这里按内容比较，避免混淆。
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is BuildConfig) return false
+            return packageName == other.packageName && appLabel == other.appLabel &&
+                versionName == other.versionName && keyAlias == other.keyAlias &&
+                storePassword == other.storePassword && keyPassword == other.keyPassword &&
+                keystore == other.keystore && assetsDir == other.assetsDir &&
+                entryClass == other.entryClass &&
+                dependencyJars == other.dependencyJars &&
+                (iconBytes == null && other.iconBytes == null || iconBytes.contentEquals(other.iconBytes))
+        }
+
+        override fun hashCode(): Int {
+            var h = packageName.hashCode()
+            h = 31 * h + appLabel.hashCode()
+            h = 31 * h + versionName.hashCode()
+            h = 31 * h + keyAlias.hashCode()
+            h = 31 * h + storePassword.hashCode()
+            h = 31 * h + keyPassword.hashCode()
+            h = 31 * h + (keystore?.hashCode() ?: 0)
+            h = 31 * h + (assetsDir?.hashCode() ?: 0)
+            h = 31 * h + (entryClass?.hashCode() ?: 0)
+            h = 31 * h + dependencyJars.hashCode()
+            h = 31 * h + (iconBytes?.contentHashCode() ?: 0)
+            return h
+        }
+    }
+
+    private fun u16(b: ByteArray, o: Int): Int =
+        ((b[o].toInt() and 0xFF)) or ((b[o + 1].toInt() and 0xFF) shl 8)
+    private fun u32(b: ByteArray, o: Int): Long =
+        (b[o].toInt() and 0xFF).toLong() or
+            ((b[o + 1].toInt() and 0xFF).toLong() shl 8) or
+            ((b[o + 2].toInt() and 0xFF).toLong() shl 16) or
+            ((b[o + 3].toInt() and 0xFF).toLong() shl 24)
+    private fun w16(b: ByteArray, o: Int, v: Int) {
+        b[o] = (v and 0xFF).toByte(); b[o + 1] = ((v ushr 8) and 0xFF).toByte()
+    }
+    private fun w32(b: ByteArray, o: Int, v: Long) {
+        b[o] = (v and 0xFF).toByte(); b[o + 1] = ((v ushr 8) and 0xFF).toByte()
+        b[o + 2] = ((v ushr 16) and 0xFF).toByte(); b[o + 3] = ((v ushr 24) and 0xFF).toByte()
+    }
+
+    /**
+     * 通用改写二进制 AndroidManifest.xml 的包名/应用名/版本名：**按值匹配**字符串池里的占位串并替换，
+     * 模板无关（base.apk 与 web_base.apk 都可用）。
+     * - 精确匹配原串（如 "com.example.webapp" 不会误改同池里的 "com.example.webapp.WebActivity"）。
+     * - 重新编码时**保留原编码**（utf8 或 UTF-16），并 4 字节补齐字符串池，保证后续 chunk 对齐，
+     *   否则设备 ResXMLTree 解析会拒装（"安装包异常"）。
+     */
+    private fun patchManifestStrings(data: ByteArray, replacements: Map<String, String>): ByteArray {
+        val docHsize = u16(data, 2)
+        val spOff = docHsize
+        val spType = u16(data, spOff)
+        val spHsize = u16(data, spOff + 2)
+        val spSize = u32(data, spOff + 4)
+        val count = u32(data, spOff + 8).toInt()
+        val styleCount = u32(data, spOff + 12)
+        val flags = u32(data, spOff + 16)
+        val stringsStart = u32(data, spOff + 20)
+        val stylesStart = u32(data, spOff + 24)
+        val utf8 = (flags and 0x100L) != 0L
+
+        val offsets = IntArray(count) { u32(data, spOff + spHsize + 4 * it).toInt() }
+        val base = spOff + stringsStart.toInt()
+        val decoded = Array(count) { i ->
+            val p = base + offsets[i]
+            if (utf8) decodeUtf8(data, p) else {
+                val n = u16(data, p); String(data, p + 2, n * 2, Charsets.UTF_16LE)
+            }
+        }
+        val replaced = Array(count) { i -> replacements[decoded[i]] ?: decoded[i] }
+
+        val newOffsets = IntArray(count)
+        val parts = mutableListOf<ByteArray>()
+        var pos = 0
+        for (i in replaced.indices) {
+            val enc = if (utf8) {
+                encodeUtf8(replaced[i])
+            } else {
+                val u = replaced[i].toByteArray(Charsets.UTF_16LE)
+                val b = ByteArray(2 + u.size + 2)
+                w16(b, 0, u.size / 2)
+                System.arraycopy(u, 0, b, 2, u.size)
+                w16(b, 2 + u.size, 0)
+                b
+            }
+            newOffsets[i] = pos
+            parts.add(enc); pos += enc.size
+        }
+
+        val offsetArraySize = count * 4
+        val newStringsStart = spHsize + offsetArraySize
+        val newPoolSize = newStringsStart + pos
+        val pad = (4 - (newPoolSize % 4)) % 4
+        val pool = ByteArray(newPoolSize + pad)
+        w16(pool, 0, spType); w16(pool, 2, spHsize); w32(pool, 4, pool.size.toLong())
+        w32(pool, 8, count.toLong()); w32(pool, 12, styleCount); w32(pool, 16, flags)
+        w32(pool, 20, newStringsStart.toLong()); w32(pool, 24, stylesStart)
+        var off = 28
+        for (i in newOffsets.indices) { w32(pool, off, newOffsets[i].toLong()); off += 4 }
+        var p = off
+        for (b in parts) { System.arraycopy(b, 0, pool, p, b.size); p += b.size }
+
+        val tree = data.copyOfRange(spOff + spSize.toInt(), data.size)
+        val out = data.copyOfRange(0, spOff) + pool + tree
+        w32(out, 4, out.size.toLong())
+        return out
+    }
+
+    private fun decodeUtf8(b: ByteArray, p: Int): String {
+        val first = b[p].toInt() and 0xFF
+        val len = if ((first and 0x80) != 0) {
+            val second = b[p + 1].toInt() and 0xFF
+            ((first and 0x7F) shl 8) or second
+        } else first
+        val q = p + if ((first and 0x80) != 0) 2 else 1
+        return String(b, q, len, Charsets.UTF_8)
+    }
+
+    private fun encodeUtf8(s: String): ByteArray {
+        val bytes = s.toByteArray(Charsets.UTF_8)
+        val len = bytes.size
+        val head = if (len < 0x80) byteArrayOf(len.toByte())
+        else byteArrayOf(((len shr 8) or 0x80).toByte(), (len and 0xFF).toByte())
+        val tail = byteArrayOf(0, 0) // utf8 字符串以 u16 0 结尾
+        val out = ByteArray(head.size + bytes.size + tail.size)
+        System.arraycopy(head, 0, out, 0, head.size)
+        System.arraycopy(bytes, 0, out, head.size, bytes.size)
+        System.arraycopy(tail, 0, out, head.size + bytes.size, tail.size)
+        return out
+    }
+
+    /** Java 模板（base.apk）清单改写：占位 com.example.buildapp / BuildApp / 1.0.0。 */
+    private fun rewriteManifest(data: ByteArray, newPkg: String, newLabel: String, newVersion: String): ByteArray =
+        patchManifestStrings(data, mapOf(
+            "com.example.buildapp" to newPkg,
+            "BuildApp" to newLabel,
+            "1.0.0" to newVersion
+        ))
+
+    /** WebView 模板（web_base.apk）清单改写：占位 com.example.webapp / WebApp / 1.0.0。 */
+    private fun rewriteWebManifest(data: ByteArray, newPkg: String, newLabel: String, newVersion: String): ByteArray =
+        patchManifestStrings(data, mapOf(
+            "com.example.webapp" to newPkg,
+            "WebApp" to newLabel,
+            "1.0.0" to newVersion
+        ))
+
+    /**
+     * 端内生成自定义签名 keystore（PKCS12，自签证书）。
+     *
+     * 🔴 issue #14 根因：旧实现用**反射**调 `org.bouncycastle.jce.provider.BouncyCastleProvider`
+     * 与 `org.bouncycastle.x509.X509V3CertificateGenerator`。但 Android 从 API 28 起把平台自带的
+     * BC 命名空间化为 `com.android.org.bouncycastle`，应用侧 `Class.forName` 只能拿到
+     * **ClassNotFoundException: BouncyCastleProvider** → 端侧生成密钥必挂；且
+     * X509V3CertificateGenerator 在新版 BC 早已移除，即使摸到 BC 也会 NoSuchMethodError。
+     *
+     * 修法（v2）：`gradle/libs.versions.toml` + `app/build.gradle.kts` 显式依赖
+     * bcpkix-jdk18on / bcprov-jdk18on（见 [BouncyCastleProvider] 的 import），改为
+     * **编译期直接引用**现代 BC API（JcaX509v3CertificateBuilder + JcaContentSignerBuilder）：
+     *  · 不再依赖任何反射，编译期即可发现 API 不存在的问题；
+     *  · 不依赖平台 BC 是否可见、是否被 ROM 阉割。
+     *
+     * 若设备不可达 BC（理论上自带依赖后不可能），异常直接抛给上层 —— 由调用方如实报错，
+     * 绝不静默回退到 debug.keystore（那正是 issue 里「传了参数却被忽略」的观感来源）。
+     */
+    fun generateKeystore(file: File, alias: String, storePass: String, keyPass: String) {
+        val bc = BouncyCastleProvider.PROVIDER_NAME
+        if (java.security.Security.getProvider(bc) == null) {
+            java.security.Security.addProvider(BouncyCastleProvider())
+        }
+        val kpg = KeyPairGenerator.getInstance("RSA", bc)
+        kpg.initialize(2048)
+        val kp = kpg.generateKeyPair()
+        // X500Name（BC 原生）而非 javax X500Principal：JcaX509v3CertificateBuilder 的
+        // 构造器收 BC 的 X500Name；JDK 的 X500Principal 反而要多转一道。
+        val dn = X500Name("CN=$alias, OU=ZorvAI, O=ZorvAI, C=CN")
+        val now = System.currentTimeMillis()
+        val certBuilder = JcaX509v3CertificateBuilder(
+            /* issuer = */ dn,
+            /* serial = */ BigInteger.valueOf(now),
+            /* notBefore = */ Date(now - 86_400_000L),
+            /* notAfter = */ Date(now + 10_000L * 86_400_000L),
+            /* subject = */ dn,
+            /* publicKey = */ kp.public,
+        )
+        val signer = JcaContentSignerBuilder("SHA256WithRSA").setProvider(bc).build(kp.private)
+        // build() 出来的是 BC 的 X509CertificateHolder，KeyStore.setKeyEntry 要 JDK 的
+        // java.security.cert.X509Certificate —— 必须过一遍 JcaX509CertificateConverter。
+        val holder = certBuilder.build(signer)
+        val cert: X509Certificate = org.bouncycastle.cert.jcajce.JcaX509CertificateConverter()
+            .setProvider(bc)
+            .getCertificate(holder)
+        val ks = KeyStore.getInstance("PKCS12")
+        ks.load(null, null)
+        ks.setKeyEntry(alias, kp.private, keyPass.toCharArray(), arrayOf<java.security.cert.Certificate>(cert))
+        file.parentFile?.mkdirs()
+        ks.store(FileOutputStream(file), storePass.toCharArray())
+    }
+
+    /**
+     * 对**任意已有 APK** 做进程内补签（复用构建台同一套 apksig 能力，V1 / V2 / V3 全开）。
+     *
+     * 用途：插件导入流程的「先签名、再安装」。插件以宿主同等权限运行，宿主只接受与自身
+     * **同签名**的插件；而手头拿到的插件包未必是宿主密钥签的（自建包、第三方包、构建台用
+     * 别的密钥签出来的包），所以在交给安装器之前先用宿主密钥补签一遍。
+     *
+     * ⚠️ apksig 默认**不保留**原有签名者，所以已签名的包会被整包换签成 [keystore] 的身份 ——
+     * 这正是「补签」想要的行为。若想保留原签名者需显式 `setOtherSignersSignaturesPreserved(true)`。
+     *
+     * ⚠️ 补签用的密钥必须就是**宿主自身的那把**（本仓为 `zorvai_release.jks` / 别名 `zorvai`），
+     * 否则换签后仍然过不了插件的同签名闸门。
+     *
+     * @return 成功返回 null；失败返回原因文本（调用方负责回退到原包，不要因补签失败而拒绝安装）
+     */
+    fun reSignApk(
+        ctx: Context,
+        input: File,
+        output: File,
+        keystore: File,
+        alias: String,
+        storePassword: String,
+        keyPassword: String
+    ): String? = try {
+        when {
+            !input.exists() || input.length() == 0L -> "待签名的 APK 不存在或为空"
+            !keystore.exists() -> "密钥库不存在：${keystore.absolutePath}"
+            else -> {
+                output.parentFile?.mkdirs()
+                if (output.exists()) output.delete()
+                getToolchain(ctx).signApk(input, output, keystore, storePassword, keyPassword, alias)
+                if (output.exists() && output.length() > 0L) null else "签名后未产出文件"
+            }
+        }
+    } catch (e: Throwable) {
+        e.message ?: e.toString()
+    }
+
+    // =============================================================================================
+    // 进程内工具链：用 InMemoryDexClassLoader 内存加载端侧 dexed 工具 jar，并以反射缓存关键入口，避免重复查找。
+    // =============================================================================================
+    private class InProc(
+        val loader: ClassLoader,
+        val ecjCtor: Constructor<*>,
+        val ecjCompile: Method,
+        val d8Parse: Method,
+        val d8Run: Method,
+        val d8Build: Method,
+        val apkSignerCtor: Constructor<*>,
+        val signerCfgCtor: Constructor<*>,
+        val signerCfgBuild: Method,
+        val apkSetInput: Method,
+        val apkSetOutput: Method,
+        val apkSetV1: Method,
+        val apkSetV2: Method,
+        val apkSetV3: Method,
+        val apkSetMinSdk: Method,
+        val apkBuild: Method,
+        val apkSign: Method
+    ) {
+        /**
+         * 进程内跑 ecj。返回 (编译是否成功, ecj 自身文本输出, 抛出的异常或 null)。
+         *
+         * 关键改进（v1.5.12）：**即使 compile() 抛异常，也把 ecj 自己写到 PrintWriter 的输出
+         * 一并带出来**。ecj 在真正崩之前往往已经把关键报错打印进这个 Writer（例如
+         * "package android.app does not exist"、内部 NPE 的上下文、找不到某个类型的线索），
+         * 旧版只在异常分支里丢了一句 "InvocationTargetException: null"，把真因全埋了——
+         * 这正是历次"修复"都瞎猜、修不对的根。现在异常 + ecj 输出一起交差，真机日志就能定位到行。
+         */
+        fun compileEcj(args: Array<String>): Triple<Boolean, String, Throwable?> {
+            val prev = Thread.currentThread().contextClassLoader
+            val sw = StringWriter()
+            val pw = PrintWriter(sw)
+            var ex: Throwable? = null
+            var ok = false
+            try {
+                Thread.currentThread().contextClassLoader = loader
+                val main = ecjCtor.newInstance(pw, pw, false) // systemExitWhenFinished=false
+                ok = ecjCompile.invoke(main, args) as Boolean
+            } catch (e: Throwable) {
+                ex = e
+            } finally {
+                pw.flush()
+                Thread.currentThread().contextClassLoader = prev
+            }
+            return Triple(ok, sw.toString(), ex)
+        }
+
+        /** 进程内跑 d8：用 D8Command.parse 解析 CLI 风格参数，再 D8.run。失败抛异常（调用方捕获）。 */
+        fun runD8(args: Array<String>) {
+            val prev = Thread.currentThread().contextClassLoader
+            try {
+                Thread.currentThread().contextClassLoader = loader
+                val origin = loader.loadClass("com.android.tools.r8.origin.Origin")
+                    .getMethod("unknown").invoke(null)
+                val builder = d8Parse.invoke(null, args, origin)
+                val cmd = d8Build.invoke(builder)
+                d8Run.invoke(null, cmd)
+            } finally {
+                Thread.currentThread().contextClassLoader = prev
+            }
+        }
+
+        /** 进程内签名：用 apksig 的 ApkSigner API（不使用会 System.exit 的 ApkSignerTool.main）。 */
+        fun signApk(input: File, output: File, keystore: File, storePass: String, keyPass: String, alias: String) {
+            val prev = Thread.currentThread().contextClassLoader
+            try {
+                Thread.currentThread().contextClassLoader = loader
+                val ks = loadKeyStore(keystore, storePass)
+                val entry = ks.getEntry(alias, KeyStore.PasswordProtection(keyPass.toCharArray()))
+                    as? KeyStore.PrivateKeyEntry
+                    ?: throw IllegalStateException("密钥库里找不到别名 '$alias' 的私钥条目")
+                val priv = entry.privateKey
+                @Suppress("UNCHECKED_CAST")
+                val certs = entry.certificateChain?.map { it as X509Certificate }
+                    ?: throw IllegalStateException("别名 '$alias' 没有证书链")
+                val scBuilder = signerCfgCtor.newInstance(alias, priv, certs)
+                val sc = signerCfgBuild.invoke(scBuilder)
+                val apkBuilder = apkSignerCtor.newInstance(listOf(sc))
+                apkSetInput.invoke(apkBuilder, input)
+                apkSetOutput.invoke(apkBuilder, output)
+                apkSetV1.invoke(apkBuilder, true)
+                apkSetV2.invoke(apkBuilder, true)
+                apkSetV3.invoke(apkBuilder, true)
+                apkSetMinSdk.invoke(apkBuilder, 21)
+                val signer = apkBuild.invoke(apkBuilder)
+                apkSign.invoke(signer)
+            } finally {
+                Thread.currentThread().contextClassLoader = prev
+            }
+        }
+
+    private fun loadKeyStore(ksFile: File, pass: String): KeyStore {
+        // ★ BKS 依赖 BouncyCastle，必须先注册 provider；
+        //   另外有些 ROM 的 PKCS12/BKS 实现较弱，带 BC 再试一遍能救回一批"Wrong version of key store"。
+        // 🔴 issue #14：旧实现用 Class.forName 反射找 BC，Android 8+ 平台 BC 被命名空间化后
+        // 必然 ClassNotFoundException，BKS 分支静默全废。现已显式依赖 bcpkix/bcprov（见 import），
+        // 直接引用即可；runCatching 仅剩「极端情况下 addProvider 被 ROM 策略拦截」的兜底。
+        runCatching {
+            if (java.security.Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
+                java.security.Security.addProvider(BouncyCastleProvider())
+            }
+        }
+        val exceptions = mutableListOf<Throwable>()
+        for (type in listOf("BKS", "PKCS12", "JKS")) {
+            for (provider in listOf<String?>(null, "BC")) {
+                try {
+                    val ks = if (provider == null) KeyStore.getInstance(type)
+                    else KeyStore.getInstance(type, provider)
+                    ksFile.inputStream().use { ks.load(it, pass.toCharArray()) }
+                    return ks
+                } catch (e: Throwable) {
+                    exceptions.add(e)
+                }
+            }
+        }
+        throw IllegalStateException(
+            "无法加载密钥库（已尝试 BKS/PKCS12/JKS × 默认/BC）：${ksFile.name}，" +
+                "最后一次错误：${exceptions.lastOrNull()?.message}"
+        )
+    }
+    }
+
+    @Volatile private var cached: InProc? = null
+
+    /** 从 dexed jar 提取 classes.dex 字节，供 InMemoryDexClassLoader 内存加载（不落盘到可写目录）。 */
+    private fun readDexBytes(jar: File): ByteBuffer {
+        ZipFile(jar).use { zf ->
+            val entry = zf.getEntry("classes.dex")
+                ?: throw IllegalStateException("${jar.name} 不含 classes.dex，无法内存加载。")
+            val bytes = zf.getInputStream(entry).readBytes()
+            // 必须用 direct ByteBuffer：InMemoryDexClassLoader 在 Android 13+（尤其 Android 16 / ColorOS）
+            // 从堆 ByteBuffer 加载时，部分 ROM 会静默得到「空 dex」——dex 对象创建成功（DexPathList 里
+            // 能看到 InMemoryDexFile），但 class_defs 全部读不到，于是任何类都 ClassNotFoundException。
+            // direct 缓冲经 ART 原生映射，行为确定可靠（CodeAssist / AndroidIDE 等同款做法）。
+            val buf = ByteBuffer.allocateDirect(bytes.size)
+            buf.put(bytes)
+            buf.position(0)
+            return buf
+        }
+    }
+
+    /** 反射加载类，失败时报出具体缺失的类名（便于真机诊断到底是哪一个 dex 没含该类）。 */
+    private fun loadClassOrFail(loader: ClassLoader, name: String): Class<*> {
+        try {
+            return loader.loadClass(name)
+        } catch (e: ClassNotFoundException) {
+            throw IllegalStateException("类未找到（dex 未含该类，可能 dex 生成/解包不完整）：$name")
+        }
+    }
+
+    @Synchronized
+    private fun getToolchain(ctx: Context): InProc {
+        cached?.let { return it }
+        val libs = ensureAssets(ctx)
+        // Android 上 System.getProperty("java.io.tmpdir") 默认指向 /data/local/tmp，普通 App 不可写。
+        // ecj / d8 / apksig 进程内运行若需写临时文件会 IOException / NPE（表现为 ecj compile 抛
+        // InvocationTargetException）。改指 App 自身可写的 cache 目录，覆盖安装/多次构建均安全。
+        try {
+            val ecjTmp = File(ctx.cacheDir, "ecj_tmp").apply { mkdirs() }
+            System.setProperty("java.io.tmpdir", ecjTmp.absolutePath)
+        } catch (_: Throwable) {}
+        val ecjDex = File(libs, "ecj_dex.jar")
+        val d8Dex = File(libs, "d8_dex.jar")
+        val sigDex = File(libs, "apksigner_dex.jar")
+        if (!ecjDex.exists() || !d8Dex.exists() || !sigDex.exists()) {
+            throw IllegalStateException("dexed 工具 jar 缺失（ecj_dex.jar / d8_dex.jar / apksigner_dex.jar），无法在端侧编译。")
+        }
+        // 主路径：DexClassLoader 直接从三个 dexed jar 加载（标准、成熟项目也用的方式）。
+        // 关键修复（v6）：三个 jar 的 classes.dex 已改为 STORED（不压缩）+ zipalign 4 字节对齐，
+        // ART 直接 mmap，不再需要在设备上「抽取」压缩 dex——ColorOS/Android 16 上「抽取压缩 dex」
+        // 会失败，抽出来是空 dex -> ClassNotFoundException（v2~v5 一直踩这个坑，dex 本身完好却读不出类）。
+        // jar 内的 .properties/.rsc 资源由 DexClassLoader 从同一 jar 读取（资源走普通 zip 解压，可靠）。
+        // 父加载器用 App 自身 classloader：框架类（java.*/android.*）经其委派到 bootclasspath 正常解析。
+        // 早期 InMemoryDexClassLoader / 抽取独立 .dex 等方案均废弃（不可靠），仅作为下方回退保底。
+        val oat = File(libs, "oat").apply { mkdirs() }
+        val dexJarPath = listOf(ecjDex, d8Dex, sigDex).joinToString(":") { it.absolutePath }
+        val loader = try {
+            DexClassLoader(dexJarPath, oat.absolutePath, null, ctx.classLoader)
+        } catch (e: Throwable) {
+            Log.w(TAG, "DexClassLoader 失败，回退 InMemoryDexClassLoader：${e.message}")
+            val bufs = listOf(ecjDex, d8Dex, sigDex).map { readDexBytes(it) }.toTypedArray()
+            InMemoryDexClassLoader(bufs, ctx.classLoader)
+        }
+
+        val ecjMain = loadClassOrFail(loader, "org.eclipse.jdt.internal.compiler.batch.Main")
+        val d8 = loadClassOrFail(loader, "com.android.tools.r8.D8")
+        val d8Cmd = loadClassOrFail(loader, "com.android.tools.r8.D8Command")
+        val d8CmdBuilder = loadClassOrFail(loader, "com.android.tools.r8.D8Command\$Builder")
+        val apkSigner = loadClassOrFail(loader, "com.android.apksig.ApkSigner")
+        val apkBuilder = loadClassOrFail(loader, "com.android.apksig.ApkSigner\$Builder")
+        val signerCfgBuilder = loadClassOrFail(loader, "com.android.apksig.ApkSigner\$SignerConfig\$Builder")
+        val origin = loadClassOrFail(loader, "com.android.tools.r8.origin.Origin")
+
+        val ip = InProc(
+            loader = loader,
+            ecjCtor = ecjMain.getConstructor(
+                PrintWriter::class.java, PrintWriter::class.java, Boolean::class.javaPrimitiveType
+            ),
+            ecjCompile = ecjMain.getMethod("compile", Array<String>::class.java),
+            d8Parse = d8Cmd.getMethod("parse", Array<String>::class.java, origin),
+            d8Run = d8.getMethod("run", d8Cmd),
+            d8Build = d8CmdBuilder.getMethod("build"),
+            apkSignerCtor = apkBuilder.getConstructor(List::class.java),
+            signerCfgCtor = signerCfgBuilder.getConstructor(
+                String::class.java, PrivateKey::class.java, List::class.java
+            ),
+            signerCfgBuild = signerCfgBuilder.getMethod("build"),
+            apkSetInput = apkBuilder.getMethod("setInputApk", File::class.java),
+            apkSetOutput = apkBuilder.getMethod("setOutputApk", File::class.java),
+            apkSetV1 = apkBuilder.getMethod("setV1SigningEnabled", Boolean::class.javaPrimitiveType),
+            apkSetV2 = apkBuilder.getMethod("setV2SigningEnabled", Boolean::class.javaPrimitiveType),
+            apkSetV3 = apkBuilder.getMethod("setV3SigningEnabled", Boolean::class.javaPrimitiveType),
+            apkSetMinSdk = apkBuilder.getMethod("setMinSdkVersion", Int::class.javaPrimitiveType),
+            apkBuild = apkBuilder.getMethod("build"),
+            apkSign = apkSigner.getMethod("sign")
+        )
+        cached = ip
+        return ip
+    }
+
+    /** 把 assets 里的工具链解包到 filesDir/buildproject/libs（assets 不能直接执行）。 */
+    fun ensureAssets(ctx: Context): File {
+        val out = File(ctx.filesDir, "buildproject/libs")
+        out.mkdirs()
+        // 这三个 dexed 工具 jar 会被重新生成/修正（例如本次修复 ecj dex），必须每次覆盖解包，
+        // 否则覆盖安装时 filesDir 里的旧文件不会被替换，设备会一直用旧（坏的）dex。
+        // base.apk 也在列：替换成带图标的模板后必须强制重解包，否则设备会继续用旧的空壳 base.apk。
+        val alwaysExtract = setOf("ecj_dex.jar", "d8_dex.jar", "apksigner_dex.jar", "base.apk", "web_base.apk", "debug.keystore")
+        val names = listOf(
+            "ecj.jar", "d8.jar", "apksigner.jar", "android.jar", "debug.keystore", "base.apk", "web_base.apk",
+            // 已 dex 化的工具 jar：进程内加载，避免 Android 14+ 禁止独立 dalvikvm 且绕开 Android 16 Writable dex 限制。
+            "ecj_dex.jar", "d8_dex.jar", "apksigner_dex.jar"
+        )
+        for (n in names) {
+            val target = File(out, n)
+            val need = alwaysExtract.contains(n) || !target.exists() || target.length() == 0L
+            if (need) {
+                try {
+                    // 先解除只读（上一轮 setReadOnly 过的文件否则无法覆盖写入，会静默失败），
+                    // 再重新写入；写完后对 dexed jar 重新设为只读（Android 14+ 禁止从「可写」dex 加载）。
+                    if (target.exists()) target.setWritable(true)
+                    ctx.assets.open("libs/common/$n").use { ins ->
+                        FileOutputStream(target).use { os -> ins.copyTo(os) }
+                    }
+                    // dexed 工具 jar 设为只读：Android 14+（尤其 16）禁止从「可写」dex 文件加载
+                    // （SecurityException: Writable dex file ... is not allowed）。STORED+对齐的 dex
+                    // 由 ART 直接 mmap，只读文件可正常 mmap（PROT_READ），故设只读既能过检查又不影响加载。
+                    if (alwaysExtract.contains(n)) target.setReadOnly()
+                    Log.i(TAG, "解包 $n -> ${target.absolutePath}")
+                } catch (e: Throwable) {
+                    Log.w(TAG, "解包 $n 失败: ${e.message}")
+                }
+            }
+        }
+        // 注意：三个 dexed jar 的 classes.dex 已在打包时设为 STORED（不压缩）+ 4 字节对齐，
+        // DexClassLoader 直接从 jar 加载即可（ART 直接 mmap，无需设备端抽取）。无需再抽成独立 .dex 文件。
+        return out
+    }
+
+    /** 把目录下所有 .class（含子目录）打成 jar，供 d8 作为 program 输入。 */
+    private fun jarDirectory(srcDir: File, outJar: File) {
+        outJar.parentFile?.mkdirs()
+        outJar.delete()
+        ZipOutputStream(FileOutputStream(outJar)).use { zos ->
+            srcDir.walkTopDown().filter { it.isFile }.forEach { f ->
+                val name = f.relativeTo(srcDir).path.replace('\\', '/')
+                zos.putNextEntry(ZipEntry(name))
+                f.inputStream().use { it.copyTo(zos) }
+                zos.closeEntry()
+            }
+        }
+    }
+
+    /** 真实工具链自检。首次调用会先把 APK assets 里的工具链解压到 filesDir。 */
+    fun detectTools(ctx: Context): List<ToolStatus> {
+        ensureAssets(ctx)
+        val libs = File(ctx.filesDir, "buildproject/libs")
+        val ecj = File(libs, "ecj.jar")
+        val d8 = File(libs, "d8.jar")
+        val sign = File(libs, "apksigner.jar")
+        val aj = File(libs, "android.jar")
+        val key = File(libs, "debug.keystore")
+        val ecjDex = File(libs, "ecj_dex.jar")
+        val d8Dex = File(libs, "d8_dex.jar")
+        val sigDex = File(libs, "apksigner_dex.jar")
+        return listOf(
+            ToolStatus("ecj.jar（Java 编译器）", ecj.exists(), ecj.absolutePath,
+                if (ecj.exists()) "已就绪" else "缺失：无法编译 Java"),
+            ToolStatus("d8.jar（DEX 转换器）", d8.exists(), d8.absolutePath,
+                if (d8.exists()) "已就绪" else "缺失：无法生成 DEX"),
+            ToolStatus("apksigner.jar（签名）", sign.exists(), sign.absolutePath,
+                if (sign.exists()) "已就绪" else "缺失：无法签名"),
+            ToolStatus("android.jar（Android SDK）", aj.exists(), aj.absolutePath,
+                if (aj.exists()) "已就绪（编译期 classpath）" else "缺失"),
+            ToolStatus("debug.keystore（签名密钥）", key.exists(), key.absolutePath,
+                if (key.exists()) "已就绪" else "缺失"),
+            ToolStatus("ecj_dex.jar（进程内 ecj）", ecjDex.exists(), ecjDex.absolutePath,
+                if (ecjDex.exists()) "已就绪：DexClassLoader 直接加载（STORED dex）" else "缺失：端侧编译不可用"),
+            ToolStatus("d8_dex.jar（进程内 d8）", d8Dex.exists(), d8Dex.absolutePath,
+                if (d8Dex.exists()) "已就绪：DexClassLoader 直接加载（STORED dex）" else "缺失：生成 DEX 不可用"),
+            ToolStatus("apksigner_dex.jar（进程内签名）", sigDex.exists(), sigDex.absolutePath,
+                if (sigDex.exists()) "已就绪：apksig API 进程内签名" else "缺失：签名不可用"),
+            ToolStatus("端侧运行时（App 进程内 ART）", true, "app-process",
+                "可用：工具链直接在 App 进程内执行（不再依赖独立 dalvikvm 子进程，Android 16 亦可用）"),
+            ToolStatus("aapt2（资源打包）", false, "未打包",
+                "未打包：本引擎用 base.apk 模板注入 DEX 再签名，不依赖 aapt2，APK 组装仍可用")
+        )
+    }
+
+    /**
+     * 是否能组装完整 APK。本引擎的 assembleApk() 是把 classes.dex 注入预置的 base.apk 模板
+     * （已含 AndroidManifest.xml + resources.arsc）再进程内签名，**不经过 aapt2**、**不依赖独立运行时**。
+     * 真正需要：base.apk + apksigner_dex.jar（进程内签名）+ debug.keystore。
+     */
+    fun canAssembleApk(ctx: Context): Boolean {
+        ensureAssets(ctx)
+        val libs = File(ctx.filesDir, "buildproject/libs")
+        return File(libs, "base.apk").exists()
+            && File(libs, "apksigner_dex.jar").exists()
+            && File(libs, "debug.keystore").exists()
+    }
+
+    /**
+     * 编译整个 src 目录下所有 .java 文件为 classes.dex（真实管线：ecj → class，d8 → dex）。
+     * 进程内执行，不需要设备提供独立 JVM 运行时。
+     */
+    fun compileProject(ctx: Context, srcDir: File, outDir: File, explicitEntry: String? = null, dependencyJars: List<File> = emptyList()): BuildResult {
+        val libs = ensureAssets(ctx)
+        srcDir.mkdirs()
+        // 递归清空上一轮产物（含 ecj 按包名生成的子目录），避免残留旧 class 干扰本轮
+        outDir.deleteRecursively()
+        outDir.mkdirs()
+
+        val sources = srcDir.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".java", ignoreCase = true) }
+            .map { it.absolutePath }
+            .toList()
+
+        if (sources.isEmpty()) {
+            return BuildResult(false, "src 目录下没有 .java 源文件。", null)
+        }
+
+        val ecj = File(libs, "ecj.jar")
+        val d8 = File(libs, "d8.jar")
+        val aj = File(libs, "android.jar")
+        if (!ecj.exists() || !d8.exists() || !aj.exists()) {
+            return BuildResult(false, "工具链不完整（ecj/d8/android.jar 缺失），无法编译。", null)
+        }
+
+        val log = StringBuilder()
+        log.append("发现 ${sources.size} 个 Java 源文件：\n")
+        sources.forEach { log.append("  · ").append(it).append("\n") }
+        val dexDir = File(outDir.parentFile ?: outDir, "dexout").apply { mkdirs() }
+        val dexFile = File(dexDir, "classes.dex")
+        // 清理上一轮可能残留的损坏 DEX，避免"前几次失败留下坏中间文件"导致本轮也失败
+        dexFile.delete()
+
+        val toolchain = try {
+            getToolchain(ctx)
+        } catch (e: Throwable) {
+            return BuildResult(false, log.append("\n== 工具链加载失败（含完整堆栈）==\n").append(throwableDetail(e)).toString(), null)
+        }
+
+        // 1) ecj：Java → class（source/target 降到 8：旧版 ecj 在 ART 下不支持 11；-proc:none 关闭注解处理，减少噪音）
+        val ecjArgs = mutableListOf(
+            "-proc:none",
+            "-d", outDir.absolutePath,
+            // android.jar 必须作 bootclasspath：Android 编译的"引导类"（java.lang.* / android.*）都来自它。
+            // 只给 -cp 而不给 -bootclasspath 时，ecj 会去取 JVM 默认的 rt.jar（ART 上不存在）→ 内部抛异常。
+            "-bootclasspath", aj.absolutePath,
+        )
+        // ══ #668：构建时依赖引用（第三方 JAR 加入编译 classpath）══
+        if (dependencyJars.isNotEmpty()) {
+            val valid = dependencyJars.filter { it.exists() && it.extension.equals("jar", ignoreCase = true) }
+            if (valid.isNotEmpty()) {
+                ecjArgs.add("-cp")
+                ecjArgs.add(valid.joinToString(File.pathSeparator) { it.absolutePath })
+                log.append("编译 classpath 依赖（${valid.size} 个 JAR）：\n")
+                valid.forEach { log.append("  · ").append(it.absolutePath).append("\n") }
+            }
+        }
+        ecjArgs.add("-source"); ecjArgs.add("8"); ecjArgs.add("-target"); ecjArgs.add("8")
+        ecjArgs.addAll(sources)
+        val (ecjOk, ecjOut, ecjEx) = toolchain.compileEcj(ecjArgs.toTypedArray())
+        log.append("\n== ecj 编译 Java → class ==\n").append(ecjOut)
+        if (ecjEx != null) {
+            val full = log.append("\n== ecj 进程内崩溃（完整堆栈 + ecj 自身输出）==\n")
+                .append(throwableDetail(ecjEx)).toString()
+            saveBuildLog(ctx, full)
+            return BuildResult(false, full, null)
+        }
+        if (!ecjOk) {
+            val f = log.toString()
+            saveBuildLog(ctx, f)
+            return BuildResult(false, f, null)
+        }
+
+        // 2) d8：class → dex
+        // 关键修复（PC 干跑发现）：本版 R8 的 parse 不支持「目录」作为 program 输入、
+        // 也不支持「文件」作为 --output（必须是目录或 jar/zip）。因此先把 ecj 产物打成 jar，
+        // 再让 d8 输出到目录，最终 DEX 落在 dexDir/classes.dex。
+        val outJar = File(outDir.parentFile ?: outDir, "out.jar")
+        try {
+            jarDirectory(outDir, outJar)
+        } catch (e: Throwable) {
+            return BuildResult(false, log.append("\n打包 class 为 jar 失败：${e.message}\n").toString(), null)
+        }
+        val d8Args = mutableListOf(
+            "--output", dexDir.absolutePath,
+            "--lib", aj.absolutePath,
+        )
+        // ══ #668：依赖 JAR 也要作为 d8 的 lib（解析引用符号），否则 dex 阶段报找不到类 ══
+        dependencyJars.filter { it.exists() && it.extension.equals("jar", ignoreCase = true) }
+            .forEach { d8Args.add("--lib"); d8Args.add(it.absolutePath) }
+        d8Args.add(outJar.absolutePath)
+        try {
+            toolchain.runD8(d8Args.toTypedArray())
+        } catch (e: Throwable) {
+            return BuildResult(false, log.append("\n== d8 进程内崩溃（含完整堆栈）==\n").append(throwableDetail(e)).append("\n[DEX 未生成]").toString(), null)
+        }
+        if (!dexFile.exists()) {
+            return BuildResult(false, log.toString() + "\n[DEX 未生成]", null)
+        }
+
+        // 入口类探测（支持任意包名/类名）：把全限定名写入 APK 的 assets/zorv_entry.txt，
+        // 宿主 MainActivity 运行时读取并反射调用对应入口方法，不再硬编码 com.example.hello.Main。
+        val (entryClass, discoverLog) = discoverEntryClass(ctx, dexFile, outDir, explicitEntry)
+        log.append("\n").append(discoverLog)
+        if (entryClass == null) {
+            val compiled = outDir.walkTopDown()
+                .filter { it.isFile && it.name.endsWith(".class", ignoreCase = true) }
+                .map { it.relativeTo(outDir).path.replace('\\', '/') }
+                .toList()
+            val msg = buildString {
+                appendLine("❌ 未能在编译产物中找到「入口类」：")
+                appendLine("构建台需要源码里至少有一个类带以下 public 方法之一（静态或实例均可）：")
+                appendLine("  · static void main(String[] args)")
+                appendLine("  · static void main(Activity a, String[] args)")
+                appendLine("  · static void run(Activity a)")
+                appendLine("  · static void run()")
+                appendLine()
+                appendLine("【实际编出的类】")
+                if (compiled.isEmpty()) {
+                    appendLine("（无）— ecj 没产出任何 .class，请先看上面 ecj 日志排查语法/路径问题。")
+                } else {
+                    compiled.forEach { appendLine("  · $it") }
+                }
+                appendLine()
+                appendLine("【正确写法示例】")
+                appendLine("  package com.example.hello;")
+                appendLine("  public class Main {")
+                appendLine("      public static void main(String[] args) { /* 你的代码 */ }")
+                appendLine("  }")
+                appendLine("  // 文件可放在任意包名下，例如 MyApp/src/com/example/snake/Game.java")
+            }
+            saveBuildLog(ctx, log.append("\n").append(msg).toString())
+            return BuildResult(false, log.append("\n").append(msg).toString(), null)
+        }
+
+        log.append("\n✔ 编译成功：classes.dex（${dexFile.length()} 字节）位于 ${dexFile.absolutePath}  入口类=$entryClass")
+        return BuildResult(true, log.toString(), dexFile.absolutePath, null, entryClass)
+    }
+
+    /**
+     * 把用户编译出的 classes.dex 注入 base.apk 模板并进程内签名，产出可直接安装的 APK。
+     * 不需要 aapt2：base.apk 已含 AndroidManifest.xml + resources.arsc + 宿主 classes.dex
+     * （com.example.buildapp.MainActivity）。这里把用户 dex 作为 classes2.dex 追加进去，
+     * Android 多 dex 机制会自动加载宿主与用户两份 dex，宿主 Activity 反射调用用户代码。
+     */
+    fun assembleApk(ctx: Context, dexPath: String, outApk: File, config: BuildConfig = BuildConfig()): BuildResult {
+        val libs = ensureAssets(ctx)
+        val baseApk = File(libs, "base.apk")
+        if (!baseApk.exists()) {
+            return BuildResult(false, "工具链不完整（base.apk 缺失），无法构建 APK。", dexPath, null)
+        }
+        val dexFile = File(dexPath)
+        if (!dexFile.exists()) {
+            return BuildResult(false, "classes.dex 不存在，请先编译工程。", dexPath, null)
+        }
+
+        val log = StringBuilder()
+        val customSign = config.keystore != null
+        log.append("== 注入用户 classes.dex（classes2.dex）到 base.apk ==\n")
+        log.append("签名：").append(if (customSign) "自定义 keystore（别名 ${config.keyAlias}）" else "内置 debug.keystore").append("\n")
+        if (config.packageName != "com.example.buildapp" || config.appLabel != "BuildApp" || config.versionName != "1.0.0") {
+            log.append("清单改写：package=${config.packageName}  label=${config.appLabel}  versionName=${config.versionName}\n")
+        }
+        if (config.iconBytes != null) log.append("图标：写入自定义图标（${config.iconBytes.size} 字节）\n")
+        if (config.assetsDir?.isDirectory == true) log.append("资源：注入工程 assets/ 目录\n")
+
+        val unsigned = File(outApk.parentFile ?: ctx.filesDir, "app-unsigned.apk")
+        try {
+            unsigned.parentFile?.mkdirs()
+            // base.apk 已含宿主 classes.dex（com.example.buildapp.MainActivity）+ AndroidManifest + resources.arsc。
+            // repackAligned 保留全部条目（含宿主 classes.dex），按 config 改写清单/图标、追加用户 classes2.dex 与 assets。
+            repackAligned(baseApk, dexFile, unsigned, config) { rewriteManifest(it, config.packageName, config.appLabel, config.versionName) }
+            log.append("已生成未签名 APK：${unsigned.absolutePath}（${unsigned.length()} 字节，含宿主 classes.dex + 用户 classes2.dex）\n")
+        } catch (e: Throwable) {
+            return BuildResult(false, log.toString() + "\n注入失败：${e.message}", dexPath, null)
+        }
+
+        log.append("\n== apksigner 进程内签名 ==\n")
+        val signRes = signApkToFile(ctx, unsigned, outApk, config, log)
+        if (signRes != null) return signRes
+        log.append("\n✔ APK 构建成功：${outApk.absolutePath}（${outApk.length()} 字节）")
+        return BuildResult(true, log.toString(), dexPath, outApk.absolutePath)
+    }
+
+    /**
+     * 把网页工程（index.html + js/css/资源）打包成独立可安装 WebView APK。
+     * 复用 web_base.apk 模板（自带 WebActivity，加载 assets/index.html），无需用户写 Java。
+     * webDir：网页工程根目录（其下应有 index.html）；为 null 时生成空白 WebView 应用。
+     */
+    fun assembleWebApk(ctx: Context, webDir: File?, outApk: File, config: BuildConfig = BuildConfig()): BuildResult {
+        val libs = ensureAssets(ctx)
+        val baseApk = File(libs, "web_base.apk")
+        if (!baseApk.exists()) {
+            return BuildResult(false, "工具链不完整（web_base.apk 缺失），无法构建 WebView APK。请确认 assets/libs/common/web_base.apk 已随包发布。", null, null)
+        }
+        val cfg = if (webDir != null) config.copy(assetsDir = webDir) else config
+        val log = StringBuilder()
+        val customSign = cfg.keystore != null
+        log.append("== 构建 WebView APK（web_base.apk 模板，注入 assets + 改写清单）==\n")
+        log.append("签名：").append(if (customSign) "自定义 keystore（别名 ${cfg.keyAlias}）" else "内置 debug.keystore").append("\n")
+        log.append("清单改写：package=${cfg.packageName}  label=${cfg.appLabel}  versionName=${cfg.versionName}\n")
+        if (webDir?.isDirectory == true) {
+            val files = webDir.walkTopDown().filter { it.isFile }.toList()
+            log.append("网页资源（${files.size} 个文件，注入为 assets/）：\n")
+            files.take(50).forEach { log.append("  · ").append(it.relativeTo(webDir).path.replace('\\', '/')).append("\n") }
+        } else {
+            log.append("（无网页目录：生成空白 WebView 应用）\n")
+        }
+
+        val unsigned = File(outApk.parentFile ?: ctx.filesDir, "web-unsigned.apk")
+        try {
+            unsigned.parentFile?.mkdirs()
+            repackAligned(baseApk, null, unsigned, cfg) { rewriteWebManifest(it, cfg.packageName, cfg.appLabel, cfg.versionName) }
+            log.append("已生成未签名 APK：${unsigned.absolutePath}（${unsigned.length()} 字节）\n")
+        } catch (e: Throwable) {
+            return BuildResult(false, log.toString() + "\n注入/打包失败：${e.message}", null, null)
+        }
+
+        log.append("\n== apksigner 进程内签名 ==\n")
+        val signRes = signApkToFile(ctx, unsigned, outApk, cfg, log)
+        if (signRes != null) return signRes
+        log.append("\n✔ WebView APK 构建成功：${outApk.absolutePath}（${outApk.length()} 字节）")
+        return BuildResult(true, log.toString(), null, outApk.absolutePath)
+    }
+
+    /** 解析签名用的 keystore：自定义优先；否则内置 debug.keystore（缺失则从 assets 重新解包或现场生成）。 */
+    private fun resolveKeystore(ctx: Context, config: BuildConfig): File {
+        config.keystore?.let { return it }
+        val libs = ensureAssets(ctx)
+        val builtin = File(libs, "debug.keystore")
+        if (!builtin.exists()) {
+            try {
+                ctx.assets.open("libs/common/debug.keystore").use { ins ->
+                    builtin.parentFile?.mkdirs()
+                    FileOutputStream(builtin).use { os -> ins.copyTo(os) }
+                }
+            } catch (e: Throwable) {
+                try {
+                    generateKeystore(builtin, "androiddebugkey", "android", "android")
+                } catch (e2: Throwable) {
+                    throw IllegalStateException("内置 debug.keystore 缺失且自动生成失败（${e2.message}），无法构建 APK。")
+                }
+            }
+        }
+        return builtin
+    }
+
+    /**
+     * 进程内对未签名 APK 签名（含 v1/v2/v3）。内置 keystore 偶发加载失败时自动自愈重试一次。
+     * 成功返回 null；失败返回 BuildResult（ok=false），并把失败信息追加进 log。
+     */
+    private fun signApkToFile(ctx: Context, unsigned: File, outApk: File, config: BuildConfig, log: StringBuilder): BuildResult? {
+        val toolchain = try {
+            getToolchain(ctx)
+        } catch (e: Throwable) {
+            return BuildResult(false, log.append("工具链加载失败（含完整堆栈）：\n").append(throwableDetail(e)).append("\n[APK 签名失败]").toString(), null, null)
+        }
+        val keystore = try {
+            resolveKeystore(ctx, config)
+        } catch (e: Throwable) {
+            return BuildResult(false, log.append(e.message ?: "keystore 解析失败").append("\n[APK 签名失败]").toString(), null, null)
+        }
+        try {
+            toolchain.signApk(unsigned, outApk, keystore, config.storePassword, config.keyPassword, config.keyAlias)
+        } catch (e: Throwable) {
+            val recoverable = config.keystore == null && (e.message?.contains("无法加载密钥库") == true
+                || e.message?.contains("Wrong version", ignoreCase = true) == true
+                || e.message?.contains("key store", ignoreCase = true) == true)
+            if (recoverable) {
+                try {
+                    val rebound = File(ensureAssets(ctx), "debug.keystore")
+                    rebound.delete()
+                    ctx.assets.open("libs/common/debug.keystore").use { ins ->
+                        FileOutputStream(rebound).use { os -> ins.copyTo(os) }
+                    }
+                    toolchain.signApk(unsigned, outApk, rebound, config.storePassword, config.keyPassword, config.keyAlias)
+                } catch (e2: Throwable) {
+                    try {
+                        val fresh = File(ensureAssets(ctx), "debug.keystore")
+                        fresh.delete()
+                        generateKeystore(fresh, "androiddebugkey", "android", "android")
+                        toolchain.signApk(unsigned, outApk, fresh, config.storePassword, config.keyPassword, config.keyAlias)
+                    } catch (e3: Throwable) {
+                        return BuildResult(false, log.append("签名失败（含完整堆栈）：\n").append(throwableDetail(e))
+                            .append("\n[内置 keystore 加载失败，自愈重试也失败]：\n").append(throwableDetail(e3)).append("\n[APK 签名失败]").toString(), null, null)
+                    }
+                }
+            } else {
+                return BuildResult(false, log.append("签名失败（含完整堆栈）：\n").append(throwableDetail(e)).append("\n[APK 签名失败]").toString(), null, null)
+            }
+        }
+        if (!outApk.exists()) {
+            return BuildResult(false, log.toString() + "\n[APK 签名失败]", null, null)
+        }
+        unsigned.delete()
+        return null
+    }
+
+    /**
+     * 在编译产物里自动探测入口类：带 public 入口方法（main/run，静态或实例均可）的类。
+     * 优先级：显式指定 > com.example.hello.Main（旧约定兼容）> 其余按类名排序首个命中。
+     * 返回 Pair(入口类全限定名?, 诊断日志)。
+     * 通过 DexClassLoader 加载用户编译出的 dex，再用反射枚举候选类的入口方法——
+     * 与应用自身 classloader 同为父加载器，android.* 框架类正常可见。
+     */
+    private fun discoverEntryClass(ctx: Context, dexFile: File, outDir: File, explicit: String?): Pair<String?, String> {
+        val sb = StringBuilder()
+        val optDir = File(ctx.filesDir, "buildproject/opt").apply { mkdirs() }
+        val loader = try {
+            DexClassLoader(dexFile.absolutePath, optDir.absolutePath, null, ctx.classLoader)
+        } catch (e: Throwable) {
+            sb.append("⚠️ 入口类探测：DexClassLoader 加载用户 dex 失败（${e.message}），跳过自动探测。\n")
+            null
+        }
+        val candidates = outDir.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".class", ignoreCase = true) }
+            .map { it.relativeTo(outDir).path.replace('\\', '/').removeSuffix(".class").replace('/', '.') }
+            .toList()
+        sb.append("入口类探测：扫描到 ${candidates.size} 个编译类。\n")
+
+        // 显式指定：确认其确实编出来了（出现在候选类或可被加载）
+        if (!explicit.isNullOrBlank()) {
+            val ok = candidates.contains(explicit) ||
+                (loader != null && runCatching { loader.loadClass(explicit) }.isSuccess)
+            if (ok) {
+                sb.append("✔ 使用显式入口类：$explicit\n")
+                return Pair(explicit, sb.toString())
+            }
+            sb.append("⚠️ 显式入口类 $explicit 未在编译产物中出现，改回自动探测。\n")
+        }
+
+        var found: String? = null
+        if (loader != null) {
+            // 优先 com.example.hello.Main（旧约定），其余按类名排序，首个带入口方法的即命中
+            val ordered = candidates.sortedWith(compareBy({ it != "com.example.hello.Main" }, { it }))
+            for (name in ordered) {
+                try {
+                    val c = loader.loadClass(name)
+                    if (hasEntryMethod(c)) { found = name; break }
+                } catch (_: Throwable) {}
+            }
+        }
+        if (found != null) sb.append("✔ 自动探测到入口类：$found\n")
+        return Pair(found, sb.toString())
+    }
+
+    /** 判断类是否具备可识别的入口方法（public，静态或实例均可）。 */
+    private fun hasEntryMethod(c: Class<*>): Boolean {
+        fun Class<*>.has(name: String, vararg params: Class<*>): Boolean = try {
+            getMethod(name, *params) != null
+        } catch (_: NoSuchMethodException) { false }
+        return c.has("main", Array<String>::class.java)
+            || c.has("main", android.app.Activity::class.java, Array<String>::class.java)
+            || c.has("run", android.app.Activity::class.java)
+            || c.has("run")
+    }
+
+    /**
+     * 把 base.apk 的所有条目原样重打到 unsigned APK，并追加用户编译出的 classes2.dex，
+     * 同时保证所有 STORED（未压缩）条目按 4 字节对齐——这是 apksigner v2/v3 签名的硬性要求。
+     *
+     * 修复 v1.5.16「安装包异常」根因：旧实现用 ZipOutputStream 重写会把 classes.dex /
+     * resources.arsc / classes2.dex 全部 DEFLATED 压缩，且丢失 4 字节对齐，导致 v2/v3 签名
+     * 校验失败、安装器拒装。这里：
+     *  - 原 STORED 条目保持 STORED；原 DEFLATED 条目用 raw deflate（nowrap=true，含 adler32）
+     *    重新压缩，与 zip 规范一致；classes2.dex 设为 STORED。
+     *  - 仅对 STORED 条目在 local header 的 extra 字段填充 0 字节，使其数据起始地址 4 字节对齐。
+     */
+    private data class ZipEntryMeta(
+        val name: String,
+        val method: Int,
+        val data: ByteArray,
+        val crc: Long,
+        val size: Long
+    )
+
+    private fun repackAligned(baseApk: File, userDex: File?, outFile: File, config: BuildConfig, rewriter: (ByteArray) -> ByteArray) {
+        val crc = CRC32()
+        val entries = mutableListOf<ZipEntryMeta>()
+        ZipInputStream(BufferedInputStream(FileInputStream(baseApk))).use { zis ->
+            var ze = zis.nextEntry
+            while (ze != null) {
+                val entry = ze
+                val raw = zis.readBytes()
+                // 按 config 处理三个定制点：清单改写 / 自定义图标 / 其它保持。
+                val outData = when {
+                    entry.name == "AndroidManifest.xml" -> rewriter(raw)
+                    config.iconBytes != null && entry.name.startsWith("res/mipmap-") && entry.name.endsWith("/ic_launcher.png") ->
+                        config.iconBytes!!
+                    else -> raw
+                }
+                if (entry.method == ZipEntry.STORED) {
+                    crc.reset(); crc.update(outData)
+                    entries.add(ZipEntryMeta(entry.name, ZipEntry.STORED, outData, crc.value, outData.size.toLong()))
+                } else {
+                    val def = Deflater(Deflater.DEFAULT_COMPRESSION, true)
+                    def.setInput(outData); def.finish()
+                    val buf = java.io.ByteArrayOutputStream()
+                    val tmp = ByteArray(8192)
+                    while (!def.finished()) {
+                        val n = def.deflate(tmp)
+                        if (n > 0) buf.write(tmp, 0, n)
+                    }
+                    def.end()
+                    crc.reset(); crc.update(outData)
+                    entries.add(ZipEntryMeta(entry.name, ZipEntry.DEFLATED, buf.toByteArray(), crc.value, outData.size.toLong()))
+                }
+                ze = zis.nextEntry
+            }
+        }
+        if (userDex != null) {
+            val userRaw = userDex.readBytes()
+            crc.reset(); crc.update(userRaw)
+            entries.add(ZipEntryMeta("classes2.dex", ZipEntry.STORED, userRaw, crc.value, userRaw.size.toLong()))
+        }
+
+        // 工程 assets/ 下的文件注入 APK（导入的非 .java 资源，用户代码经 AssetManager 读取）。
+        // 跳过用户自带的 zorv_entry.txt，避免与下面构建台写入的入口声明重复。
+        config.assetsDir?.takeIf { it.isDirectory }?.walkTopDown()?.filter { it.isFile }?.forEach { f ->
+            val rel = f.relativeTo(config.assetsDir!!).path.replace('\\', '/')
+            if (rel == "zorv_entry.txt") return@forEach
+            val bytes = f.readBytes()
+            crc.reset(); crc.update(bytes)
+            entries.add(ZipEntryMeta("assets/$rel", ZipEntry.STORED, bytes, crc.value, bytes.size.toLong()))
+        }
+
+        // 入口类声明：宿主 MainActivity 运行时读取 assets/zorv_entry.txt 动态定位入口类，
+        // 从而支持任意包名/类名（不再硬编码 com.example.hello.Main）。null 时不写（Web 等无入口场景）。
+        if (config.entryClass != null) {
+            val entryBytes = config.entryClass!!.toByteArray(Charsets.UTF_8)
+            crc.reset(); crc.update(entryBytes)
+            entries.add(ZipEntryMeta("assets/zorv_entry.txt", ZipEntry.STORED, entryBytes, crc.value, entryBytes.size.toLong()))
+        }
+
+        val little = ByteOrder.LITTLE_ENDIAN
+        val central = mutableListOf<ByteArray>()
+        var offset = 0
+        FileOutputStream(outFile).use { fos ->
+            for (e in entries) {
+                val nb = e.name.toByteArray(Charsets.UTF_8)
+                var extra = byteArrayOf()
+                if (e.method == ZipEntry.STORED) {
+                    val base = offset + 30 + nb.size
+                    val pad = (4 - (base % 4)) % 4
+                    if (pad > 0) extra = ByteArray(pad)
+                }
+                val lh = ByteArray(30 + nb.size + extra.size)
+                ByteBuffer.wrap(lh).order(little).apply {
+                    putInt(0x04034b50); putShort(20); putShort(0); putShort(e.method.toShort())
+                    putShort(0); putShort(0)
+                    putInt(e.crc.toInt()); putInt(e.data.size); putInt(e.size.toInt())
+                    putShort(nb.size.toShort()); putShort(extra.size.toShort())
+                }
+                System.arraycopy(nb, 0, lh, 30, nb.size)
+                System.arraycopy(extra, 0, lh, 30 + nb.size, extra.size)
+                fos.write(lh); fos.write(e.data)
+                if (e.method == ZipEntry.STORED) {
+                    require((offset + lh.size) % 4 == 0) { "STORED 对齐失败: ${e.name}" }
+                }
+                val ch = ByteArray(46 + nb.size + extra.size)
+                ByteBuffer.wrap(ch).order(little).apply {
+                    putInt(0x02014b50); putShort(20); putShort(20); putShort(0)
+                    putShort(e.method.toShort()); putShort(0); putShort(0)
+                    putInt(e.crc.toInt()); putInt(e.data.size); putInt(e.size.toInt())
+                    putShort(nb.size.toShort()); putShort(extra.size.toShort())
+                    putShort(0); putShort(0); putShort(0); putInt(0); putInt(offset)
+                }
+                System.arraycopy(nb, 0, ch, 46, nb.size)
+                System.arraycopy(extra, 0, ch, 46 + nb.size, extra.size)
+                central.add(ch)
+                offset += lh.size + e.data.size
+            }
+            val cs = offset
+            for (ch in central) { fos.write(ch); offset += ch.size }
+            val eocd = ByteArray(22)
+            ByteBuffer.wrap(eocd).order(little).apply {
+                putInt(0x06054b50); putShort(0); putShort(0)
+                putShort(entries.size.toShort()); putShort(entries.size.toShort())
+                putInt(offset - cs); putInt(cs); putShort(0)
+            }
+            fos.write(eocd)
+        }
+    }
+
+    /**
+     * 把一段 Java 源码编译为 classes.dex（兼容旧版单文件调用；内部也走 compileProject）。
+     * 进程内执行，不需要设备提供独立 JVM 运行时。
+     */
+    fun compileToDex(ctx: Context, source: String, className: String, explicitEntry: String? = null, dependencyJars: List<File> = emptyList()): BuildResult {
+        val libs = ensureAssets(ctx)
+        val ecj = File(libs, "ecj.jar")
+        val d8 = File(libs, "d8.jar")
+        val aj = File(libs, "android.jar")
+        if (!ecj.exists() || !d8.exists() || !aj.exists()) {
+            return BuildResult(false, "工具链不完整（ecj/d8/android.jar 缺失），无法编译。", null)
+        }
+
+        val project = File(ctx.filesDir, "buildproject")
+        val srcDir = File(project, "src").apply { mkdirs() }
+        val outDir = File(project, "out").apply { mkdirs() }
+        outDir.deleteRecursively()
+        outDir.mkdirs()
+
+        val srcFile = File(srcDir, "$className.java")
+        try {
+            srcFile.writeText(source)
+        } catch (e: Throwable) {
+            return BuildResult(false, "写入源码失败：${e.message}", null)
+        }
+
+        val dexDir = File(project, "dexout").apply { mkdirs() }
+        val dexFile = File(dexDir, "classes.dex")
+        // 清理上一轮残留的损坏 DEX
+        dexFile.delete()
+
+        val log = StringBuilder()
+        val toolchain = try {
+            getToolchain(ctx)
+        } catch (e: Throwable) {
+            return BuildResult(false, log.append("\n== 工具链加载失败（含完整堆栈）==\n").append(throwableDetail(e)).toString(), null)
+        }
+
+        // 1) ecj：Java → class（source/target 降到 8，兼容 ART 下的旧版 ecj）
+        val ecjArgs = mutableListOf(
+            "-proc:none",
+            "-d", outDir.absolutePath,
+            "-bootclasspath", aj.absolutePath,
+        )
+        // ══ #668：依赖 JAR 加入编译 classpath ══
+        if (dependencyJars.isNotEmpty()) {
+            val valid = dependencyJars.filter { it.exists() && it.extension.equals("jar", ignoreCase = true) }
+            if (valid.isNotEmpty()) {
+                ecjArgs.add("-cp")
+                ecjArgs.add(valid.joinToString(File.pathSeparator) { it.absolutePath })
+            }
+        }
+        ecjArgs.add("-source"); ecjArgs.add("8"); ecjArgs.add("-target"); ecjArgs.add("8")
+        ecjArgs.add(srcFile.absolutePath)
+        val (ecjOk, ecjOut, ecjEx) = toolchain.compileEcj(ecjArgs.toTypedArray())
+        log.append("== ecj 编译 Java → class ==\n").append(ecjOut)
+        if (ecjEx != null) {
+            val full = log.append("\n== ecj 进程内崩溃（完整堆栈 + ecj 自身输出）==\n")
+                .append(throwableDetail(ecjEx)).toString()
+            saveBuildLog(ctx, full)
+            return BuildResult(false, full, null)
+        }
+        if (!ecjOk) {
+            val f = log.toString()
+            saveBuildLog(ctx, f)
+            return BuildResult(false, f, null)
+        }
+
+        // 2) d8：class → dex
+        // 关键修复（PC 干跑发现）：本版 R8 的 parse 不支持「目录」作为 program 输入、
+        // 也不支持「文件」作为 --output（必须是目录或 jar/zip）。因此先把 ecj 产物打成 jar，
+        // 再让 d8 输出到目录，最终 DEX 落在 dexDir/classes.dex。
+        val outJar = File(outDir.parentFile ?: outDir, "out.jar")
+        try {
+            jarDirectory(outDir, outJar)
+        } catch (e: Throwable) {
+            return BuildResult(false, log.append("\n打包 class 为 jar 失败：${e.message}\n").toString(), null)
+        }
+        val d8Args = mutableListOf(
+            "--output", dexDir.absolutePath,
+            "--lib", aj.absolutePath,
+        )
+        // ══ #668：依赖 JAR 也要作为 d8 的 lib（解析引用符号），否则 dex 阶段报找不到类 ══
+        dependencyJars.filter { it.exists() && it.extension.equals("jar", ignoreCase = true) }
+            .forEach { d8Args.add("--lib"); d8Args.add(it.absolutePath) }
+        d8Args.add(outJar.absolutePath)
+        try {
+            toolchain.runD8(d8Args.toTypedArray())
+        } catch (e: Throwable) {
+            return BuildResult(false, log.append("\n== d8 进程内崩溃（含完整堆栈）==\n").append(throwableDetail(e)).append("\n[DEX 未生成]").toString(), null)
+        }
+        if (!dexFile.exists()) {
+            return BuildResult(false, log.toString() + "\n[DEX 未生成]", null)
+        }
+
+        // 入口类探测（支持任意包名/类名）：把全限定名写入 APK 的 assets/zorv_entry.txt，
+        // 宿主 MainActivity 运行时读取并反射调用对应入口方法，不再硬编码 com.example.hello.Main。
+        val (entryClass, discoverLog) = discoverEntryClass(ctx, dexFile, outDir, explicitEntry)
+        log.append("\n").append(discoverLog)
+        if (entryClass == null) {
+            val compiled = outDir.walkTopDown()
+                .filter { it.isFile && it.name.endsWith(".class", ignoreCase = true) }
+                .map { it.relativeTo(outDir).path.replace('\\', '/') }
+                .toList()
+            val msg = buildString {
+                appendLine("❌ 未能在编译产物中找到「入口类」：")
+                appendLine("构建台需要源码里至少有一个类带以下 public 方法之一（静态或实例均可）：")
+                appendLine("  · static void main(String[] args)")
+                appendLine("  · static void main(Activity a, String[] args)")
+                appendLine("  · static void run(Activity a)")
+                appendLine("  · static void run()")
+                appendLine()
+                appendLine("【实际编出的类】")
+                if (compiled.isEmpty()) {
+                    appendLine("（无）— ecj 没产出任何 .class，请先看上面 ecj 日志排查语法/路径问题。")
+                } else {
+                    compiled.forEach { appendLine("  · $it") }
+                }
+                appendLine()
+                appendLine("【正确写法示例】")
+                appendLine("  package com.example.hello;")
+                appendLine("  public class Main {")
+                appendLine("      public static void main(String[] args) { /* 你的代码 */ }")
+                appendLine("  }")
+                appendLine("  // 文件可放在任意包名下，例如 MyApp/src/com/example/snake/Game.java")
+            }
+            saveBuildLog(ctx, log.append("\n").append(msg).toString())
+            return BuildResult(false, log.append("\n").append(msg).toString(), null)
+        }
+
+        log.append("\n✔ 编译成功：classes.dex（${dexFile.length()} 字节）位于 ${dexFile.absolutePath}  入口类=$entryClass")
+        return BuildResult(true, log.toString(), dexFile.absolutePath, null, entryClass)
+    }
+}

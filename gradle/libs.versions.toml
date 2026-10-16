@@ -1,0 +1,129 @@
+[versions]
+agp = "8.13.2"
+kotlin = "2.3.10"
+composeBom = "2026.01.01"
+coreKtx = "1.15.0"
+appcompat = "1.7.0"
+annotation = "1.9.0"
+material = "1.12.0"
+lifecycleRuntimeKtx = "2.8.7"
+activityCompose = "1.9.3"
+okhttp = "4.12.0"
+coroutines = "1.9.0"
+orgjson = "20240303"
+jgit = "6.10.0.202406032230-r"
+shizuku = "13.1.5"
+shizukuProvider = "13.1.5"
+androidxWebkit = "1.12.1"
+workRuntime = "2.9.1"
+navigation = "2.8.5"
+kotlinxSerialization = "1.8.0"
+room = "2.8.4"
+ksp = "2.3.9"
+# 多角色集群编排（cluster-*）：SQLCipher 独立加密库 + SQLite KTX
+sqlcipher = "4.5.5"
+sqliteKtx = "2.4.0"
+facebookYoga = "2.0.1"
+androidsvg = "1.4"
+coil = "2.6.0"
+# GenUI-Agent 内置（去品牌化移植）所需：Markdown 渲染 / YAML 解析
+markwon = "4.6.2"
+kaml = "0.55.0"
+# 构建台端侧签名（issue #14）：Android 平台自带的 org.bouncycastle 从 API 28 起被
+# 命名空间化为 com.android.org.bouncycastle，应用 Class.forName 不到 —— 端侧生成
+# 自签 keystore / BKS 读取必须自带一份 BC（bcpkix 依赖 bcprov）。
+bouncycastle = "1.78.1"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleRuntimeKtx" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+
+# Compose BOM 统一管理 Compose 依赖版本
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+compose-animation = { group = "androidx.compose.animation", name = "animation" }
+compose-animation-core = { group = "androidx.compose.animation", name = "animation-core" }
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+compose-runtime = { group = "androidx.compose.runtime", name = "runtime" }
+# Compose 平台（Android）实现 artifacts：canvas 渲染层显式依赖
+androidx-ui-android = { group = "androidx.compose.ui", name = "ui-android" }
+androidx-runtime-android = { group = "androidx.compose.runtime", name = "runtime-android" }
+androidx-ui-text-android = { group = "androidx.compose.ui", name = "ui-text-android" }
+androidx-animation-android = { group = "androidx.compose.animation", name = "animation-android" }
+androidx-ui-graphics-android = { group = "androidx.compose.ui", name = "ui-graphics-android" }
+navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigation" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "annotation" }
+zxing-core = { group = "com.google.zxing", name = "core", version = "3.5.3" }
+coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+org-json = { group = "org.json", name = "json", version.ref = "orgjson" }
+# JGit（Tools.Git 宿主 API 的本地仓库实现）：纯 Java，Android minSdk 26 可直接跑
+eclipse-jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "jgit" }
+# WorkManager：后台周期任务（提供商健康检查、自主心跳）用它而非手写 AlarmManager，
+# 因为需要「约束（联网/充电）+ 指数退避重试 + 进程被杀后仍能恢复调度」这三件事，
+# 手写 AlarmManager 都要重复实现一遍且容易漏掉开机恢复。
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workRuntime" }
+
+# Room（多角色集群编排 :cluster-storage 的持久层：独立加密库 qurocluster.db）
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+
+# SQLCipher + SQLite：集群数据库加密。SQLCipher 自带多 ABI .so，工程 abiFilters 只留 arm64-v8a，
+# 打包时其余 ABI 会被自动裁掉（不需要额外配置 excludes）。
+sqlcipher = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
+androidx-sqlite-ktx = { group = "androidx.sqlite", name = "sqlite-ktx", version.ref = "sqliteKtx" }
+
+# Shizuku（L2 通道：ADB 级 IPC / 免 Root 系统执行）
+shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
+shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizukuProvider" }
+
+# 应用内文档预览：WebViewAssetLoader 把 assets 与目标文件挂到同源 https，
+# 让 WebView 拿到非 opaque origin（pdf.js Worker 可启动），并以流方式返回文件（去 base64 内存炸弹）
+androidx-webkit = { module = "androidx.webkit:webkit", version.ref = "androidxWebkit" }
+
+# GenUI 原生画布（io.gencanvas）依赖：Flexbox 布局引擎 / SVG 兜底 / 图片加载
+facebook-yoga = { group = "com.facebook.yoga", name = "yoga", version.ref = "facebookYoga" }
+androidsvg = { group = "com.caverock", name = "androidsvg", version.ref = "androidsvg" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+
+# 内置 GenUI-Agent（com.ai.assistance.quro.genui.aiapp）依赖：
+#  · markwon：renderx/ChannelViewer 的 Markdown 频道渲染（core + 表格 + 删除线插件）
+#  · kaml：renderx/FlatDoc 的 YAML 文档解析（→ JsonElement）
+markwon-core = { group = "io.noties.markwon", name = "core", version.ref = "markwon" }
+markwon-ext-tables = { group = "io.noties.markwon", name = "ext-tables", version.ref = "markwon" }
+markwon-ext-strikethrough = { group = "io.noties.markwon", name = "ext-strikethrough", version.ref = "markwon" }
+kaml = { group = "com.charleskorn.kaml", name = "kaml", version.ref = "kaml" }
+
+# 构建台端侧签名（issue #14：ClassNotFoundException BouncyCastleProvider → 签名全挂）：
+# 平台 BC 被命名空间化（com.android.org.bouncycastle）后应用摸不到，必须自带。
+# bcpkix 提供 X.509 证书构建 / CMS；bcprov 是它的 ASN.1 与 JCE 底座。
+bouncycastle-bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version.ref = "bouncycastle" }
+bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
+
+# 端侧 ASR 引擎 Sherpa-NCNN：未使用版本目录条目。
+# 原因：Sherpa-NCNN 无 Maven Central / JitPack AAR（仓库根仅含 CMake，JitPack 构建全部失败）。
+# 集成方式为「Kotlin 封装源码拷入 app/src/main/java/com/k2fsa/sherpa/ncnn/」+
+# 「预编译 native .so 放入 app/src/main/jniLibs/arm64-v8a/」，无需 Gradle 坐标。
+# 若后续改用自托管/第三方 AAR，请在此新增 [versions]/[libraries] 条目并在 app/build.gradle.kts 引用。
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
