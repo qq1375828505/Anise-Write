@@ -141,6 +141,27 @@ class QuroToolRegistry {
         // 注意：菜单（appendCapabilityAwareness）与 tools 字段都由此集生成，二者严格一致，
         // 避免模型选了菜单里有、字段里没有的工具而报「未知工具」。
         val coreNames = setOf(
+            "novel_write",
+            "novel_continue",
+            "novel_polish",
+            "novel_list_works",
+            "novel_create_work",
+            "novel_delete_work",
+            "novel_get_outline",
+            "novel_save_outline",
+            "novel_create_volume",
+            "novel_delete_volume",
+            "novel_create_chapter",
+            "novel_delete_chapter",
+            "novel_chapter_stats",
+            "novel_materials_get",
+            "novel_materials_list",
+            "novel_materials_search",
+            "novel_materials_add",
+            "novel_materials_update",
+            "novel_materials_delete",
+            // ↑ 网文写作域（PenAi）：结构/写章/资料工具，精简工具集模式下仍需下发
+
             // 基础
             "get_current_time", "get_device_info", "calculate",
             "get_battery", "get_wifi_info", "get_network_info", "get_sensors", "vibrate",

@@ -76,6 +76,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.ai.assistance.quro.core.tools.novel.NovelToolSet
 
 /**
  * Quro 内置工具：演示工具调用能力。
@@ -207,6 +208,8 @@ fun buildQuroRegistry(context: Context? = null): QuroToolRegistry {
     // ══════════════════════════════════════════════════════════════
 
     // 基础演示工具
+    // 网文写作域（PenAi）：结构 / 写章 / 资料，共 19 个工具
+    NovelToolSet.registerAll(r)
     r.register(QuroClockTool())
     r.register(QuroDeviceInfoTool())
     r.register(QuroCalculatorTool())
