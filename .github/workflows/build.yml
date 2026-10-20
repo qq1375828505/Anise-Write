@@ -106,7 +106,7 @@ jobs:
         run: ./gradlew :app:assembleDebug --refresh-dependencies --stacktrace
 
       - name: 运行 :app JVM 单元测试
-        run: ./gradlew :app:testDebugUnitTest --refresh-dependencies --stacktrace
+        run: ./gradlew :app:testFullDebugUnitTest :app:testFdroidDebugUnitTest --refresh-dependencies --stacktrace
 
       - name: 上传 Debug APK
         uses: actions/upload-artifact@v4

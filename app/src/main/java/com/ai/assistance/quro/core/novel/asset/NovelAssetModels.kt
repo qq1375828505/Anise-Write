@@ -227,6 +227,7 @@ data class LocationAsset(
     override val updatedAt: Long = 0L,
 ) : NovelAsset {
     override val type: AssetType get() = AssetType.LOCATION
+    override val referencedNames: List<String> = emptyList()
 
     override fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -327,6 +328,7 @@ data class AbilityAsset(
     override val updatedAt: Long = 0L,
 ) : NovelAsset {
     override val type: AssetType get() = AssetType.ABILITY
+    override val referencedNames: List<String> = emptyList()
 
     override fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -422,6 +424,7 @@ data class SettingAsset(
     override val updatedAt: Long = 0L,
 ) : NovelAsset {
     override val type: AssetType get() = AssetType.SETTING
+    override val referencedNames: List<String> = emptyList()
 
     override fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -467,6 +470,7 @@ data class ReferenceAsset(
     override val updatedAt: Long = 0L,
 ) : NovelAsset {
     override val type: AssetType get() = AssetType.REFERENCE
+    override val referencedNames: List<String> = emptyList()
 
     override fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)

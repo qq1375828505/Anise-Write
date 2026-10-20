@@ -840,7 +840,7 @@ internal object NovelPersona {
     fun shouldAutoActivate(existing: List<QuroPersona>, activeId: String): Boolean {
         if (existing.none { it.id == PERSONA_ID }) return false
         val active = existing.firstOrNull { it.id == activeId } ?: return true
-        return active.id == QuroPersona.ZORV_AI_ID
+        return active.id == QuroPersonaRepository.ZORV_AI_ID
     }
 
     /**

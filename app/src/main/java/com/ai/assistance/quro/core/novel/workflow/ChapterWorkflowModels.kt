@@ -650,6 +650,11 @@ class WorkflowException(
 
 // ─────────────────────────── 内部工具 ───────────────────────────
 
+/** 工作流状态文件版本：写入 version 字段，读取时高于此版本则拒绝解析（防旧数据错读）。 */
+object WorkflowStateFormat {
+    const val VERSION = 1
+}
+
 /** 阶段产出的 JSON 编解码分派（strict：phase 与产出类型不匹配抛 [WorkflowException]）。 */
 object PhaseOutputCodec {
     fun encode(output: PhaseOutput): JSONObject = output.toJson()
