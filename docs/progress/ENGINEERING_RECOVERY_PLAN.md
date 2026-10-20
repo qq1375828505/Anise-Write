@@ -130,3 +130,52 @@ Phase 5 的 `ChapterWorkflowModels.kt` 自建 20 个类型，与 Phase 1 契约*
 - 🔴 不得在本地执行 gradle / 不得产出 APK
 - 🔴 不得读取或输出 `keystore.properties` / `*.jks` / `*.p12` / `*.keystore` / `*.pem`
 - 🔴 宿主与插件必须同签名，签名统一走 `scripts/sign.sh`
+
+
+---
+
+## 8. Phase 5 契约对齐 · 逐类型裁决表（本轮补充）
+
+> Phase 5 的 `ChapterWorkflowModels.kt` 自建 20 个类型。按「是否承载作品实体」分层裁决如下。
+
+| 类型 | 裁决 | 对象 | 理由 |
+|---|---|---|---|
+| `ChapterDraft` | **改为引用** | `NovelChapter` + `NovelVolume` | 承载章节实体，正文与元数据应落 Phase 1 的章节模型，避免第二套章节真相 |
+| `EnsuredChapter` | **改为引用** | `NovelChapter` | 「已就绪章节」本质是章节实体引用 |
+| `ChapterOutline` | ⚠️ **与 phase/3a 重复** | 需与 `novel_get_outline`/`novel_save_outline` 统一 | 3a 已有大纲存取工具；两处大纲模型必须同源，否则读写不同步 |
+| `OutlineScene` | ⚠️ **与 phase/3a 重复** | 同上 | 大纲场景结构应挂在 3a 的大纲模型下 |
+| `MaterialRef` | ⚠️ **与 phase/3b 重复** | `asset.NovelAsset` | 3b 已有资料模型与仓储，Phase 5 不应另立一套引用结构 |
+| `MaterialCollection` | ⚠️ **与 phase/3b 重复** | `NovelAssetRepository` | 同上 |
+| `ChapterWorkflowStatus` | **保留但改名** | 建议 `WorkflowRunStatus` | 与 `NovelChapterStatus`（章节状态机）语义不同，同名易混 |
+| `ChapterWorkflowPhase` | 保留 | — | 七阶段流程枚举，属 workflow 层 |
+| `RequirementAnalysis` | 保留 | — | 需求分析产物，流程中间态 |
+| `SelfReview` `ReviewIssue` | 保留 | — | 自检/审读产物，流程中间态 |
+| `PolishResult` `DeliveryResult` | 保留 | — | 润色/交付产物，流程中间态 |
+| `ChapterWorkflowRequest` `ChapterWorkflowState` | 保留 | — | 流程入参与运行态 |
+| `PhaseRecordStatus` `WorkflowPhaseRecord` | 保留 | — | 阶段记录与状态，属流程 |
+| `ChapterDeliveryTarget` | 保留 | — | 交付目标接口，属流程 |
+| `WorkflowError` `PhaseOutputCodec` | 保留 | — | 错误枚举与编解码，属流程 |
+
+**落地最小改动（按改动量升序）**：
+1. `ChapterWorkflowStatus` → 重命名 `WorkflowRunStatus`（纯改名，低风险）
+2. `ChapterDraft` / `EnsuredChapter` 的字段改为携带 `NovelChapter` / `NovelVolume` 引用，删除自建章节字段（中等）
+3. `ChapterOutline` / `OutlineScene` 与 phase/3a 大纲模型二选一（跨分支，建议由 3a 主导，Phase 5 引用）
+4. `MaterialRef` / `MaterialCollection` 改为引用 phase/3b 的 `asset.NovelAsset` / `NovelAssetRepository`（跨分支，3b 主导）
+
+**执行顺序建议**：先做 1（无跨分支依赖）→ 再做 2 → 最后做 3、4（需 3a/3b 先合）。
+
+---
+
+## 9. 本轮（2026-10-20）实况
+
+- ✅ **CI 根因修复已推 main**（`4084412`）：`pluginManagement` 官方源前置、阿里云降兜底
+- ✅ **`.git` 分离到内部文件系统**：Android FUSE 不支持 git 的「临时文件+rename」写 object，导致
+  `/sdcard` 上的仓库无法 `git add/commit`；已把 `.git` 迁到 `/root/penai-git` 并以 `gitdir:` 指针接回，
+  worktree 仍在 `/sdcard/Ai/PenAi`（用户在工具箱里照常可见可编辑）
+- ✅ **8 个阶段分支全部零冲突合并**（`feature/penai`，53 文件 / 8666 行），逐文件核实无遗漏
+- ✅ **19 个 `novel_*` 工具已挂载**：新增 `core/tools/novel/NovelToolSet.kt`（照抄基座 `ClusterToolSet` 模式），
+  `QuroBuiltInTools.kt` 加一行 `NovelToolSet.registerAll(r)`，`QuroTool.kt` 的 `coreNames` 补 19 个名字
+  （不补会被静默丢弃）。静态自检通过：类定义全部命中、工具名无重复、与基座无撞名、契约符号全部可解析
+- ⏳ **云端 CI 双线在跑**：`main`（验证仓库顺序修复）与 `feature/penai`（验证合并+挂载）
+- ⚠️ **未解决**：`phase/3a` 只产出 `NovelStructureTools.kt`（10 工具），约定为 13 工具，**欠 3 个**；
+  `phase/3b` 6 工具，约定 8 类，**欠 2 类**；`phase/3c` 伏笔/关系/分析/记忆域工具未见
