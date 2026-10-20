@@ -1,12 +1,14 @@
 pluginManagement {
     repositories {
-        // 阿里云镜像优先：本机直连 Maven Central / Google 不通，先走镜像避免超时重试导致的解析失败
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        // 权威源优先：CI 跑在境外 runner，阿里云镜像偶发超时/5xx 会让 Gradle 直接中止插件解析
+        // （仓库返回非 404 错误时不会 fallback 到下一个仓库），故官方源打头、阿里云镜像降为兜底
         google()
         gradlePluginPortal()
         mavenCentral()
+        // 阿里云镜像兜底：本机直连 Maven Central / Google 不通时仍可用
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
     }
 }
 dependencyResolutionManagement {
