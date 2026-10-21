@@ -38,7 +38,7 @@ import org.json.JSONObject
  */
 
 /** 图谱域工具错误码（对外稳定契约，模型可据此前瞻分流）。 */
-private object GErr {
+internal object GErr {
     const val INVALID_ARGS = "invalid_arguments"
     const val WORK_NOT_FOUND = "work_not_found"
     const val CHAPTER_NOT_FOUND = "chapter_not_found"
@@ -47,7 +47,7 @@ private object GErr {
     const val MEMORY_NOT_FOUND = "memory_not_found"
 }
 
-private fun gError(code: String, message: String, hint: String? = null): String = JSONObject().apply {
+internal fun gError(code: String, message: String, hint: String? = null): String = JSONObject().apply {
     put("ok", false)
     put("code", code)
     put("error", message)
@@ -57,7 +57,7 @@ private fun gError(code: String, message: String, hint: String? = null): String 
 private fun gArgs(arguments: String): JSONObject? = runCatching { JSONObject(arguments) }.getOrNull()
 
 /** 作品不存在错误（hint 附现有作品，一次重发即可修正）。 */
-private fun gWorkNotFound(repo: NovelRepository, workId: String): String {
+internal fun gWorkNotFound(repo: NovelRepository, workId: String): String {
     val works = repo.loadWorks()
     val avail = if (works.isEmpty()) "当前没有任何作品，可先用 novel_create_work 创建。"
     else "现有作品：" + works.joinToString("；") { "《${it.title}》(${it.id})" }
@@ -65,10 +65,10 @@ private fun gWorkNotFound(repo: NovelRepository, workId: String): String {
 }
 
 /** 章节不存在错误。 */
-private fun gChapterNotFound(workTitle: String, chapterId: String, hint: String): String =
+internal fun gChapterNotFound(workTitle: String, chapterId: String, hint: String): String =
     gError(GErr.CHAPTER_NOT_FOUND, "章节不存在：$chapterId（作品《$workTitle》）", hint)
 
-private fun gOutlineHint(workId: String): String = "用 novel_get_outline(work_id=$workId) 查看章节 id。"
+internal fun gOutlineHint(workId: String): String = "用 novel_get_outline(work_id=$workId) 查看章节 id。"
 
 /** 章节快照：按 id 找章节 → ChapterRef（找不到返回 null，由调用方报错）。 */
 private fun gChapterRefOf(chapters: List<com.ai.assistance.quro.core.novel.NovelChapter>, chapterId: String): ChapterRef? =

@@ -51,5 +51,14 @@ object NovelToolSet {
         r.register(NovelMaterialsAddTool())
         r.register(NovelMaterialsUpdateTool())
         r.register(NovelMaterialsDeleteTool())
+        // Phase 4a · 流派域 + 上下文 + 审查域 + 委派
+        r.register(NovelListGenresTool())
+        r.register(NovelApplyGenreTool())
+        r.register(NovelBuildContextTool())
+        r.register(NovelHumanizeTool())
+        r.register(NovelTitleCandidatesTool())
+        r.register(NovelShuangdianReportTool())
+        r.register(NovelWaterReportTool())
+        r.register(NovelDelegateSubagentTool())
     }
 }
