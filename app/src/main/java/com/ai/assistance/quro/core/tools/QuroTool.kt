@@ -177,7 +177,15 @@ class QuroToolRegistry {
             "novel_get_chapter",
             "novel_update_work",
             "novel_chapter_status",
-            // ↑ 网文写作域（PenAi）：结构/写章/资料工具，精简工具集模式下仍需下发
+            "novel_hooks_status",
+            "novel_relationships",
+            "novel_relationship_graph",
+            "novel_memory_save",
+            "novel_memory_query",
+            "novel_memory",
+            "novel_query_previous",
+            "novel_consistency_check",
+            // ↑ 网文写作域（PenAi）：结构/写章/资料/图谱工具，精简工具集模式下仍需下发
 
             // 基础
             "get_current_time", "get_device_info", "calculate",

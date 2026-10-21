@@ -35,6 +35,15 @@ object NovelToolSet {
         r.register(NovelGetChapterTool())
         r.register(NovelUpdateWorkTool())
         r.register(NovelChapterStatusTool())
+        // Phase 3c · 图谱域
+        r.register(NovelHooksStatusTool())
+        r.register(NovelRelationshipsTool())
+        r.register(NovelRelationshipGraphTool())
+        r.register(NovelMemorySaveTool())
+        r.register(NovelMemoryQueryTool())
+        r.register(NovelMemoryOverviewTool())
+        r.register(NovelQueryPreviousTool())
+        r.register(NovelConsistencyCheckTool())
         // Phase 3b · 资料域
         r.register(NovelMaterialsGetTool())
         r.register(NovelMaterialsListTool())
