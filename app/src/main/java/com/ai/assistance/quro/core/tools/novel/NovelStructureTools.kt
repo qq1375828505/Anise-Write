@@ -34,11 +34,11 @@ import org.json.JSONObject
  * | `confirm_required` | 不可逆操作缺确认，附删除预览，未执行任何写操作 |
  *
  * ## 已知边界（契约缺口，未在此实现）
- * 规划要求的作品/卷/章**更新**（改名/改类型/移动章节/状态机流转）与**章节重排**
- * 依赖 [NovelRepository] 尚未提供的写方法（`updateWork` / `updateVolume` /
- * `updateChapter` / `reorderChapters`）。按工程约定（契约文件只读、禁止兜底代码、
- * 不在工具层绕过仓库自造持久化），这些工具不在本文件桩实现，缺口与建议签名
- * 已写入 Phase 3a 工程报告交主编排层；契约补齐后按同一范式补注册即可。
+ * 作品**改名/改类型**（`novel_update_work`）与**章节状态显式流转**（`novel_chapter_status`）
+ * 已随 [NovelRepository.updateWork] / [NovelRepository.setChapterStatus] 契约补齐而落地；
+ * 章节读取由 `novel_get_chapter` 提供。仍缺：卷/章的**更新**（改卷名/改章名/移动章节）
+ * 与**章节重排**（`updateVolume` / `updateChapter` / `reorderChapters`）——仓库契约补齐后
+ * 按同一范式补注册即可，不在工具层绕过仓库自造持久化。
  */
 
 /** 结构域工具错误码（对外稳定契约，模型可据此前瞻分流）。 */
@@ -973,6 +973,258 @@ class NovelChapterStatsTool : QuroTool {
 }
 
 /**
+ * novel_get_chapter：读取单个章节（元数据 + 可选正文）。
+ *
+ * 只读（readOnly=true，已入并发白名单）。正文来自 `chapters/{workId}/{chapterId}.md`；
+ * 未写过正文的章节返回空串（正常态，不是错误）。长章默认 max_chars=12000 截断保护上下文，
+ * 截断时 truncated=true 并附 contentLength 全长，调用方可调大 max_chars 或分段取。
+ */
+class NovelGetChapterTool : QuroTool {
+    override val name = "novel_get_chapter"
+    override val readOnly = true
+    override val description =
+        "读取单个章节：元数据（卷/标题/序号/状态/字数）+ 正文全文（可选）。" +
+            "何时用：续写/润色前先看现文；用户问「第 N 章写了什么」。" +
+            "返回 {\"ok\":true,\"chapter\":{…},\"volumeTitle\":\"…\",\"content\":\"…\"}；" +
+            "长章默认截断到 12000 字（truncated=true 时可调大 max_chars 重取）。"
+    override val parametersJson = """{
+      "type": "object",
+      "properties": {
+        "work_id": {
+          "type": "string",
+          "description": "作品 id（novel_list_works 获取）"
+        },
+        "chapter_id": {
+          "type": "string",
+          "description": "章节 id（novel_get_outline 获取）"
+        },
+        "include_content": {
+          "type": "boolean",
+          "description": "是否返回正文，默认 true；false 只查元数据（更短）"
+        },
+        "max_chars": {
+          "type": "integer",
+          "description": "正文最大返回字符数，默认 12000；0 = 不截断（慎用，长章会撑爆上下文）"
+        }
+      },
+      "required": ["work_id", "chapter_id"]
+    }"""
+
+    override fun run(context: Context, arguments: String): String {
+        val args = parseArgs(arguments)
+            ?: return novelError(ErrCode.INVALID_ARGS, "参数不是合法 JSON", "形如 {\"work_id\":\"…\",\"chapter_id\":\"…\"}")
+        val workId = args.optString("work_id", "").trim()
+        val chapterId = args.optString("chapter_id", "").trim()
+        if (workId.isBlank() || chapterId.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "work_id 与 chapter_id 均不能为空", "用 novel_list_works / novel_get_outline 获取")
+        }
+        val repo = NovelRepository.fromContext(context)
+        val work = repo.loadWorks().firstOrNull { it.id == workId }
+            ?: return workNotFoundError(repo, workId)
+        val chapter = work.chapters.firstOrNull { it.id == chapterId }
+            ?: return chapterNotFoundError(work, chapterId)
+        val volumeTitle = work.volumes.firstOrNull { it.id == chapter.volumeId }?.title ?: ""
+        val includeContent = args.optBoolean("include_content", true)
+        val maxChars = args.optInt("max_chars", CHAPTER_CONTENT_DEFAULT_CHARS)
+        return JSONObject().apply {
+            put("ok", true)
+            put("chapter", chapterJson(chapter))
+            put("volumeTitle", volumeTitle)
+            if (includeContent) {
+                val full = repo.readChapterContent(workId, chapterId)
+                put("contentLength", full.length)
+                if (maxChars > 0 && full.length > maxChars) {
+                    put("content", full.take(maxChars))
+                    put("truncated", true)
+                } else {
+                    put("content", full)
+                    put("truncated", false)
+                }
+            }
+            put(
+                "message",
+                "《${work.title}》「${chapter.title}」（${novelStatusLabel(chapter.status)}，${chapter.wordCount} 字）" +
+                    if (includeContent) "正文已返回。" else "（仅元数据，include_content=false）",
+            )
+        }.toString()
+    }
+}
+
+/**
+ * novel_update_work：更新作品元数据（书名 / 类型）。
+ *
+ * 落地本文件头部「已知边界」的 updateWork 契约缺口（仓库新写方法 [NovelRepository.updateWork]）。
+ * title/genre 至少传一项；title 传空白串视为无效参数（防止手滑清空书名）；
+ * genre 允许传空白串清空类型。只动 works.json 元数据，卷/章/正文不受影响。
+ */
+class NovelUpdateWorkTool : QuroTool {
+    override val name = "novel_update_work"
+    override val description =
+        "更新作品元数据：改书名（title）或改类型/流派（genre），至少传一项。" +
+            "何时用：用户说「这本书改名为…」「把类型改成…」。" +
+            "只改元数据，卷/章/正文不动。genre 传空白串=清空类型；title 传空白串报 invalid_arguments。"
+    override val parametersJson = """{
+      "type": "object",
+      "properties": {
+        "work_id": {
+          "type": "string",
+          "description": "作品 id（novel_list_works 获取）"
+        },
+        "title": {
+          "type": "string",
+          "description": "新书名（选填；传空白串报错）",
+          "example": "剑起苍澜·修订版"
+        },
+        "genre": {
+          "type": "string",
+          "description": "新类型/流派（选填；传空白串=清空）",
+          "example": "玄幻·系统流"
+        }
+      },
+      "required": ["work_id"]
+    }"""
+
+    override fun run(context: Context, arguments: String): String {
+        val args = parseArgs(arguments)
+            ?: return novelError(ErrCode.INVALID_ARGS, "参数不是合法 JSON", "形如 {\"work_id\":\"…\",\"title\":\"新名\"}")
+        val workId = args.optString("work_id", "").trim()
+        if (workId.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "work_id 不能为空", "用 novel_list_works 获取作品 id")
+        }
+        val hasTitle = args.has("title")
+        val hasGenre = args.has("genre")
+        if (!hasTitle && !hasGenre) {
+            return novelError(ErrCode.INVALID_ARGS, "title / genre 至少传一项，否则无事可做", "改书名形如 {\"work_id\":\"…\",\"title\":\"新名\"}")
+        }
+        val newTitle = args.optString("title", "").trim()
+        if (hasTitle && newTitle.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "title 不能为空白（防误清书名）", "要删书用 novel_delete_work；改书名请传非空白字符串")
+        }
+        val newGenre = args.optString("genre", "")
+        val repo = NovelRepository.fromContext(context)
+        val before = repo.loadWorks().firstOrNull { it.id == workId }
+            ?: return workNotFoundError(repo, workId)
+        val updated = try {
+            repo.updateWork(workId, title = if (hasTitle) newTitle else null, genre = if (hasGenre) newGenre else null)
+        } catch (e: IllegalArgumentException) {
+            return workNotFoundError(repo, workId)
+        }
+        return JSONObject().apply {
+            put("ok", true)
+            put("work", workJson(updated, includeStats = true, includeChildren = false))
+            put(
+                "message",
+                buildString {
+                    append("已更新《${updated.title}》")
+                    if (hasTitle && updated.title != before.title) {
+                        append("，书名《${before.title}》→《${updated.title}》")
+                    }
+                    if (hasGenre && updated.genre != before.genre) {
+                        append("，类型「${before.genre.ifBlank { "（空）" }}」→「${updated.genre.ifBlank { "（空）" }}」")
+                    }
+                    if (updated.title == before.title && updated.genre == before.genre) append("（字段值未变化）")
+                    append("。")
+                },
+            )
+        }.toString()
+    }
+}
+
+/**
+ * novel_chapter_status：查询或显式设置章节状态（四态机）。
+ *
+ * 不带 status = 查询模式（返回章节元数据 + 全作四态计数）；
+ * 带 status = 显式流转（允许降级纠偏，如把误标 completed 的章降回 draft；
+ * 与 novel_write 的「UNWRITTEN→DRAFT 只升不降」自动流转互补）。正文 .md 不受影响。
+ */
+class NovelChapterStatusTool : QuroTool {
+    override val name = "novel_chapter_status"
+    override val description =
+        "查询或设置章节状态（unwritten 未写 / draft 草稿 / polishing 精修中 / completed 完稿）。" +
+            "不带 status 参数=查询（附全作四态计数）；带 status=显式流转（允许降级纠偏，正文不受影响）。" +
+            "何时用：用户说「这章写完了」「把第 N 章标成完稿」「看看写作进度」。"
+    override val parametersJson = """{
+      "type": "object",
+      "properties": {
+        "work_id": {
+          "type": "string",
+          "description": "作品 id（novel_list_works 获取）"
+        },
+        "chapter_id": {
+          "type": "string",
+          "description": "章节 id（novel_get_outline 获取）"
+        },
+        "status": {
+          "type": "string",
+          "description": "目标状态（选填；缺省=只查询）",
+          "enum": ["unwritten", "draft", "polishing", "completed"]
+        }
+      },
+      "required": ["work_id", "chapter_id"]
+    }"""
+
+    override fun run(context: Context, arguments: String): String {
+        val args = parseArgs(arguments)
+            ?: return novelError(ErrCode.INVALID_ARGS, "参数不是合法 JSON", "形如 {\"work_id\":\"…\",\"chapter_id\":\"…\",\"status\":\"draft\"}")
+        val workId = args.optString("work_id", "").trim()
+        val chapterId = args.optString("chapter_id", "").trim()
+        if (workId.isBlank() || chapterId.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "work_id 与 chapter_id 均不能为空", "用 novel_list_works / novel_get_outline 获取")
+        }
+        val repo = NovelRepository.fromContext(context)
+        val work = repo.loadWorks().firstOrNull { it.id == workId }
+            ?: return workNotFoundError(repo, workId)
+        val chapter = work.chapters.firstOrNull { it.id == chapterId }
+            ?: return chapterNotFoundError(work, chapterId)
+        val statusArg = args.optString("status", "").trim().lowercase()
+        val target = if (statusArg.isBlank()) {
+            null
+        } else {
+            NovelChapterStatus.entries.firstOrNull { it.key == statusArg }
+                ?: return novelError(
+                    ErrCode.INVALID_ARGS,
+                    "未知 status：$statusArg",
+                    "合法值：" + NovelChapterStatus.entries.joinToString("/") { it.key },
+                )
+        }
+        val updated = if (target != null) {
+            try {
+                repo.setChapterStatus(workId, chapterId, target)
+            } catch (e: IllegalArgumentException) {
+                return chapterNotFoundError(work, chapterId)
+            }
+        } else {
+            chapter
+        }
+        val counts = statusCountsJson(work.chapters)
+        val changed = target != null && target != chapter.status
+        val message = when {
+            target == null -> "「${chapter.title}」当前状态：${novelStatusLabel(chapter.status)}（${chapter.wordCount} 字）"
+            changed -> "「${chapter.title}」状态 ${novelStatusLabel(chapter.status)} → ${novelStatusLabel(updated.status)}"
+            else -> "「${chapter.title}」本就是 ${novelStatusLabel(updated.status)}，无变更"
+        }
+        return JSONObject().apply {
+            put("ok", true)
+            put("chapter", chapterJson(updated))
+            put("statusCounts", counts)
+            put("changed", changed)
+            put("message", message)
+        }.toString()
+    }
+}
+
+/** 章节状态中文标签（输出/日志统一口径）。 */
+private fun novelStatusLabel(s: NovelChapterStatus): String = when (s) {
+    NovelChapterStatus.UNWRITTEN -> "未写"
+    NovelChapterStatus.DRAFT -> "草稿"
+    NovelChapterStatus.POLISHING -> "精修中"
+    NovelChapterStatus.COMPLETED -> "完稿"
+}
+
+/** novel_get_chapter 默认正文截断长度（保护上下文；0 = 不截断）。 */
+private const val CHAPTER_CONTENT_DEFAULT_CHARS = 12000
+
+/**
  * 结构域工具全集：注册表（QuroBuiltInTools）与单测共用同一真相源，
  * 避免「注册了但名字写错 / 漏登 coreNames」这类静默失效。
  */
@@ -987,6 +1239,9 @@ val NOVEL_STRUCTURE_TOOLS: List<QuroTool> = listOf(
     NovelCreateChapterTool(),
     NovelDeleteChapterTool(),
     NovelChapterStatsTool(),
+    NovelGetChapterTool(),
+    NovelUpdateWorkTool(),
+    NovelChapterStatusTool(),
 )
 
 /** 结构域工具名集合（coreNames / ALWAYS_ON / 并发白名单三处登记 + 单测断言用）。 */

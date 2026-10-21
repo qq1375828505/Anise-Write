@@ -228,6 +228,53 @@ class NovelRepository(private val rootDir: File) {
             updated
         }
 
+    /**
+     * 更新作品元数据（书名 / 类型）。至少传入一项才会产生变更；title 传空白视为无效参数。
+     * updatedAt 仅在实际变更时刷新。
+     *
+     * @return 更新后的作品（含卷/章元数据）
+     * @throws IllegalArgumentException 作品不存在
+     */
+    fun updateWork(workId: String, title: String? = null, genre: String? = null): NovelWork =
+        synchronized(lock) {
+            val works = loadRawWorks()
+            val idx = works.indexOfFirst { it.id == workId }
+            if (idx < 0) throw IllegalArgumentException("作品不存在: $workId")
+            val old = works[idx]
+            val newTitle = title?.trim()?.takeIf { it.isNotBlank() } ?: old.title
+            val newGenre = genre?.trim() ?: old.genre
+            val now = System.currentTimeMillis()
+            val updated = old.copy(title = newTitle, genre = newGenre, updatedAt = now)
+            works[idx] = updated
+            saveIndex(works)
+            updated
+        }
+
+    /**
+     * 显式设置章节状态（四态机：unwritten/draft/polishing/completed）。
+     *
+     * 与 [writeChapterContent] 的「只升不降」自动流转不同，本方法供 AI / 用户**显式纠偏**
+     * （如把误标 completed 的章节降回 draft），允许任意方向流转；正文 .md 不受影响。
+     *
+     * @return 更新后的章节元数据
+     * @throws IllegalArgumentException 作品或章节不存在
+     */
+    fun setChapterStatus(workId: String, chapterId: String, status: NovelChapterStatus): NovelChapter =
+        synchronized(lock) {
+            val works = loadRawWorks()
+            val idx = works.indexOfFirst { it.id == workId }
+            if (idx < 0) throw IllegalArgumentException("作品不存在: $workId")
+            val work = works[idx]
+            val cidx = work.chapters.indexOfFirst { it.id == chapterId }
+            if (cidx < 0) throw IllegalArgumentException("章节不存在: $chapterId")
+            val now = System.currentTimeMillis()
+            val updated = work.chapters[cidx].copy(status = status, updatedAt = now)
+            val chapters = work.chapters.toMutableList().also { it[cidx] = updated }
+            works[idx] = work.copy(chapters = chapters, updatedAt = now)
+            saveIndex(works)
+            updated
+        }
+
     // ─────────────────────────── 内部 ───────────────────────────
 
     private fun chapterFile(workId: String, chapterId: String): File =

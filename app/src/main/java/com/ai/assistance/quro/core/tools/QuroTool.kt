@@ -160,6 +160,9 @@ class QuroToolRegistry {
             "novel_materials_add",
             "novel_materials_update",
             "novel_materials_delete",
+            "novel_get_chapter",
+            "novel_update_work",
+            "novel_chapter_status",
             // ↑ 网文写作域（PenAi）：结构/写章/资料工具，精简工具集模式下仍需下发
 
             // 基础

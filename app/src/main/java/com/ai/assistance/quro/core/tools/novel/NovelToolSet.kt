@@ -32,6 +32,9 @@ object NovelToolSet {
         r.register(NovelCreateChapterTool())
         r.register(NovelDeleteChapterTool())
         r.register(NovelChapterStatsTool())
+        r.register(NovelGetChapterTool())
+        r.register(NovelUpdateWorkTool())
+        r.register(NovelChapterStatusTool())
         // Phase 3b · 资料域
         r.register(NovelMaterialsGetTool())
         r.register(NovelMaterialsListTool())
