@@ -109,6 +109,7 @@ jobs:
         run: ./gradlew :app:testFullDebugUnitTest :app:testFdroidDebugUnitTest --refresh-dependencies --stacktrace
 
       - name: 上传 Debug APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: penai-debug-apk
@@ -116,6 +117,7 @@ jobs:
           retention-days: 30
 
       - name: 上传单元测试报告
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: penai-unit-test-reports

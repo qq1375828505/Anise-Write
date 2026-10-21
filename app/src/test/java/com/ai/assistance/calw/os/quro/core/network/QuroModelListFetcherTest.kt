@@ -25,7 +25,7 @@ class QuroModelListFetcherTest {
         }
         """.trimIndent()
         val models = fetcher.parseModels(json)
-        assertEquals(listOf("gpt-4o", "gpt-4o-mini", "o3-mini"), models)
+        assertEquals(listOf("gpt-4o", "gpt-4o-mini", "o3-mini"), models.map { it.id })
     }
 
     @Test
@@ -40,7 +40,7 @@ class QuroModelListFetcherTest {
         }
         """.trimIndent()
         val models = fetcher.parseModels(json)
-        assertEquals(listOf("deepseek-chat", "deepseek-reasoner"), models)
+        assertEquals(listOf("deepseek-chat", "deepseek-reasoner"), models.map { it.id })
     }
 
     @Test

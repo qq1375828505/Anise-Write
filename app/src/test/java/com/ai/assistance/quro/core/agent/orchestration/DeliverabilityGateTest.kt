@@ -122,7 +122,9 @@ class DeliverabilityGateTest {
     @Test
     fun default_planner_asks_the_three_questions() = runBlocking {
         val p = DefaultTaskPlanner.plan("帮我把这个 APK 装到手机上", "")
-        assertEquals("目标：帮我把这个 APK 装到手机上", p.strategy)
+        // 2026 升级后 strategy = "目标：$b；采用策略：$strategyLabel"
+        assertTrue("strategy 应以目标开头", p.strategy.startsWith("目标：帮我把这个 APK 装到手机上"))
+        assertTrue("strategy 应标注采用策略", p.strategy.contains("采用策略"))
         assertTrue("必须问「怎么验证」", p.plan.contains("怎么验证"))
         assertTrue("必须问「依赖什么」", p.plan.contains("依赖什么"))
         assertTrue("必须问「要做什么」", p.plan.contains("要做什么"))

@@ -279,6 +279,11 @@ object QuroLocalToolsCodec {
                     if (m.toolCallId != null && m.toolCallId in open) {
                         out.add(m)
                         open.remove(m.toolCallId)
+                    } else {
+                        // 孤儿 tool 结果（找不到配对的 assistant tool_calls，如历史被裁剪后残留）：
+                        // 必须保留——静默丢弃会让工具结果凭空消失（encodeMessages 输出空数组），
+                        // 且下游已有 tool_call_id 稳定占位兜底，不会让本地模板取不到字段。
+                        out.add(m)
                     }
                 }
 
