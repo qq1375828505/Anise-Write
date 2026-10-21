@@ -48,7 +48,7 @@ fun QuroTool.toMcpTool(engine: QuroToolEngine): McpTool {
                 start()
             }
             return try {
-                if (!done.await(self.timeoutMs)) {
+                if (!done.await(self.timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
                     ToolResult.error(
                         "工具「${self.name}」执行超过 ${self.timeoutMs / 1000}s 未返回（疑似阻塞在不可中断调用），已放弃等待。" +
                             "如需执行长时间任务，请分步操作或缩小任务粒度。"

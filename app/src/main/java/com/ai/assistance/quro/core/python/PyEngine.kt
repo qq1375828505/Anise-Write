@@ -147,7 +147,7 @@ object PyEngine {
             }
         }.apply { isDaemon = true; start() }
         return try {
-            if (!done.await(timeoutMs + WEDGE_GRACE_MS)) {
+            if (!done.await(timeoutMs + WEDGE_GRACE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
                 wedged = true
                 Result("", "", WEDGE_ERROR)
             } else {
