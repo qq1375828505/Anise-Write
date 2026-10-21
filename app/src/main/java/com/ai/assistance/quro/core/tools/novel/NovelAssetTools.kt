@@ -324,9 +324,9 @@ class NovelMaterialsListTool : QuroTool {
 class NovelMaterialsSearchTool : QuroTool {
     override val name = "novel_materials_search"
     override val readOnly = true
-    override val description = "模糊检索作品资料库：关键字命中名称/标签/简介任一即返回（忽略大小写），可限定类别。" +
-        "何时用：资料多时按关键字找；快速定位「涉及修炼体系的情节线」「带某标签的人物」；为写作任务召回相关资料。" +
-        "触发词：搜一下、找找、有没有关于xx的资料、检索资料。" +
+    override val description = "在作品资料库内按关键字定位条目：命中资料名称/标签/简介任一即返回（忽略大小写），可限定八类资料之一。" +
+        "何时用：资料多时按关键字定位；为写作任务召回相关设定（如「涉及修炼体系的情节线」「带某标签的人物」）。" +
+        "触发词：资料库里有没有xx、找设定、翻资料、xx的资料在哪。" +
         "参数：workId（必填）、keyword（必填）、type（可选，缺省查全部八类）。"
     override val parametersJson = """{
         "type":"object",
