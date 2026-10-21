@@ -30,6 +30,17 @@ object PyEngine {
 
     private const val DEFAULT_TIMEOUT_MS = 15000L
 
+    /** wedge 判定宽限：看门狗中断后给字节码边界的额外落地时间（超过即判 C 层阻塞）。 */
+    private const val WEDGE_GRACE_MS = 10_000L
+
+    /** 引擎被隔离后统一返回的错误文案（调用方据此降级沙箱执行）。 */
+    private const val WEDGE_ERROR =
+        "原生 Python 引擎上次执行阻塞超时且无法中断（疑似 input() 交互 / 无超时网络请求 / C 层死循环），" +
+            "引擎已隔离：本次与后续调用改走沙箱执行，重启应用后恢复原生引擎。"
+
+    @Volatile
+    private var wedged = false
+
     private sealed class State {
         object Uninit : State()
         object Loading : State()
@@ -106,9 +117,28 @@ object PyEngine {
     /**
      * 运行一段 Python 代码。stdout/stderr 捕获后返回；超时经 KeyboardInterrupt 打断。
      * 引擎不可用时 error 带 reason，调用方自行降级。
+     *
+     * ## 🔴 wedge 隔离（真机实测 run_code 卡死修复）
+     * 看门狗的 PyErr_SetInterrupt 只在**字节码边界**生效；代码若阻塞在 C 层
+     * （input() 读 stdin / 无超时网络 / C 扩展死循环），中断永远落不下去。
+     * 解释器是进程内常驻单例且 JNI 桥无重置接口——一次卡死 = 以后所有 run_code 全卡。
+     * 因此：nativeRun 改在独立守护线程执行，本函数按「超时 + 宽限」限期等待；
+     * 到期仍不返回即置 [wedged]，此后所有调用不再进原生引擎（调用方降级沙箱
+     * python——独立进程、可强杀），重启应用恢复原生引擎。
      */
     fun run(context: Context, code: String, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Result {
         ensure(context)?.let { return Result("", "", it) }
+        if (wedged) return Result("", "", WEDGE_ERROR)
+        val out = arrayOfNulls<String>(2)
+        val done = java.util.concurrent.CountDownLatch(1)
+        val worker = Thread {
+            try {
+                nativeRun(code, out)
+            } catch (_: Throwable) {
+            } finally {
+                done.countDown()
+            }
+        }.apply { isDaemon = true; name = "py-bridge-run"; start() }
         val watchdog = Thread {
             try {
                 Thread.sleep(timeoutMs)
@@ -117,18 +147,19 @@ object PyEngine {
             }
         }.apply { isDaemon = true; start() }
         return try {
-            val out = arrayOfNulls<String>(2)
-            nativeRun(code, out)
-            val stdout = out[0] ?: ""
-            val stderr = out[1] ?: ""
-            val timedOut = stderr.contains("KeyboardInterrupt")
-            Result(
-                stdout = stdout,
-                stderr = stderr,
-                error = if (timedOut) "执行超时（>${timeoutMs / 1000}s，已中断）" else null,
-            )
-        } catch (e: Throwable) {
-            Result("", "", "Python 执行异常：${e.message}")
+            if (!done.await(timeoutMs + WEDGE_GRACE_MS)) {
+                wedged = true
+                Result("", "", WEDGE_ERROR)
+            } else {
+                val stdout = out[0] ?: ""
+                val stderr = out[1] ?: ""
+                val timedOut = stderr.contains("KeyboardInterrupt")
+                Result(
+                    stdout = stdout,
+                    stderr = stderr,
+                    error = if (timedOut) "执行超时（>${timeoutMs / 1000}s，已中断）" else null,
+                )
+            }
         } finally {
             watchdog.interrupt()
         }

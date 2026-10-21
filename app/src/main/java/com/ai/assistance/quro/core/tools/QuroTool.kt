@@ -26,13 +26,27 @@ import kotlin.coroutines.coroutineContext
  * 工具接口：名称 + 描述 + 参数 JSON-Schema + 执行。
  */
 
-/** 单个工具执行的硬超时（毫秒），防止卡住吃满 180s 总超时。 */
-private const val TOOL_EXEC_TIMEOUT_MS = 60_000L
+/** 单个工具执行的默认硬预算（毫秒）。绝大多数工具远快于此；仅作「无限挂死」的最后防线。 */
+const val QURO_TOOL_DEFAULT_TIMEOUT_MS = 600_000L
+
+/** 闭环单次执行的外层硬超时：与每工具预算同量级，防止卡住吃满整轮会话。 */
+private const val TOOL_EXEC_TIMEOUT_MS = QURO_TOOL_DEFAULT_TIMEOUT_MS
+
 interface QuroTool {
     val name: String
     val description: String
     val parametersJson: String
     fun run(context: Context, arguments: String): String
+
+    /**
+     * 该工具的执行预算（毫秒）——超过即放弃等待并报超时，**执行线程遗弃为后台**。
+     *
+     * 🔴 为什么需要它：[run] 是普通阻塞函数，适配层用「独立线程 + 限期等待」执行
+     * （见 QuroToolAdapter）；若工具实现阻塞在不可中断的调用上（如 run_code 原生
+     * Python 卡在 C 层 JNI），唯一止损手段就是到点放弃等待。默认 10 分钟兜底，
+     * 确定耗时的长任务工具（如 CMS 环境供给、本地大模型写章）可显式覆写。
+     */
+    val timeoutMs: Long get() = QURO_TOOL_DEFAULT_TIMEOUT_MS
 
     /** 该工具运行前需确保已授予的危险权限（运行时申请）。默认无。 */
     val requiredPermissions: List<String> get() = emptyList()
@@ -702,7 +716,7 @@ class QuroToolEngine(private val registry: QuroToolRegistry) {
                 android.util.Log.e("QuroToolEngine", "工具「${call.name}」执行超时（${TOOL_EXEC_TIMEOUT_MS}ms），已强杀派生进程")
                 return ExecResult.Failed(
                     FailureType.TIMEOUT,
-                    "工具执行超时（超过60秒），已自动终止。如需执行长时间任务，请分步操作。",
+                    "工具执行超时（超过${TOOL_EXEC_TIMEOUT_MS / 1000}秒），已自动终止。如需执行长时间任务，请分步操作。",
                 )
             }
             // 🔴 用户停止（父 job 取消）不是「工具失败」：绝不当成错误结果回灌给模型

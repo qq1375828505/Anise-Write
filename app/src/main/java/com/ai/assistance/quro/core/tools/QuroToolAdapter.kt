@@ -23,11 +23,41 @@ fun QuroTool.toMcpTool(engine: QuroToolEngine): McpTool {
         override suspend fun execute(params: Map<String, Any>): ToolResult {
             val ctx = engine.getContext() ?: return ToolResult.error("上下文不可用")
             val argsJson = mapToJson(params)
+            // 🔴 卡死防护（真机实测：run_code 跑脚本卡死半天不返回）：
+            // QuroTool.run 是**普通阻塞函数**，本链路（McpTool.execute → registry → 此处）
+            // 全程没有挂起点——上层的 withTimeout 对「阻塞在 C 层/JNI/无超时网络」的
+            // 实现永远打不响，只能干等。改为独立守护线程执行 + 按 [QuroTool.timeoutMs]
+            // 限期等待：到期本协程立刻以超时返回，执行线程遗弃为后台（其进程类副作用
+            // 仍由 QuroToolProcesses 在取消时强杀；原生 Python 解释器由 PyEngine 的
+            // wedge 隔离兜底，不重进）。宁可报超时让模型换策略，不让整轮对话挂死。
+            val resultRef = java.util.concurrent.atomic.AtomicReference<ToolResult?>(null)
+            val done = java.util.concurrent.CountDownLatch(1)
+            val worker = Thread {
+                try {
+                    resultRef.set(
+                        runCatching { self.run(ctx, argsJson) }
+                            .map { ToolResult.success(mapOf("result" to it)) }
+                            .getOrElse { ToolResult.error(it.message ?: "error") }
+                    )
+                } finally {
+                    done.countDown()
+                }
+            }.apply {
+                isDaemon = true
+                name = "quro-tool-${self.name}"
+                start()
+            }
             return try {
-                val r = self.run(ctx, argsJson)
-                ToolResult.success(mapOf("result" to r))
-            } catch (e: Exception) {
-                ToolResult.error(e.message ?: "error")
+                if (!done.await(self.timeoutMs)) {
+                    ToolResult.error(
+                        "工具「${self.name}」执行超过 ${self.timeoutMs / 1000}s 未返回（疑似阻塞在不可中断调用），已放弃等待。" +
+                            "如需执行长时间任务，请分步操作或缩小任务粒度。"
+                    )
+                } else {
+                    resultRef.get() ?: ToolResult.error("工具无结果")
+                }
+            } finally {
+                worker.interrupt()
             }
         }
     }

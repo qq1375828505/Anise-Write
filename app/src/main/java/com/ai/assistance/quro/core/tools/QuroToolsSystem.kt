@@ -422,7 +422,12 @@ class OpenWebTool : QuroTool {
 /** 执行代码 / 返回网页工件（AI 自带的「手机 AI IDE」核心工具）。 */
 class RunCodeTool : QuroTool {
     override val name = "run_code"
-    override val description = "在手机端执行一段代码并返回结果，是 AI 自带的「手机 AI IDE（带可视化）」核心工具——你（AI）可以直接写代码并运行，产出物会渲染在对话框里，无需用户手动编辑文件。参数 {\"code\":\"代码内容\",\"lang\":\"语言\"}。各语言用途：\n" +
+    override val description = "在手机端执行一段代码并返回结果，是 AI 自带的「手机 AI IDE（带可视化）」核心工具——你（AI）可以直接写代码并运行，产出物会渲染在对话框里，无需用户手动编辑文件。参数 {\"code\":\"代码内容\",\"lang\":\"语言\"}。\n" +
+        "🔴 卡死防护（必须遵守，违反会永久占用执行引擎）：\n" +
+        "· 禁止 input() 交互输入（本环境无 stdin，会永久卡死；所需值直接写进代码或用参数传入）。\n" +
+        "· 网络请求必须带超时：requests.get/post(..., timeout=10)；socket 先 settimeout(10)；urlopen(..., timeout=10)。无超时网络会阻塞在 C 层、看门狗无法中断。\n" +
+        "· 禁止无退出条件的 while True / 超长 sleep / 海量循环打印；单次执行超 15s 会被中断，长任务拆多步跑（先跑前半、看结果、再跑后半）。\n" +
+        "各语言用途：\n" +
         "· python（默认）：**原生 CPython 3.14 嵌入引擎（full 风味）**，无需 Termux——完整标准库离线运行：数据处理/清洗、算法计算、json/csv/re/itertools/collections、hashlib/sqlite3/ssl 等含 C 扩展的模块全部可用，print 输出与 traceback 直接返回（15s 超时保护）。若无原生引擎则依次降级：应用内 Linux 沙箱 python3 → Brython（纯 JS 子集）。\n" +
         "· node / javascript / js / ts / typescript：App 内置 QuickJS 完整脚本沙箱（SandboxPackage）离线执行，" +
             "带 Tools.Files/Net/System/calc 宿主 API、require() CommonJS（工作区模块）、Lodash(_)、dataUtils；" +
@@ -686,6 +691,13 @@ class RunCodeTool : QuroTool {
      * > 系统 python3 > Brython（WebView 纯 JS 解释器兜底）。
      */
     private fun runPython(code: String, ctx: Context): String {
+        // 🔴 卡死防护静态预检：input() 在本环境（无终端 stdin）会永久阻塞——且阻塞在
+        // C 层读 stdin，看门狗的 KeyboardInterrupt 落不下去，直接把常驻解释器卡死
+        // （wedge 隔离是兜底，这里直接拒绝更快更省）。沙箱 shell 链路同理。
+        if (Regex("\\binput\\s*\\(").containsMatchIn(code)) {
+            return "⛔ 代码包含 input()（交互输入）。本环境无终端 stdin，input() 会永久卡死执行。" +
+                "请把所需值直接写进代码、改为函数参数，或用工具入参传入后重跑。"
+        }
         // 1. 原生 CPython 3.14（libpython3.14.so 嵌入，标准库完整含 C 扩展，首启解压 assets）
         if (PyEngine.probeAvailable(ctx)) {
             val r = PyEngine.run(ctx, code)
