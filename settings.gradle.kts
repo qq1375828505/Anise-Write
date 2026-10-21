@@ -14,12 +14,14 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // 阿里云镜像优先：本机直连 Maven Central / Google 不通，先走镜像避免超时
+        // 权威源优先：CI 跑在境外 runner，阿里云镜像偶发 5xx 会让 Gradle 直接中止依赖解析
+        // （仓库返回非 404 错误时不会 fallback 到下一个仓库），故官方源打头、阿里云镜像降为兜底
+        google()
+        mavenCentral()
+        // 阿里云镜像兜底：本机（国内网络）直连 Maven Central / Google 不通时仍可用
         maven { url = uri("https://maven.aliyun.com/repository/public") }
         maven { url = uri("https://maven.aliyun.com/repository/google") }
         maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-        google()
-        mavenCentral()
         maven { url = uri("https://jitpack.io") }
         // GeckoView（Mozilla 开源浏览器引擎）官方仓库
         maven { url = uri("https://maven.mozilla.org/maven2/") }
