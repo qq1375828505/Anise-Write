@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.quro.core.novel.NovelChapter
+import com.ai.assistance.quro.core.novel.NovelWork
 import com.ai.assistance.quro.core.novel.NovelChapterStatus
 import com.ai.assistance.quro.core.novel.asset.AssetType
 import kotlinx.coroutines.Dispatchers
@@ -191,6 +192,18 @@ fun NovelStudioScreen(onClose: () -> Unit) {
                                 }
                             }
                         },
+                        onRenameWork = { work, newTitle ->
+                            scope.launch {
+                                withContext(Dispatchers.IO) { data.renameWork(work.id, newTitle) }
+                                snapshot = withContext(Dispatchers.IO) { data.load(snapshot.selectedWorkId) }
+                            }
+                        },
+                        onDeleteWork = { work ->
+                            scope.launch {
+                                withContext(Dispatchers.IO) { data.deleteWork(work.id) }
+                                snapshot = withContext(Dispatchers.IO) { data.load() }
+                            }
+                        },
                     )
 
                     NovelTab.ASSETS -> AssetsTab(snapshot)
@@ -257,11 +270,16 @@ private fun ChaptersTab(
     onRenameChapter: (NovelChapter, String) -> Unit,
     onMoveChapter: (NovelChapter, String) -> Unit,
     onDeleteChapter: (NovelChapter) -> Unit,
+    onRenameWork: (NovelWork, String) -> Unit,
+    onDeleteWork: (NovelWork) -> Unit,
 ) {
     // 侧滑操作的目标章节
     var renaming by remember { mutableStateOf<NovelChapter?>(null) }
     var moving by remember { mutableStateOf<NovelChapter?>(null) }
     var deleting by remember { mutableStateOf<NovelChapter?>(null) }
+    // 作品级操作
+    var renamingWork by remember { mutableStateOf<NovelWork?>(null) }
+    var deletingWork by remember { mutableStateOf<NovelWork?>(null) }
 
     if (snapshot.works.isEmpty()) {
         Column(Modifier.fillMaxSize()) {
@@ -288,19 +306,24 @@ private fun ChaptersTab(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
     ) {
-        if (snapshot.works.size > 1) {
-            item {
-                Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
-                    Spacer(Modifier.height(NovelDesign.firstSectionTopGap))
-                    NovelSectionHeader("作品")
-                }
+        item {
+            Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
+                Spacer(Modifier.height(NovelDesign.firstSectionTopGap))
+                NovelSectionHeader("作品")
             }
-            item {
-                NovelGroupedCard(
-                    modifier = Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding),
-                ) {
-                    snapshot.works.forEachIndexed { index, work ->
-                        if (index > 0) NovelDivider()
+        }
+        item {
+            NovelGroupedCard(
+                modifier = Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding),
+            ) {
+                snapshot.works.forEachIndexed { index, work ->
+                    if (index > 0) NovelDivider()
+                    NovelSwipeRow(
+                        actions = listOf(
+                            NovelSwipeAction("改名", Color(0xFF8A8A8E)) { renamingWork = work },
+                            NovelSwipeAction("删除", novelPalette.danger) { deletingWork = work },
+                        ),
+                    ) {
                         NovelGroupedRow(
                             title = work.title,
                             subtitle = "${work.genre.ifBlank { "未设流派" }} · ${work.chapters.size} 章",
@@ -402,6 +425,30 @@ private fun ChaptersTab(
                 NovelDivider()
             }
         }
+    }
+    renamingWork?.let { work ->
+        NovelPromptDialog(
+            title = "重命名作品",
+            initial = work.title,
+            onDismiss = { renamingWork = null },
+            onConfirm = { newTitle ->
+                if (newTitle.isNotBlank()) onRenameWork(work, newTitle)
+                renamingWork = null
+            },
+        )
+    }
+    deletingWork?.let { work ->
+        NovelConfirmDialog(
+            title = "删除作品",
+            message = "《${work.title}》将被删除，含 ${work.volumes.size} 卷 / ${work.chapters.size} 章与全部正文。此操作不可撤销。",
+            confirmText = "删除",
+            danger = true,
+            onDismiss = { deletingWork = null },
+            onConfirm = {
+                onDeleteWork(work)
+                deletingWork = null
+            },
+        )
     }
     deleting?.let { chapter ->
         NovelConfirmDialog(

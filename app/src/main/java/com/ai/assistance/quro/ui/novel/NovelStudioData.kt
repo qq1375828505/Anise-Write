@@ -87,6 +87,13 @@ class NovelStudioData(context: Context) {
     fun createWork(title: String, genre: String = ""): NovelWork =
         repo.createWork(title, genre, "第一卷")
 
+    /** 重命名作品（同时可改流派）。 */
+    fun renameWork(workId: String, title: String): NovelWork =
+        repo.updateWork(workId, title = title)
+
+    /** 删除作品（连同卷、章与正文）。 */
+    fun deleteWork(workId: String): Boolean = repo.deleteWork(workId)
+
     fun createVolume(workId: String, title: String): NovelVolume =
         repo.createVolume(workId, title)
 
