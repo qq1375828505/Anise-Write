@@ -183,7 +183,7 @@ Phase 5 的 `ChapterWorkflowModels.kt` 自建 20 个类型，与 Phase 1 契约*
 - ✅ **CI 根因修复已推 main**（`4084412`）：`pluginManagement` 官方源前置、阿里云降兜底
 - ✅ **`.git` 分离到内部文件系统**：Android FUSE 不支持 git 的「临时文件+rename」写 object，导致
   `/sdcard` 上的仓库无法 `git add/commit`；已把 `.git` 迁到 `/root/penai-git` 并以 `gitdir:` 指针接回，
-  worktree 仍在 `/sdcard/Ai/PenAi`（用户在工具箱里照常可见可编辑）
+  worktree 仍在 `/sdcard/Ai/Anise Write`（用户在工具箱里照常可见可编辑）
 - ✅ **8 个阶段分支全部零冲突合并**（`feature/penai`，53 文件 / 8666 行），逐文件核实无遗漏
 - ✅ **19 个 `novel_*` 工具已挂载**：新增 `core/tools/novel/NovelToolSet.kt`（照抄基座 `ClusterToolSet` 模式），
   `QuroBuiltInTools.kt` 加一行 `NovelToolSet.registerAll(r)`，`QuroTool.kt` 的 `coreNames` 补 19 个名字
