@@ -132,9 +132,12 @@ Minis = OpenMinis，**GPL-3.0**。本项目（Anise Write，Apache-2.0）**只�
 
 | 部分 | 状态 |
 |---|---|
-| 数据模型 + 仓储 + 路由 | ✅ 已写（WIP 提交 `0835675`） |
-| 委派工具接入 `model_group` 字段 | ✅ 已写（信封解析 → 路由 → `callLlm(target=…)`） |
-| `DELEGATION.md` 信封 schema 加 `model_group` 字段 | ⬜ 待做 |
-| UI（列表 / 详情 / 绑定页）+ 设置入口 | ⬜ 待做 |
-| 预置三档的成员引导与空态 | ⬜ 待做 |
-| 真机验证（切组 → 委派 → 看 `model_used`） | ⬜ 待做 |
+| 数据模型 + 仓储 + 路由 | ✅ `core/model/QuroModelGroup.kt` |
+| 委派工具接入 `model_group` 字段 | ✅ 信封解析 → 路由 → `callLlm(target=…)` |
+| `DELEGATION.md` 信封 schema 加 `model_group` 字段 | ✅ 意图三选一 `same_as_me`/`default_model`/`sub_model` |
+| UI：列表页 / 详情页 / 成员选择器 / 子代理绑定页 | ✅ `ui/QuroModelGroupScreen.kt`（Minis 布局：分组列表 + inset 分隔线 + 彩色圆角图标） |
+| 设置入口（独立条目「模型组」） | ✅ `ChatScreen` → `SettingsSheetContent` → 全屏覆盖层（三态：列表/详情/绑定） |
+| 预置三档的成员引导与空态 | ✅ 列表页空态 + 「尚未添加模型」提示 |
+| 委派结果可观测（`model_used` / `model_group_unavailable`） | ✅ 已写入返回体 |
+| 真机验证（切组 → 委派 → 看 `model_used`） | ⬜ 待做（需装 APK 实测） |
+| 成员排序拖拽、组级思考档真正生效（当前只存不用） | ⬜ 待做 |

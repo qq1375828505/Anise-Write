@@ -105,7 +105,7 @@ Anise Write 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端�
 | Phase 6a | 写作工作台：章节 / 资料库 / 关系图 / 统计 四页签 + 分组列表组件库 + 纯文本编辑器 | ✅ |
 | Phase 6b | 人物关系图 v2：人物卡节点 + 势力聚类 + 类型着色边 + 力导向布局 + 点选高亮 | ✅ |
 | Phase 6c | 补齐 Minis 组件（按钮/底部 Sheet/侧滑行操作/菜单/对话框）、章节行侧滑、关系图节点拖动 | ⏳ 待办 |
-| Phase 6.5 | 模型组 / 写作档：按任务选模（数据层已写，UI 待做，见 `docs/design/ModelGroup_SPEC.md`） | 🚧 进行中 |
+| Phase 6.5 | 模型组 / 写作档：按任务选模（组管理 UI + 子代理绑档 + 委派意图字段，待真机验证，见 `docs/design/ModelGroup_SPEC.md`） | 🚧 进行中 |
 | Phase 7b | 正式签名打包与发布 | ⏳ 待办 |
 
 > UI 路线（计划书已冻结）：**沿用上游原生 Kotlin + Jetpack Compose**；写作界面自研，不移植 Flutter 代码——仅参考 novelIDE 的信息架构与交互范式。富文本编辑器为独立 `:novel-editor` 模块（WebView 承载，可摘除降级纯文本），关系图为自研 Compose Canvas 渲染。
