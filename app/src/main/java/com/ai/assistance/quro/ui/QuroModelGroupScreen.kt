@@ -357,17 +357,24 @@ fun QuroModelGroupDetailScreen(
                         } else {
                             group!!.members.forEachIndexed { index, m ->
                                 if (index > 0) NovelDivider()
-                                NovelGroupedRow(
-                                    title = m.displayName.ifBlank { m.model },
-                                    subtitle = m.model,
-                                    showChevron = false,
-                                    trailing = "移除",
-                                    onClick = {
-                                        val g = repo.load().groupById(groupId) ?: return@NovelGroupedRow
-                                        repo.updateGroup(g.copy(members = g.members.filterNot { it.model == m.model }))
-                                        group = repo.load().groupById(groupId)
-                                    },
-                                )
+                                // 侧滑移除：避免点一下就误删（与章节行一致的交互）
+                                com.ai.assistance.quro.ui.novel.NovelSwipeRow(
+                                    actions = listOf(
+                                        com.ai.assistance.quro.ui.novel.NovelSwipeAction("移除", novelPalette.danger) {
+                                            val g = repo.load().groupById(groupId)
+                                            if (g != null) {
+                                                repo.updateGroup(g.copy(members = g.members.filterNot { it.model == m.model }))
+                                                group = repo.load().groupById(groupId)
+                                            }
+                                        },
+                                    ),
+                                ) {
+                                    NovelGroupedRow(
+                                        title = m.displayName.ifBlank { m.model },
+                                        subtitle = m.model,
+                                        showChevron = false,
+                                    )
+                                }
                             }
                         }
                     }

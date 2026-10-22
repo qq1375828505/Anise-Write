@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.quro.core.novel.asset.CharacterAsset
 import com.ai.assistance.quro.core.novel.asset.FactionAsset
@@ -386,27 +387,23 @@ fun NovelGraphView(
                 detectTapGestures { offset ->
                     val gx = (offset.x - pan.x) / zoom
                     val gy = (offset.y - pan.y) / zoom
-                    val hit = model.nodes.minByOrNull { n ->
-                        val r = with(density) { n.radiusDp().dp.toPx() }
-                        val dx = n.x - gx
-                        val dy = n.y - gy
-                        dx * dx + dy * dy - r * r
-                    }
-                    val inside = hit != null && run {
-                        val r = with(density) { hit!!.radiusDp().dp.toPx() }
-                        val dx = hit!!.x - gx
-                        val dy = hit!!.y - gy
-                        dx * dx + dy * dy <= r * r
-                    }
-                    val name = if (inside) hit!!.name else null
+                    val name = hitTest(model, Offset(gx, gy), pan, zoom, density)?.name
                     if (name == selected) selected = null else selected = name
                     onSelect(name)
                 }
             }
-            .pointerInput(Unit) {
-                detectTransformGestures { _, panChange, zoomChange, _ ->
+            .pointerInput(model) {
+                detectTransformGestures { centroid, panChange, zoomChange, _ ->
                     zoom = (zoom * zoomChange).coerceIn(0.4f, 3f)
-                    pan += panChange
+                    // 命中节点 → 拖动节点（并钉住，物理引擎不再移动它）；否则平移画布
+                    val hit = hitTest(model, centroid, pan, zoom, density)
+                    if (hit != null && zoomChange == 1f) {
+                        hit.x += panChange.x / zoom
+                        hit.y += panChange.y / zoom
+                        hit.pinned = true
+                    } else {
+                        pan += panChange
+                    }
                 }
             },
     ) {
@@ -693,4 +690,33 @@ fun NovelGraphNodeDetail(
             }
         }
     }
+}
+
+/**
+ * 命中检测：把屏幕坐标换算到图坐标，找最近且在半径内的节点。
+ * 半径按节点度数分档（与绘制一致），并随缩放同步缩放。
+ */
+private fun hitTest(
+    model: GraphModel,
+    screen: Offset,
+    pan: Offset,
+    zoom: Float,
+    density: Density,
+): GraphNode? {
+    if (model.nodes.isEmpty()) return null
+    val gx = (screen.x - pan.x) / zoom
+    val gy = (screen.y - pan.y) / zoom
+    var best: GraphNode? = null
+    var bestDist = Float.MAX_VALUE
+    for (n in model.nodes) {
+        val r = with(density) { n.radiusDp().dp.toPx() }
+        val dx = n.x - gx
+        val dy = n.y - gy
+        val d = dx * dx + dy * dy
+        if (d <= r * r && d < bestDist) {
+            best = n
+            bestDist = d
+        }
+    }
+    return best
 }
