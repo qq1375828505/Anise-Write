@@ -53,6 +53,7 @@ private data class UiActionSpec(
 private val UI_ACTIONS = listOf(
     UiActionSpec("ui_open_onlyoffice", "文档查看器", "打开应用内文档查看器（本地渲染引擎，支持 Word/Excel/PPT/PDF/文本预览与编辑，无需联网、不依赖第三方）"),
     UiActionSpec("ui_open_knowledge", qstr(R.string.qk_00215), "打开知识库，浏览/导入/检索本地知识文档"),
+    UiActionSpec("ui_open_novel", "写作工作台", "打开 Anise Write 写作工作台（章节 / 资料库 / 关系图 / 统计四个页签）"),
     UiActionSpec("ui_open_terminal", qstr(R.string.qk_00216), "打开应用内终端 shell"),
     UiActionSpec("ui_open_editor", qstr(R.string.qk_00886), "打开内置代码编辑器"),
     UiActionSpec("ui_open_toolbox", qstr(R.string.qk_00214), "打开工具箱（文件管理/浏览器/IDE）"),

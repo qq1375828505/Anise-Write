@@ -72,6 +72,9 @@ object NovelDesign {
     /** 分隔线自卡片左缘内缩，避开圆角。 */
     val dividerInset: Dp = 16.dp
 
+    /** 页面级大留白（页头 / 空状态区）。 */
+    val page: Dp = 40.dp
+
     // —— 容器 ——
     /** 底部 Tab 栏高度（不含安全区）。iOS Tab Bar 49pt。 */
     val tabBarHeight: Dp = 49.dp

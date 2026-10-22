@@ -812,6 +812,8 @@ fun ChatScreen(
     var showWorkflow by remember { mutableStateOf(false) }
     // 知识库管理页（从设置页入口进入：浏览 / 查看 / 新建 / 删除 knowledge_base 文档）
     var showKnowledge by remember { mutableStateOf(false) }
+    // Anise Write 写作工作台（章节 / 资料库 / 关系图 / 统计）
+    var showNovelStudio by remember { mutableStateOf(false) }
     // 机器人设置页（C2）：从工具箱「机器人」入口进入
     var showBots by remember { mutableStateOf(false) }
     // 应用内文档查看器（本地渲染引擎，替代原 Collabora/外跳 ONLYOFFICE；已整合原「文档中心」）
@@ -914,6 +916,7 @@ fun ChatScreen(
         when (action) {
             "ui_open_onlyoffice" -> showOnlyOffice = true
             "ui_open_knowledge" -> showKnowledge = true
+            "ui_open_novel" -> showNovelStudio = true
             "ui_open_terminal" -> showTerminal = true
             "ui_open_editor" -> showEditor = true
             "ui_open_toolbox" -> showToolbox = true
@@ -1036,6 +1039,7 @@ fun ChatScreen(
                             "terminal" -> showTerminal = true
                             "toolbox" -> showToolbox = true
                             "knowledge" -> showKnowledge = true
+                            "novel" -> showNovelStudio = true
                             "cms" -> showCms = true
                             "aci" -> showAci = true
                             "about" -> showAbout = true
@@ -2332,6 +2336,14 @@ fun ChatScreen(
             BackHandler { showKnowledge = false }
             Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
                 QuroKnowledgeScreen(onClose = { showKnowledge = false })
+            }
+        }
+
+        // Anise Write 写作工作台：全屏覆盖层（工具面板入口 / AI 主动打开）
+        if (showNovelStudio) {
+            BackHandler { showNovelStudio = false }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                com.ai.assistance.quro.ui.novel.NovelStudioScreen(onClose = { showNovelStudio = false })
             }
         }
 
@@ -5635,7 +5647,8 @@ private fun SheetOverlay(
                         { q -> onSendText(q) },
                         scaled,
                         onOpenSchedule = onOpenSchedule,
-                        onOpenBots = onOpenBots
+                        onOpenBots = onOpenBots,
+                        onOpenNovelStudio = { showNovelStudio = true }
                     )
                     SheetType.Voice -> VoiceSheetContent(onOpenTts, onOpenStt, onOpenVoice, scaled)
                     SheetType.Settings -> SettingsSheetContent(
@@ -6254,6 +6267,7 @@ private fun UploadSheetContent(
     scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
     onOpenSchedule: () -> Unit = {},
     onOpenBots: () -> Unit = {},
+    onOpenNovelStudio: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
@@ -6278,6 +6292,7 @@ private fun UploadSheetContent(
             ToolTile({ Icon(Icons.Filled.Build, stringResource(R.string.qk_00214), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00214), onOpenToolbox, scaled)
             ToolTile({ Icon(Icons.Filled.Extension, "CMS v2", Modifier.size(22.dp), tint = cs.primary) }, "CMS v2", onOpenCms, scaled)
             ToolTile({ Icon(Icons.Filled.Description, stringResource(R.string.qk_00215), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00215), onOpenKnowledge, scaled)
+            ToolTile({ Icon(Icons.Filled.Edit, "写作工作台", Modifier.size(22.dp), tint = cs.primary) }, "写作工作台", onOpenNovelStudio, scaled)
             ToolTile({ Icon(Icons.Filled.Terminal, stringResource(R.string.qk_00216), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00216), onOpenTerminal, scaled)
             ToolTile({ LucideIcon("trash_2", stringResource(R.string.qk_00217), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00217), onClearChat, scaled)
             ToolTile({ LucideIcon("sparkles", stringResource(R.string.qk_00218), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00218), onOpenSkills, scaled)
