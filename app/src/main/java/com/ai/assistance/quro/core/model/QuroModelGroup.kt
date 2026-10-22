@@ -316,8 +316,9 @@ object QuroModelGroupRouter {
         val list = g.members
         if (list.isEmpty()) return null
         val idx = list.indexOfFirst { it.model == currentModel }
+        val start = if (idx < 0) 0 else idx
         for (i in 1..list.size) {
-            val m = list[(if (idx < 0) 0 else idx) % list.size + i - 1]
+            val m = list[(start + i) % list.size]
             val t = targetOf(m, providers, g) ?: continue
             return t
         }

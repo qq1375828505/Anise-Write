@@ -1,5 +1,6 @@
 package com.ai.assistance.quro.ui.novel
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -101,8 +102,8 @@ object NovelFactionColors {
 class GraphNode(
     val name: String,
     val role: String = "",
-    val faction: String = "",
-    val factionColor: Color = Color(0xFF8A8A8E),
+    var faction: String = "",
+    var factionColor: Color = Color(0xFF8A8A8E),
     var degree: Int = 0,
     var x: Float = 0f,
     var y: Float = 0f,
@@ -254,7 +255,7 @@ class GraphSimulator(private val model: GraphModel) {
 
     private val nodes = model.nodes
     private val edges = model.edges
-    private var cooling = 1.0
+    private var cooling = 1.0f
     var steps = 0
         private set
 

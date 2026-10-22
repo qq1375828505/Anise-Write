@@ -7,6 +7,7 @@ import com.ai.assistance.quro.core.QuroLlmResult
 import com.ai.assistance.quro.core.QuroPersona
 import com.ai.assistance.quro.core.QuroPersonaRepository
 import com.ai.assistance.quro.core.model.QuroModelConfigRepository
+import com.ai.assistance.quro.core.model.QuroModelTarget
 import com.ai.assistance.quro.core.network.QuroLlmClient
 import com.ai.assistance.quro.core.novel.NovelChapter
 import com.ai.assistance.quro.core.novel.NovelRepository
