@@ -1,5 +1,9 @@
 package com.ai.assistance.quro.core.novel.workflow
 
+import com.ai.assistance.quro.core.novel.NovelChapter
+import com.ai.assistance.quro.core.novel.NovelVolume
+import com.ai.assistance.quro.core.novel.asset.AssetType
+import com.ai.assistance.quro.core.novel.asset.NovelAsset
 import com.ai.assistance.quro.core.novel.countWords
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,6 +23,14 @@ import java.util.UUID
  * 2. **断点续跑**：每个阶段的状态变迁都落盘（[ChapterWorkflowState]），杀进程后可恢复；
  * 3. **显式契约**：每阶段的输入/输出、可重入/可跳过规则都编码在
  *    [ChapterWorkflowPhase] 与各输出数据类上，不靠约定俗成。
+ *
+ * ## 分层归属（Phase 5 契约对齐，ENGINEERING_RECOVERY_PLAN §8 裁决表）
+ * - **作品实体**只认 Phase 1：[NovelVolume] / [NovelChapter]——本文件不再自建章节字段；
+ * - **大纲**只认 Phase 3a——3a 无独立大纲模型类，大纲即「作品 → 卷 → 章」结构，
+ *   本文件的细纲降级为对该结构的**引用视图**（见 [ChapterOutline]）；
+ * - **资料**只认 Phase 3b：[NovelAsset]（取数走 [MaterialSource]，适配层委托
+ *   `asset.NovelAssetRepository`）——本文件不再自建资料结构；
+ * - 其余类型（阶段枚举、阶段产出、运行态、错误与编解码）属 workflow 层自有，保持不变。
  */
 
 // ─────────────────────────── 阶段定义 ───────────────────────────
@@ -154,71 +166,136 @@ data class RequirementAnalysis(
     }
 }
 
-/** 资料收集产出：与本章相关的资料卡引用（正文摘要由 Phase 3b 资料域填充）。 */
+/**
+ * 资料收集产出：Phase 3b 资料域的**实体引用**（不再自建资料结构）。
+ *
+ * 每项都是 [NovelAsset] 本体（人物/势力/地点/物品/能力/情节线/世界观设定/参考资料八类之一），
+ * 取数走 [MaterialSource]（Android 适配层内部委托 `asset.NovelAssetRepository`），
+ * Phase 5 不再维护第二套资料模型或「资料卡引用」结构。
+ */
 data class MaterialCollection(
-    val items: List<MaterialRef>,
+    val items: List<NovelAsset>,
 ) : PhaseOutput {
     override fun toJson(): JSONObject = JSONObject().apply {
-        put("items", JSONArray().also { a -> items.forEach { a.put(it.toJson()) } })
+        put("items", JSONArray().also { a -> items.forEach { a.put(assetToJson(it)) } })
     }
 
     companion object {
+        /**
+         * 从 JSON 还原资料集合。
+         *
+         * 严格解析：类别未知 / 载荷缺失 / id 缺失一律抛 [WorkflowException]（不猜、不丢条目）——
+         * 由 [PhaseOutputCodec] 拦下并把该阶段降级为 PENDING 重跑，绝不返回残缺集合。
+         */
         fun fromJson(o: JSONObject): MaterialCollection {
             val arr = o.optJSONArray("items") ?: JSONArray()
-            val items = mutableListOf<MaterialRef>()
+            val items = mutableListOf<NovelAsset>()
             for (i in 0 until arr.length()) {
-                runCatching { arr.getJSONObject(i) }.getOrNull()?.let { items.add(MaterialRef.fromJson(it)) }
+                val item = runCatching { arr.getJSONObject(i) }.getOrNull()
+                    ?: throw WorkflowException(WorkflowError.PARSE_FAILED, "资料集合 items[$i] 不是对象")
+                val rawType = item.optString("type", "")
+                val type = AssetType.fromKey(rawType)
+                    ?: throw WorkflowException(WorkflowError.PARSE_FAILED, "资料集合 items[$i] 类别未知：$rawType")
+                val body = item.optJSONObject("asset")
+                    ?: throw WorkflowException(WorkflowError.PARSE_FAILED, "资料集合 items[$i] 缺少 asset 载荷")
+                val asset = type.parse(body)
+                if (asset.id.isBlank()) {
+                    throw WorkflowException(WorkflowError.PARSE_FAILED, "资料集合 items[$i] 缺少 id")
+                }
+                items.add(asset)
             }
             return MaterialCollection(items)
         }
     }
 }
 
-/** 单条资料引用（type 取值由 Phase 3b 八类资料枚举定义，本层只透传字符串）。 */
-data class MaterialRef(
-    val type: String,
-    val refId: String,
-    val title: String,
-    val summary: String,
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("type", type)
-        put("ref_id", refId)
-        put("title", title)
-        put("summary", summary)
-    }
+/**
+ * 资料取用入口（Phase 3b 资料域）。
+ *
+ * 核心层只依赖本接口（保持「无 Android 依赖、可 JVM 单测」），Android 适配层用
+ * `asset.NovelAssetRepository` 实现之（见同包 `RepositoryMaterialSource`）。
+ * 方法与 `NovelAssetRepository` 一一对应，不新增语义、不新增兜底。
+ */
+interface MaterialSource {
+    /** 某作品某类别的资料（对应 `NovelAssetRepository.list`）。 */
+    fun list(workId: String, type: AssetType): List<NovelAsset>
 
-    companion object {
-        fun fromJson(o: JSONObject): MaterialRef = MaterialRef(
-            type = o.optString("type", ""),
-            refId = o.optString("ref_id", ""),
-            title = o.optString("title", ""),
-            summary = o.optString("summary", ""),
-        )
-    }
+    /** 某作品全部资料（对应 `NovelAssetRepository.listAll`）。 */
+    fun listAll(workId: String): List<NovelAsset>
+
+    /** 按 id 精确取一条（对应 `NovelAssetRepository.get`）。 */
+    fun get(workId: String, type: AssetType, id: String): NovelAsset?
+
+    /** 模糊检索（对应 `NovelAssetRepository.search`）。 */
+    fun search(workId: String, keyword: String, type: AssetType? = null): List<NovelAsset>
 }
 
-/** 细纲产出：场景序列。 */
+/**
+ * 细纲产出：**Phase 3a 大纲的引用视图**（不再自建大纲真相）。
+ *
+ * 3a（`novel_get_outline` / `novel_save_outline`）没有独立的大纲模型类——大纲即
+ * 「作品 → 卷 → 章」结构，落在 Phase 1 的 [NovelVolume] / [NovelChapter] 上。
+ * 因此本类按裁决表方案 (b) 降级为**引用**：结构真源（卷/章的 id、标题、顺序、状态、字数）
+ * 由 [volume] / [chapter] 两个引用承载，Phase 5 不再复制一份标题/顺序/状态字段。
+ *
+ * [scenes] 是挂在该章引用下的写作级场景拆分（目标/冲突/钩子）——3a 结构大纲无场景概念，
+ * 故不算重复定义；但它也不构成第三套大纲结构：场景必须依附于 [chapter] 引用
+ * （[chapter] 为 null 表示该章尚未落地，场景先于结构存在）。
+ */
 data class ChapterOutline(
-    val scenes: List<OutlineScene>,
+    /** 大纲所属卷（Phase 1 / 3a 结构真源）。 */
+    val volume: NovelVolume? = null,
+    /** 大纲所属章节（Phase 1 / 3a 结构真源）。 */
+    val chapter: NovelChapter? = null,
+    /** 场景序列（挂在 [chapter] 引用下）。 */
+    val scenes: List<OutlineScene> = emptyList(),
 ) : PhaseOutput {
     override fun toJson(): JSONObject = JSONObject().apply {
+        put("volume", volume?.toJson() ?: JSONObject.NULL)
+        put("chapter", chapter?.toJson() ?: JSONObject.NULL)
         put("scenes", JSONArray().also { a -> scenes.forEach { a.put(it.toJson()) } })
     }
 
     companion object {
+        /**
+         * 从 JSON 还原细纲引用视图。
+         *
+         * 严格解析：结构引用缺 id、场景项非对象一律抛 [WorkflowException]（不猜、不丢条目），
+         * 由 [PhaseOutputCodec] 拦下并把该阶段降级为 PENDING 重跑。
+         */
         fun fromJson(o: JSONObject): ChapterOutline {
+            val volume = o.optJSONObject("volume")?.let { json ->
+                val v = NovelVolume.fromJson(json)
+                if (v.id.isBlank()) {
+                    throw WorkflowException(WorkflowError.PARSE_FAILED, "细纲 volume 引用缺 id")
+                }
+                v
+            }
+            val chapter = o.optJSONObject("chapter")?.let { json ->
+                val c = NovelChapter.fromJson(json)
+                if (c.id.isBlank()) {
+                    throw WorkflowException(WorkflowError.PARSE_FAILED, "细纲 chapter 引用缺 id")
+                }
+                c
+            }
             val arr = o.optJSONArray("scenes") ?: JSONArray()
             val scenes = mutableListOf<OutlineScene>()
             for (i in 0 until arr.length()) {
-                runCatching { arr.getJSONObject(i) }.getOrNull()?.let { scenes.add(OutlineScene.fromJson(it)) }
+                val scene = runCatching { arr.getJSONObject(i) }.getOrNull()
+                    ?: throw WorkflowException(WorkflowError.PARSE_FAILED, "细纲 scenes[$i] 不是对象")
+                scenes.add(OutlineScene.fromJson(scene))
             }
-            return ChapterOutline(scenes)
+            return ChapterOutline(volume = volume, chapter = chapter, scenes = scenes)
         }
     }
 }
 
-/** 细纲场景：目标（这个场景要达成什么）/冲突/钩子（留给后文的悬念）。 */
+/**
+ * 细纲场景：目标（这个场景要达成什么）/冲突/钩子（留给后文的悬念）。
+ *
+ * 场景是 Phase 5 的写作级细节，挂在 [ChapterOutline.chapter]（3a 大纲章节引用）之下；
+ * 不含卷/章标题、顺序、状态等 3a 已有的结构字段，故不构成重复定义。
+ */
 data class OutlineScene(
     val goal: String,
     val conflict: String,
@@ -242,24 +319,62 @@ data class OutlineScene(
     }
 }
 
-/** 正文稿产出（Markdown 纯文本，与 Phase 1 章节 .md 文件同格式）。 */
+/**
+ * 正文稿产出：正文文本 + Phase 1 章节元数据**引用**（不再自建章节字段）。
+ *
+ * - [chapter]：章节真源（id / 标题 / 顺序 / 状态 / 字数）——落盘后与 Phase 1 章节模型逐字一致，
+ *   本层不再复制 title / order / status 字段，避免「第二套章节真相」；
+ * - [volume]：所属卷引用（可选；卷结构同样是 3a 大纲真源）；
+ * - [content]：章节正文（Phase 1 章节正文不入 JSON 模型，存 `chapters/{workId}/{id}.md`），
+ *   因此正文只能随阶段产出携带，字数口径统一走 [countWords]。
+ */
 data class ChapterDraft(
-    val title: String,
+    /** 章节引用（Phase 1 [NovelChapter]）。 */
+    val chapter: NovelChapter,
+    /** 正文（Markdown 纯文本，与 Phase 1 章节 .md 文件同格式）。 */
     val content: String,
+    /** 所属卷引用（可选，Phase 1 [NovelVolume]）。 */
+    val volume: NovelVolume? = null,
 ) : PhaseOutput {
+    /** 章节标题（取自 [chapter]，非独立字段）。 */
+    val title: String get() = chapter.title
+
     /** 字数口径与 Phase 1 数据层一致（[countWords]），避免双口径。 */
     val wordCount: Int get() = countWords(content)
 
     override fun toJson(): JSONObject = JSONObject().apply {
-        put("title", title)
+        put("chapter", chapter.toJson())
+        put("volume", volume?.toJson() ?: JSONObject.NULL)
         put("content", content)
     }
 
     companion object {
-        fun fromJson(o: JSONObject): ChapterDraft = ChapterDraft(
-            title = o.optString("title", ""),
-            content = o.optString("content", ""),
-        )
+        /**
+         * 从 JSON 还原正文稿。
+         *
+         * 严格解析：缺 [chapter] 引用（章节 id 为空）一律抛 [WorkflowException]，
+         * 由 [PhaseOutputCodec] 拦下并把正文阶段降级为 PENDING 重跑——不猜标题、不返回空章节。
+         */
+        fun fromJson(o: JSONObject): ChapterDraft {
+            val chapterJson = o.optJSONObject("chapter")
+                ?: throw WorkflowException(WorkflowError.PARSE_FAILED, "正文稿缺少 chapter 引用")
+            val chapter = NovelChapter.fromJson(chapterJson)
+            if (chapter.id.isBlank()) {
+                throw WorkflowException(WorkflowError.PARSE_FAILED, "正文稿 chapter 引用缺 id")
+            }
+            val volume = o.optJSONObject("volume")?.let { json ->
+                val v = NovelVolume.fromJson(json)
+                if (v.id.isBlank()) {
+                    throw WorkflowException(WorkflowError.PARSE_FAILED, "正文稿 volume 引用缺 id")
+                }
+                v
+            }
+            return ChapterDraft(
+                chapter = chapter,
+                volume = volume,
+                content = o.optString("content", ""),
+            )
+        }
     }
 }
 
@@ -398,8 +513,15 @@ data class ChapterWorkflowRequest(
     }
 }
 
-/** 工作流级状态。 */
-enum class ChapterWorkflowStatus(val key: String) {
+/**
+ * 工作流级状态（**运行态**，非章节状态机）。
+ *
+ * 原名 `ChapterWorkflowStatus`，Phase 5 契约对齐时改名（裁决表第 1 步），
+ * 避免与 Phase 1 的章节状态机 `NovelChapterStatus` 混淆——两者语义完全不同：
+ * 本枚举管「一次工作流运行」，`NovelChapterStatus` 管「一个章节」。
+ * 枚举 **key 值不变**（running/failed/completed/cancelled），持久化数据无需迁移。
+ */
+enum class WorkflowRunStatus(val key: String) {
     /** 推进中（含阶段失败但重试预算未耗尽的中间态，见阶段记录）。 */
     RUNNING("running"),
 
@@ -414,7 +536,7 @@ enum class ChapterWorkflowStatus(val key: String) {
     ;
 
     companion object {
-        fun fromKey(key: String?): ChapterWorkflowStatus? =
+        fun fromKey(key: String?): WorkflowRunStatus? =
             entries.firstOrNull { it.key == key }
     }
 }
@@ -505,7 +627,7 @@ data class ChapterWorkflowState(
     val volumeId: String,
     val chapterId: String?,
     val request: ChapterWorkflowRequest,
-    val status: ChapterWorkflowStatus,
+    val status: WorkflowRunStatus,
     val currentPhase: ChapterWorkflowPhase,
     val phaseRecords: List<WorkflowPhaseRecord>,
     val rewriteRounds: Int = 0,
@@ -527,7 +649,7 @@ data class ChapterWorkflowState(
         recordOf(phase).let { if (it.status == PhaseRecordStatus.COMPLETED) it.output as T? else null }
 
     fun isTerminal(): Boolean =
-        status == ChapterWorkflowStatus.COMPLETED || status == ChapterWorkflowStatus.CANCELLED
+        status == WorkflowRunStatus.COMPLETED || status == WorkflowRunStatus.CANCELLED
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("version", WorkflowStateFormat.VERSION)
@@ -554,7 +676,7 @@ data class ChapterWorkflowState(
             if (version > WorkflowStateFormat.VERSION) return null
             val workflowId = o.optString("workflow_id", "")
             if (workflowId.isBlank()) return null
-            val status = ChapterWorkflowStatus.fromKey(o.optString("status", ""))
+            val status = WorkflowRunStatus.fromKey(o.optString("status", ""))
                 ?: return null
             val currentPhase = ChapterWorkflowPhase.fromKey(o.optString("current_phase", ""))
                 ?: return null
@@ -590,19 +712,41 @@ data class ChapterWorkflowState(
 
 // ─────────────────────────── 交付契约 ───────────────────────────
 
-/** 交付目标确保章节存在后的回执（order 用于中期记忆的章节排序）。 */
+/**
+ * 交付目标确保章节存在后的回执：**章节实体引用**（不再自建章节字段）。
+ *
+ * - [chapter]：Phase 1 章节真源（id / 标题 / 顺序 / 状态 / 字数）；
+ * - [volume]：所属卷引用（可选）；
+ * - [created]：本次是否新建（false = 已存在，原样返回）。
+ *
+ * 章节排序取 [chapter] 的 order（中期记忆按此排章），本层不另存一份顺序字段。
+ */
 data class EnsuredChapter(
-    val chapterId: String,
-    val order: Int,
+    /** 章节引用（Phase 1 [NovelChapter]）。 */
+    val chapter: NovelChapter,
+    /** 本次是否新建。 */
     val created: Boolean,
-)
+    /** 所属卷引用（可选，Phase 1 [NovelVolume]）。 */
+    val volume: NovelVolume? = null,
+) {
+    /** 章节 id（取自 [chapter]）。 */
+    val chapterId: String get() = chapter.id
+
+    /** 卷内顺序（取自 [chapter]，用于中期记忆的章节排序）。 */
+    val order: Int get() = chapter.order
+}
 
 /**
  * 章节落盘契约（Phase 5 不直接依赖 [com.ai.assistance.quro.core.novel.NovelRepository]，
  * 避免把 Android 依赖带进 JVM 可测的核心；适配器见 WorkflowEnvironment.kt）。
  */
 interface ChapterDeliveryTarget {
-    /** 章节不存在则按 title 新建；存在则原样返回。 */
+    /**
+     * 章节不存在则按 title 新建；存在则原样返回。
+     *
+     * 回执 [EnsuredChapter] 必须携带 Phase 1 的章节实体（[NovelChapter]），
+     * 由适配层从 Phase 1 章节模型读出，Phase 5 不自建章节结构。
+     */
     fun ensureChapter(workId: String, volumeId: String, chapterId: String?, title: String): EnsuredChapter
 
     /** 写正文，返回计数字数（口径 = [countWords]）。 */
@@ -650,12 +794,24 @@ class WorkflowException(
 
 // ─────────────────────────── 内部工具 ───────────────────────────
 
-/** 工作流状态文件版本：写入 version 字段，读取时高于此版本则拒绝解析（防旧数据错读）。 */
+/**
+ * 工作流状态文件版本：写入 version 字段，读取时高于此版本则拒绝解析（防旧数据错读）。
+ *
+ * v2 = Phase 5 契约对齐：正文稿/细纲/资料三个阶段产出的 JSON 结构改为引用 Phase 1/3a/3b 模型
+ * （见 `docs/progress/PHASE5_2026-10-22.md` 的 key 变更表）。
+ * v1 旧文件仍可读：解不出引用的阶段自动降级为 PENDING 重跑（不返回假数据），其余阶段照常恢复。
+ */
 object WorkflowStateFormat {
-    const val VERSION = 1
+    const val VERSION = 2
 }
 
-/** 阶段产出的 JSON 编解码分派（strict：phase 与产出类型不匹配抛 [WorkflowException]）。 */
+/**
+ * 阶段产出的 JSON 编解码分派（strict：严格解析，失败一律抛 [WorkflowException]）。
+ *
+ * 各产出的 `fromJson` 内部严格校验（缺引用/类别未知/缺 id 等）并抛 [WorkflowException]，
+ * 由 [decodeOrNull] 统一拦下转成 null——调用方把该阶段降级为 PENDING 重跑，
+ * 既不返回假数据，也不丢整条断点（其余阶段记录照常恢复）。
+ */
 object PhaseOutputCodec {
     fun encode(output: PhaseOutput): JSONObject = output.toJson()
 
@@ -672,6 +828,17 @@ object PhaseOutputCodec {
                 ChapterWorkflowPhase.DELIVERY -> DeliveryResult.fromJson(o)
             }
         }.getOrNull()
+}
+
+/**
+ * 资料（Phase 3b [NovelAsset]）序列化：外层包一个 `type` 键。
+ *
+ * 资产自身的 JSON 不含类别字段（类别由具体类型决定），而解码时必须先知道类别
+ * 才能选到对应模型（`AssetType.parse`），故此处显式带上类别键。
+ */
+private fun assetToJson(asset: NovelAsset): JSONObject = JSONObject().apply {
+    put("type", asset.type.key)
+    put("asset", asset.toJson())
 }
 
 /** org.json 无 optStringArray/null 语义封装：JSONArray → List<String>；null/非字符串元素跳过。 */

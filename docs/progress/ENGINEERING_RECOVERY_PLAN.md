@@ -164,6 +164,18 @@ Phase 5 的 `ChapterWorkflowModels.kt` 自建 20 个类型，与 Phase 1 契约*
 
 **执行顺序建议**：先做 1（无跨分支依赖）→ 再做 2 → 最后做 3、4（需 3a/3b 先合）。
 
+**落地状态（2026-10-22，全部完成）**：本表 20 个类型已按裁决落地，详见 `docs/progress/PHASE5_2026-10-22.md`。
+
+| 落地状态 | 类型 |
+|---|---|
+| ✅ 已改名 | `ChapterWorkflowStatus` → `WorkflowRunStatus`（枚举 key 不变，持久化数据无需迁移） |
+| ✅ 已改引用 | `ChapterDraft` `EnsuredChapter` → 携带 `NovelChapter`（+ 可选 `NovelVolume`），删除自建章节字段 |
+| ✅ 已降级为引用视图（方案 b） | `ChapterOutline` `OutlineScene` → 引用 3a/Phase 1 的卷/章结构，不自建大纲真相 |
+| ✅ 已改引用（`MaterialRef` 删除） | `MaterialCollection` → `List<asset.NovelAsset>`，取数走 `MaterialSource`（适配层委托 `NovelAssetRepository`） |
+| ✅ 保留不动 | 其余 15 个 workflow 层自有类型（仅随引用变更做必要连带调整） |
+
+连带调整：`ChapterWorkflowState.status` 改用 `WorkflowRunStatus`；`PhaseOutputCodec` 改为严格解析（失败抛 `WorkflowException`，统一降级该阶段为 PENDING 重跑）；`WorkflowStateFormat.VERSION` 1 → 2。
+
 ---
 
 ## 9. 本轮（2026-10-20）实况
