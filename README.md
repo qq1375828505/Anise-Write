@@ -160,6 +160,7 @@ cd Anise Write
 | [`docs/design/ModelGroup_SPEC.md`](docs/design/ModelGroup_SPEC.md) | 模型组 / 写作档规范（按任务选模：意图三选一、钉住优先、显式回落） |
 | [`docs/progress/PHASE6_2026-10-22.md`](docs/progress/PHASE6_2026-10-22.md) | Phase 6 进度报告（工作台、关系图 v2、改名、设计范式敲定、模型组方案、事故清单） |
 | [`docs/progress/HANDOFF_2026-10-22.md`](docs/progress/HANDOFF_2026-10-22.md) | 交接文档（**续作先读**：路径、优先级、坑、文件索引） |
+| [`docs/progress/ACCEPTANCE_CHECKLIST.md`](docs/progress/ACCEPTANCE_CHECKLIST.md) | 真机验收清单（Phase 8/9 前置，逐条可勾） |
 | [`docs/architecture/`](docs/architecture/) | 终端、浏览器等基座架构文档 |
 
 ## 许可与归属
