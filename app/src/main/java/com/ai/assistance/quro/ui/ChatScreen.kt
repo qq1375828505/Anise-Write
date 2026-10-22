@@ -1751,6 +1751,7 @@ fun ChatScreen(
             scaled = { scaled(it) },
             modelGroups = allModelGroups,
             selectedModel = selectedModel,
+            onOpenNovelStudio = { showNovelStudio = true },
             onSelectModel = { m ->
                 when {
                     // 已保存预设 → 应用整套预设配置
@@ -5535,6 +5536,7 @@ private fun SheetOverlay(
     modelGroups: List<ModelGroup>,
     selectedModel: ChatModel,
     onSelectModel: (ChatModel) -> Unit,
+    onOpenNovelStudio: () -> Unit = {},
     onAddModel: (String, String) -> Unit,
     isFetchingModels: Boolean = false,
     modelFetchError: String? = null,
@@ -5648,7 +5650,7 @@ private fun SheetOverlay(
                         scaled,
                         onOpenSchedule = onOpenSchedule,
                         onOpenBots = onOpenBots,
-                        onOpenNovelStudio = { showNovelStudio = true }
+                        onOpenNovelStudio = onOpenNovelStudio
                     )
                     SheetType.Voice -> VoiceSheetContent(onOpenTts, onOpenStt, onOpenVoice, scaled)
                     SheetType.Settings -> SettingsSheetContent(
