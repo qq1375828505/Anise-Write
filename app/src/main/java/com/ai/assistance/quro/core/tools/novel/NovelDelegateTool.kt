@@ -1,6 +1,12 @@
 package com.ai.assistance.quro.core.tools.novel
 
 import android.content.Context
+import com.ai.assistance.quro.core.model.QuroModelConfigRepository
+import com.ai.assistance.quro.core.model.QuroModelGroupRepository
+import com.ai.assistance.quro.core.model.QuroModelGroupRouter
+import com.ai.assistance.quro.core.model.QuroModelIntent
+import com.ai.assistance.quro.core.model.QuroModelTarget
+import com.ai.assistance.quro.core.model.QuroMultiProviderRepository
 import com.ai.assistance.quro.core.novel.NovelRepository
 import com.ai.assistance.quro.core.tools.QuroTool
 import org.json.JSONObject
@@ -273,8 +279,33 @@ class NovelDelegateSubagentTool : QuroTool {
             }
         }
 
-        // ---- 4. 每轮调用一次 LLM：system = 子代理提示词正文，user = 请求信封 JSON ----
-        return when (val r = NovelWriteSupport.callLlm(context, systemPrompt, envelope.toString(), temperature = 0.4f)) {
+        // ---- 4. 模型组解析：钉住的组 > 委派请求的意图 > 当前会话模型 ----
+        val groupRepo = QuroModelGroupRepository(context)
+        val groupSettings = groupRepo.load()
+        val intent = QuroModelIntent.fromKey(args.optString("model_group", "").trim())
+        val pinnedGroup = groupSettings.groupForAgent(subagent)
+        val providers = QuroMultiProviderRepository(context)
+        val globalCfg = QuroModelConfigRepository(context).load()
+        val parentTarget = QuroModelTarget(
+            baseUrl = globalCfg.baseUrl,
+            apiKey = globalCfg.apiKey,
+            model = globalCfg.model,
+        )
+        val modelTarget = QuroModelGroupRouter.resolveForCall(
+            intent = intent,
+            pinnedGroup = pinnedGroup,
+            settings = groupSettings,
+            providers = providers,
+            parentTarget = parentTarget,
+        )
+        val modelLabel = if (modelTarget.groupName.isNotBlank()) {
+            modelTarget.groupName + " · " + modelTarget.model
+        } else {
+            modelTarget.model
+        }
+
+        // ---- 5. 每轮调用一次 LLM：system = 子代理提示词正文，user = 请求信封 JSON ----
+        return when (val r = NovelWriteSupport.callLlm(context, systemPrompt, envelope.toString(), temperature = 0.4f, target = modelTarget)) {
             is LlmOutcome.Ok -> {
                 val parsed = gExtractResponseJson(r.text)
                 if (parsed != null) {
@@ -286,6 +317,15 @@ class NovelDelegateSubagentTool : QuroTool {
                     }
                     if (!parsed.has("subagent")) parsed.put("subagent", subagent)
                     if (!parsed.has("round")) parsed.put("round", round)
+                    // 模型来源可观测：用了哪一档 / 是否因钉住的组不可用而回落
+                    parsed.put("model_used", modelLabel)
+                    if (modelTarget.pinnedGroupUnavailable) {
+                        parsed.put("model_group_unavailable", true)
+                        parsed.put(
+                            "model_group_note",
+                            "为该子代理指定的模型组不可用（组内无可用模型或 provider 已删除），已回落到当前会话模型。",
+                        )
+                    }
                     return parsed.toString()
                 }
                 // 非信封输出：原样透传、明示未解析，不伪造 payload 冒充成功（工程禁令：无兜底）

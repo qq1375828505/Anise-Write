@@ -307,9 +307,17 @@ internal object NovelWriteSupport {
      * 工具本身是同步执行体）。temperature 按任务硬编码（写作求发散、润色求收敛），
      * maxTokens 沿用用户配置（默认 65536，保证长章不被腰斩）。
      */
-    fun callLlm(context: Context, system: String, user: String, temperature: Float): LlmOutcome {
+    fun callLlm(
+        context: Context,
+        system: String,
+        user: String,
+        temperature: Float,
+        target: QuroModelTarget? = null,
+    ): LlmOutcome {
         val cfg = QuroModelConfigRepository(context).load()
-        if (cfg.apiKey.isBlank()) {
+        // 有指定目标（模型组解析结果）就用它，否则沿用全局模型配置
+        val useTarget = target != null && target.baseUrl.isNotBlank() && target.apiKey.isNotBlank()
+        if (!useTarget && cfg.apiKey.isBlank()) {
             return LlmOutcome.Failed(
                 "未配置模型 API Key。请在「设置 → 模型配置」中填写 API Key 后再使用网文写作工具。"
             )
@@ -317,9 +325,9 @@ internal object NovelWriteSupport {
         return try {
             val result = runBlocking {
                 QuroLlmClient().chat(
-                    baseUrl = cfg.baseUrl,
-                    apiKey = cfg.apiKey,
-                    model = cfg.model,
+                    baseUrl = if (useTarget) target!!.baseUrl else cfg.baseUrl,
+                    apiKey = if (useTarget) target!!.apiKey else cfg.apiKey,
+                    model = if (useTarget) target!!.model else cfg.model,
                     messages = listOf(
                         QuroChatMessage(role = "system", content = system),
                         QuroChatMessage(role = "user", content = user),
