@@ -1,7 +1,7 @@
 # Anise Write 移植工程 · 进度记录（PROJECT_STATUS）
 
 > 快照时间：2026-10-16 18:40（GMT+8）
-> 仓库：`qq1375828505/AniseWrite`（本文件所在仓库）
+> 仓库：`qq1375828505/Anise-Write`（本文件所在仓库）
 > 上位文档：[docs/plan-v1.1/](../plan-v1.1/)（规划书 V1.1 全套）
 > 工程约定：[ENGINEERING_CONVENTIONS.md](../../ENGINEERING_CONVENTIONS.md)
 
@@ -31,7 +31,7 @@
 | 2 | `sdkmanager --licenses` 退出 1 | cmdline-tools 16.0 许可证交互流程变化 | 弃用该 action，用 runner 预装 sdkmanager 直装组件 |
 | 3 | `ClassNotFoundException: GradleWrapperMain` | 上游 .gitignore 滤掉了 gradle-wrapper.jar | 本地生成 jar 强制入库 |
 | 4/重跑 | KSP 2.3.9 "not found in any sources" | 构件**实际存在**（Maven Central POM/JAR 均 200）；首轮网络抖动被 Gradle 缓存为"缺失"并随 Actions 缓存扩散 | gradlew 加 `--refresh-dependencies` |
-| 进行中 | 第 5 轮构建 | — | 结果见 [Actions](https://github.com/qq1375828505/AniseWrite/actions) |
+| 进行中 | 第 5 轮构建 | — | 结果见 [Actions](https://github.com/qq1375828505/Anise-Write/actions) |
 
 ## 3. 阶段状态总表
 

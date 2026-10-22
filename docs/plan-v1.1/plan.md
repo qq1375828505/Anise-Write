@@ -31,7 +31,7 @@
 | 基座 | ZorvAI v1.1.7（Kotlin 2.3 + Jetpack Compose，Apache-2.0） |
 | 领域资产来源一 | novelIDE（Flutter 网文写作 IDE，MIT，50 工具 + 6 子 Agent + 25 流派预设 + 双轨记忆） |
 | 领域资产来源二 | AIGC-NetNov（Operit 分支的网文化改造尝试，20 张数据表 + 66 工具 + 107 桥接方法的设计资产） |
-| 交付物 | Anise Write 安卓应用（仓库 `qq1375828505/AniseWrite`，应用名 Anise Write） |
+| 交付物 | Anise Write 安卓应用（仓库 `qq1375828505/Anise-Write`，应用名 Anise Write） |
 | 基座缺陷输入 | 使用者通过 GitHub Issues #15–#21 提交的 7 项问题（全部纳入第 7 章） |
 
 ### 1.4 术语定义

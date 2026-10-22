@@ -309,7 +309,7 @@ nav.doc-toc { padding: 0; }
     <p class="cover-meta-item" style="text-align: center;">文档版本：V1.1</p>
     <p class="cover-meta-item" style="text-align: center;">编制日期：2026 年 10 月 16 日</p>
     <p class="cover-meta-item" style="text-align: center;">基座版本：ZorvAI v1.1.7（Kotlin 2.3 + Jetpack Compose，Apache-2.0）</p>
-    <p class="cover-meta-item" style="text-align: center;">目标仓库：qq1375828505/AniseWrite</p>
+    <p class="cover-meta-item" style="text-align: center;">目标仓库：qq1375828505/Anise-Write</p>
     <p class="cover-meta-item" style="text-align: center;">修订说明：V1.1 纳入用户评审决策（2026-10-16）</p>
   </div>
 </section>
@@ -324,7 +324,7 @@ nav.doc-toc { padding: 0; }
       <tr>
         <td>
           <p class="summary-metric-line"><strong>新增工具域</strong>：30 个 novel_* 工具 ｜ <strong>基座缺陷修复</strong>：7 项（3 项 P0） ｜ <strong>移植资产</strong>：50 个工具定义 + 25 个流派预设 + 6 个子 Agent ｜ <strong>实施阶段</strong>：Phase 0–9 共 10 个</p>
-          <p>本项目以开源安卓端侧 AI Agent <strong>ZorvAI</strong>（v1.1.7，Apache-2.0）为基座，通过领域化改造构建专注于小说创作的 AI Agent 软件 <strong>Anise Write</strong>（目标仓库 qq1375828505/AniseWrite）。改造遵循「基座最小侵入、端到端闭环先行、资产平移而非重造」三大原则：Agent 内核（ReAct 主循环、长程编排、交付闸门、记忆四型、知识库 RAG）零改动复用，全部工作量集中于网文领域层。</p>
+          <p>本项目以开源安卓端侧 AI Agent <strong>ZorvAI</strong>（v1.1.7，Apache-2.0）为基座，通过领域化改造构建专注于小说创作的 AI Agent 软件 <strong>Anise Write</strong>（目标仓库 qq1375828505/Anise-Write）。改造遵循「基座最小侵入、端到端闭环先行、资产平移而非重造」三大原则：Agent 内核（ReAct 主循环、长程编排、交付闸门、记忆四型、知识库 RAG）零改动复用，全部工作量集中于网文领域层。</p>
           <p>领域层建设以两个既有资产来源为输入：novelIDE 的 50 个工具定义与三段式中文描述、25 个番茄流派预设、6 个子 Agent 提示词与双轨记忆设计；AIGC-NetNov 的实体数据模型、章节状态机与上下文管理设计；两者均经代码级核查，确认约 95% 业务逻辑与 UI 框架无关，具备整体平移条件。同时，针对使用者向 ZorvAI 官方仓库反馈的 <span class="data-emphasis">7 项缺陷</span>（Issues #15–#21），本文档第 7 章逐条给出代码级核实结论、根因分析与修复方案，随 Anise Write 分支同步修复并回馈上游。</p>
           <p>经用户评审决策，本版计划书冻结以下关键设计：<strong>多角色集群整体硬裁剪</strong>（子 Agent 降级为 callable 技能，经 novel_delegate_subagent 统一调度，零写权限、写操作一律回流主 AI，以职责边界矩阵消除冲突）；<strong>提示词资产以双技能套件承载</strong>（novel-writing 写作规约 + tomato-genre 二十五流派预设，用户可查看、修改、开关、导出）；<strong>富文本编辑器以独立可插拔模块保留</strong>（桥接契约冻结 + 端到端验收 + 降级纯文本不阻塞）；<strong>新增人物关系图系统</strong>（三表数据 + Compose Canvas 物理渲染，5-7 人周）；<strong>不做导入导出</strong>（数据依托基座本地工作区）；界面采用 iOS 对齐范式（分组列表、inset 分隔线、去饱和 iOS 蓝强调色、数值自 iOS 参考截图逐像素测量、单一真相源）。</p>
           <p>实施按 Phase 0–9 十个阶段推进，第一里程碑为端到端最小闭环（入口→工作台→建作品→AI 写一章→保存），全面规避 AIGC-NetNov「最后一公里失守」的失败模式。预期产出：可安装发布的 Anise Write 应用、完整网文领域层代码、25 个流派预设与全套中文 prompt 资产、基座修复 Patch 及配套单测与端到端测试套件。</p>
@@ -467,7 +467,7 @@ nav.doc-toc { padding: 0; }
 <tr><td>基座</td><td>ZorvAI v1.1.7（Kotlin 2.3 + Jetpack Compose，Apache-2.0）</td></tr>
 <tr><td>领域资产来源一</td><td>novelIDE（Flutter 网文写作 IDE，MIT，50 工具 + 6 子 Agent + 25 流派预设 + 双轨记忆）</td></tr>
 <tr><td>领域资产来源二</td><td>AIGC-NetNov（Operit 分支的网文化改造尝试，20 张数据表 + 66 工具 + 107 桥接方法的设计资产）</td></tr>
-<tr><td>交付物</td><td>Anise Write 安卓应用（仓库 <code>qq1375828505/AniseWrite</code>，应用名 Anise Write）</td></tr>
+<tr><td>交付物</td><td>Anise Write 安卓应用（仓库 <code>qq1375828505/Anise-Write</code>，应用名 Anise Write）</td></tr>
 <tr><td>基座缺陷输入</td><td>使用者通过 GitHub Issues #15–#21 提交的 <span class="data-emphasis">7 项</span>问题（全部纳入第 7 章）</td></tr>
 </tbody>
 </table>

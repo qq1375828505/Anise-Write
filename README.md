@@ -11,7 +11,7 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.3-7F52FF.svg)](https://kotlinlang.org)
 [![Compose](https://img.shields.io/badge/Jetpack%20Compose-1.10.2-4285F4.svg)](https://developer.android.com/compose)
 [![基座](https://img.shields.io/badge/base-ZorvAI%20v1.1.7-8A8A8A.svg)](https://github.com/Quor-a/ZorvAI)
-[![CI](https://img.shields.io/github/actions/workflow/status/qq1375828505/AniseWrite/.github/workflows/build.yml?branch=main)](https://github.com/qq1375828505/AniseWrite/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/qq1375828505/Anise-Write/.github/workflows/build.yml?branch=main)](https://github.com/qq1375828505/Anise-Write/actions)
 
 </div>
 
@@ -120,7 +120,7 @@ Anise Write 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端�
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/qq1375828505/AniseWrite
+git clone https://github.com/qq1375828505/Anise-Write
 cd Anise Write
 
 # 2. 准备环境
