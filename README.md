@@ -93,6 +93,8 @@ Anise Write 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端�
 | `docs/plan-v1.1/` | 《Anise Write 软件改造计划书》（含目标形态、裁剪清单、UI 路线裁决） |
 | `docs/progress/` | 工程恢复方案、阶段落地说明与交接文档 |
 
+> 📌 **项目总档案**：[PROJECT_RECORD.md](PROJECT_RECORD.md) —— 身份 / 架构 / 功能清单 / 关键决策 / 未完成清单 / 红线速查。
+
 ## 开发进度
 
 | 阶段 | 内容 | 状态 |
