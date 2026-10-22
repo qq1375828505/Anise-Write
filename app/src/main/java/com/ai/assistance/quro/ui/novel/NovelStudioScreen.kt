@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +48,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.quro.core.novel.NovelChapter
+import com.ai.assistance.quro.core.novel.graph.hook.NovelHook
+import com.ai.assistance.quro.core.novel.NovelVolume
 import com.ai.assistance.quro.core.novel.NovelWork
 import com.ai.assistance.quro.core.novel.NovelChapterStatus
 import com.ai.assistance.quro.core.novel.asset.AssetType
@@ -204,6 +207,42 @@ fun NovelStudioScreen(onClose: () -> Unit) {
                                 snapshot = withContext(Dispatchers.IO) { data.load() }
                             }
                         },
+                        onRenameVolume = { volume, newTitle ->
+                            scope.launch {
+                                val workId = snapshot.selectedWorkId
+                                if (workId != null) {
+                                    withContext(Dispatchers.IO) { data.renameVolume(workId, volume.id, newTitle) }
+                                    snapshot = withContext(Dispatchers.IO) { data.load(workId) }
+                                }
+                            }
+                        },
+                        onDeleteVolume = { volume ->
+                            scope.launch {
+                                val workId = snapshot.selectedWorkId
+                                if (workId != null) {
+                                    withContext(Dispatchers.IO) { data.deleteVolume(workId, volume.id) }
+                                    snapshot = withContext(Dispatchers.IO) { data.load(workId) }
+                                }
+                            }
+                        },
+                        onCreateVolume = {
+                            scope.launch {
+                                val workId = snapshot.selectedWorkId
+                                if (workId != null) {
+                                    withContext(Dispatchers.IO) { data.createVolume(workId, "新卷") }
+                                    snapshot = withContext(Dispatchers.IO) { data.load(workId) }
+                                }
+                            }
+                        },
+                        onSetChapterStatus = { chapter, status ->
+                            scope.launch {
+                                val workId = snapshot.selectedWorkId
+                                if (workId != null) {
+                                    withContext(Dispatchers.IO) { data.setChapterStatus(workId, chapter.id, status) }
+                                    snapshot = withContext(Dispatchers.IO) { data.load(workId) }
+                                }
+                            }
+                        },
                     )
 
                     NovelTab.ASSETS -> AssetsTab(snapshot)
@@ -272,6 +311,10 @@ private fun ChaptersTab(
     onDeleteChapter: (NovelChapter) -> Unit,
     onRenameWork: (NovelWork, String) -> Unit,
     onDeleteWork: (NovelWork) -> Unit,
+    onRenameVolume: (NovelVolume, String) -> Unit,
+    onDeleteVolume: (NovelVolume) -> Unit,
+    onCreateVolume: () -> Unit,
+    onSetChapterStatus: (NovelChapter, NovelChapterStatus) -> Unit,
 ) {
     // 侧滑操作的目标章节
     var renaming by remember { mutableStateOf<NovelChapter?>(null) }
@@ -280,6 +323,12 @@ private fun ChaptersTab(
     // 作品级操作
     var renamingWork by remember { mutableStateOf<NovelWork?>(null) }
     var deletingWork by remember { mutableStateOf<NovelWork?>(null) }
+    // 卷级操作
+    var renamingVolume by remember { mutableStateOf<NovelVolume?>(null) }
+    var deletingVolume by remember { mutableStateOf<NovelVolume?>(null) }
+    // 章节状态 / 伏笔详情
+    var statusTarget by remember { mutableStateOf<NovelChapter?>(null) }
+    var hookTarget by remember { mutableStateOf<NovelHook?>(null) }
 
     if (snapshot.works.isEmpty()) {
         Column(Modifier.fillMaxSize()) {
@@ -306,6 +355,38 @@ private fun ChaptersTab(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
     ) {
+        if (snapshot.hooks.isNotEmpty()) {
+            item {
+                Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
+                    Spacer(Modifier.height(NovelDesign.sectionTopGap))
+                    NovelSectionHeader("伏笔 · ${snapshot.openHookCount} 已埋 / ${snapshot.closedHookCount} 已回收")
+                }
+            }
+            item {
+                NovelGroupedCard(
+                    modifier = Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding),
+                ) {
+                    snapshot.hooks.forEachIndexed { index, hook ->
+                        if (index > 0) NovelDivider()
+                        NovelGroupedRow(
+                            title = hook.title,
+                            subtitle = "${hook.status.label} · ${hook.priority.label}" +
+                                (hook.characterNames.takeIf { it.isNotEmpty() }?.let { " · ${it.joinToString("、")}" } ?: ""),
+                            iconColor = if (hook.status.key == "closed") Color(0xFF4ADE80) else Color(0xFFFFB340),
+                            icon = {
+                                Icon(
+                                    Icons.Filled.Star,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                            onClick = { hookTarget = hook },
+                        )
+                    }
+                }
+            }
+        }
         item {
             Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
                 Spacer(Modifier.height(NovelDesign.firstSectionTopGap))
@@ -351,6 +432,22 @@ private fun ChaptersTab(
                     NovelSectionHeader(volume.title)
                 }
             }
+            item(key = "vol-act-${volume.id}") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = NovelDesign.screenHorizontalPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = { renamingVolume = volume }) {
+                        Text("卷改名", color = novelPalette.accent, style = NovelType.caption1)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    TextButton(onClick = { deletingVolume = volume }) {
+                        Text("删卷", color = novelPalette.danger, style = NovelType.caption1)
+                    }
+                }
+            }
             item(key = "chapters-${volume.id}") {
                 val chapters = snapshot.chaptersOf(volume.id)
                 NovelGroupedCard(
@@ -370,6 +467,7 @@ private fun ChaptersTab(
                                 actions = listOf(
                                     NovelSwipeAction("移动", novelPalette.accent) { moving = chapter },
                                     NovelSwipeAction("改名", Color(0xFF8A8A8E)) { renaming = chapter },
+                                    NovelSwipeAction("状态", Color(0xFF4ADE80)) { statusTarget = chapter },
                                     NovelSwipeAction("删除", novelPalette.danger) { deleting = chapter },
                                 ),
                             ) {
@@ -393,6 +491,16 @@ private fun ChaptersTab(
                     Spacer(Modifier.width(4.dp))
                     Text("新建章节", color = novelPalette.accent, style = NovelType.subhead)
                 }
+            }
+        }
+        item(key = "add-volume") {
+            TextButton(
+                onClick = { onCreateVolume() },
+                modifier = Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding),
+            ) {
+                Icon(Icons.Filled.Add, null, Modifier.size(18.dp), tint = novelPalette.accent)
+                Spacer(Modifier.width(4.dp))
+                Text("新建卷", color = novelPalette.accent, style = NovelType.subhead)
             }
         }
     }
@@ -424,6 +532,104 @@ private fun ChaptersTab(
                 )
                 NovelDivider()
             }
+        }
+    }
+    renamingVolume?.let { volume ->
+        NovelPromptDialog(
+            title = "重命名卷",
+            initial = volume.title,
+            onDismiss = { renamingVolume = null },
+            onConfirm = { newTitle ->
+                if (newTitle.isNotBlank()) onRenameVolume(volume, newTitle)
+                renamingVolume = null
+            },
+        )
+    }
+    deletingVolume?.let { volume ->
+        val chapterCount = snapshot.chaptersOf(volume.id).size
+        NovelConfirmDialog(
+            title = "删除卷",
+            message = "卷「${volume.title}」将被删除" +
+                (if (chapterCount > 0) "，其下 $chapterCount 章也会一并移除" else "") + "。此操作不可撤销。",
+            confirmText = "删除",
+            danger = true,
+            onDismiss = { deletingVolume = null },
+            onConfirm = {
+                onDeleteVolume(volume)
+                deletingVolume = null
+            },
+        )
+    }
+    statusTarget?.let { chapter ->
+        NovelSheet(onDismissRequest = { statusTarget = null }) {
+            NovelSectionHeader("章节状态")
+            for (st in listOf(
+                NovelChapterStatus.UNWRITTEN,
+                NovelChapterStatus.DRAFT,
+                NovelChapterStatus.POLISHING,
+                NovelChapterStatus.COMPLETED,
+            )) {
+                NovelSheetRow(
+                    title = chapterStatusLabel(st),
+                    selected = chapter.status == st,
+                    onClick = {
+                        if (chapter.status != st) onSetChapterStatus(chapter, st)
+                        statusTarget = null
+                    },
+                )
+                NovelDivider()
+            }
+        }
+    }
+    hookTarget?.let { hook ->
+        NovelSheet(onDismissRequest = { hookTarget = null }) {
+            NovelSectionHeader("伏笔")
+            Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
+                Text(
+                    text = hook.title,
+                    style = NovelType.headline,
+                    color = novelPalette.textPrimary,
+                )
+                if (hook.description.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = hook.description,
+                        style = NovelType.callout,
+                        color = novelPalette.textSecondary,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "状态：${hook.status.label} · 优先级：${hook.priority.label}",
+                    style = NovelType.footnote,
+                    color = novelPalette.textSecondary,
+                )
+                hook.plantedAt?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "埋设于：${it.title.ifBlank { it.chapterId }}",
+                        style = NovelType.caption1,
+                        color = novelPalette.textTertiary,
+                    )
+                }
+                hook.resolvedAt?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "回收于：${it.title.ifBlank { it.chapterId }}",
+                        style = NovelType.caption1,
+                        color = novelPalette.textTertiary,
+                    )
+                }
+                if (hook.characterNames.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "关联人物：${hook.characterNames.joinToString("、")}",
+                        style = NovelType.caption1,
+                        color = novelPalette.textTertiary,
+                    )
+                }
+            }
+            Spacer(Modifier.height(NovelDesign.sectionTopGap))
         }
     }
     renamingWork?.let { work ->

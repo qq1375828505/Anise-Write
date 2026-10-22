@@ -292,6 +292,23 @@ class NovelRepository(private val rootDir: File) {
             updated
         }
 
+    /** 重命名卷标题（UI 卷行侧滑「改名」用）。 */
+    fun updateVolumeTitle(workId: String, volumeId: String, title: String): NovelVolume =
+        synchronized(lock) {
+            val works = loadRawWorks()
+            val idx = works.indexOfFirst { it.id == workId }
+            if (idx < 0) throw IllegalArgumentException("作品不存在: $workId")
+            val work = works[idx]
+            val vidx = work.volumes.indexOfFirst { it.id == volumeId }
+            if (vidx < 0) throw IllegalArgumentException("卷不存在: $volumeId")
+            val now = System.currentTimeMillis()
+            val updated = work.volumes[vidx].copy(title = title, updatedAt = now)
+            val volumes = work.volumes.toMutableList().also { it[vidx] = updated }
+            works[idx] = work.copy(volumes = volumes, updatedAt = now)
+            saveIndex(works)
+            updated
+        }
+
     /** 把章节移动到目标卷末尾（order 取目标卷当前最大值 +1）。 */
     fun moveChapterToVolume(workId: String, chapterId: String, targetVolumeId: String): NovelChapter =
         synchronized(lock) {

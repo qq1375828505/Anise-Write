@@ -2,6 +2,7 @@ package com.ai.assistance.quro.ui.novel
 
 import android.content.Context
 import com.ai.assistance.quro.core.novel.NovelChapter
+import com.ai.assistance.quro.core.novel.NovelChapterStatus
 import com.ai.assistance.quro.core.novel.NovelRepository
 import com.ai.assistance.quro.core.novel.NovelVolume
 import com.ai.assistance.quro.core.novel.NovelWork
@@ -96,6 +97,16 @@ class NovelStudioData(context: Context) {
 
     fun createVolume(workId: String, title: String): NovelVolume =
         repo.createVolume(workId, title)
+
+    fun renameVolume(workId: String, volumeId: String, title: String): NovelVolume =
+        repo.updateVolumeTitle(workId, volumeId, title)
+
+    fun deleteVolume(workId: String, volumeId: String): Boolean =
+        repo.deleteVolume(workId, volumeId)
+
+    /** 切换章节状态（未写 / 草稿 / 润色中 / 已完成）。 */
+    fun setChapterStatus(workId: String, chapterId: String, status: NovelChapterStatus): NovelChapter =
+        repo.setChapterStatus(workId, chapterId, status)
 
     fun createChapter(workId: String, volumeId: String, title: String): NovelChapter =
         repo.createChapter(workId, volumeId, title)
