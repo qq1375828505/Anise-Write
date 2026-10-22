@@ -114,4 +114,7 @@
     <string name="config_hint">提示：默认所有能力跟随主模型（设置 → 模型配置）。图片 / 视频生成建议独立指定对应模型。当前为单接入点架构，独立绑定复用主接入点的地址与密钥，仅替换模型名。</string>
     <string name="config_info_ref">参考「功能 → 配置」设计：每个功能可「跟随主模型」或指定独立模型。已接入引擎并实时生效：主对话(CHAT)、语音球问答(CHAT)、人格蒸馏/自动孵化(PERSONA_INCUBATE)、语音风格推导(UI_CONTROL)。指定独立模型后，对应调用即改用该模型。</string>
     <string name="config_info_visual">视觉模型配置：图像识别和视频识别需要支持视觉能力的模型（如GPT-4 Vision）。请在「设置 → 模型配置」中配置视觉模型的API密钥和基础URL，然后在下方为图像识别和视频识别选择对应的模型。\n\n路径配置说明：所有功能共享主模型配置的基础URL和API密钥。如需为视觉模型使用不同的端点，请在「设置 → 模型配置」中配置对应的端点地址。</string>
+    <string name="novel_settings_writing">写作</string>
+    <string name="novel_model_groups">模型组</string>
+    <string name="novel_model_groups_desc">按任务选择用哪个模型：细纲用强模型，润色用轻量模型</string>
 </resources>

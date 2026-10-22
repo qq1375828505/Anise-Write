@@ -193,6 +193,7 @@ zero-write: true              # 硬约束标记，加载器与调度器可断言
       "chapter_range": { "type": "object", "properties": { "from": {"type":"integer"}, "to": {"type":"integer"} } },
       "mode": { "type": "string", "description": "子代理专有模式，见 DELEGATION.md §2.3" },
       "round": { "type": "integer", "minimum": 1, "maximum": 3 },
+      "model_group": { "type": "string", "enum": ["same_as_me","default_model","sub_model"], "description": "本次委派用哪一档模型：same_as_me=跟当前会话同一模型（默认）、default_model=用户的默认组（通常最强）、sub_model=用户的轻量组（通常更快更便宜）。只表达意图，不写模型名——你不知道用户有哪些模型、哪个强哪个便宜。若用户为该子代理钉死了模型组，本字段被忽略。" },
       "previous_result": { "type": "string", "description": "round≥2 时填上轮响应 JSON" }
     },
     "required": ["subagent", "task", "work_id"]

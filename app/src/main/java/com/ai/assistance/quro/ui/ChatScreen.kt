@@ -332,6 +332,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Movie
@@ -814,6 +815,10 @@ fun ChatScreen(
     var showKnowledge by remember { mutableStateOf(false) }
     // Anise Write 写作工作台（章节 / 资料库 / 关系图 / 统计）
     var showNovelStudio by remember { mutableStateOf(false) }
+    // 模型组 / 写作档（设置里的独立条目 → 列表 → 详情；另有子代理绑定页）
+    var showModelGroups by remember { mutableStateOf(false) }
+    var modelGroupDetailId by remember { mutableStateOf<String?>(null) }
+    var showAgentModelBinding by remember { mutableStateOf(false) }
     // 机器人设置页（C2）：从工具箱「机器人」入口进入
     var showBots by remember { mutableStateOf(false) }
     // 应用内文档查看器（本地渲染引擎，替代原 Collabora/外跳 ONLYOFFICE；已整合原「文档中心」）
@@ -1752,6 +1757,7 @@ fun ChatScreen(
             modelGroups = allModelGroups,
             selectedModel = selectedModel,
             onOpenNovelStudio = { showNovelStudio = true },
+            onOpenModelGroups = { showModelGroups = true },
             onSelectModel = { m ->
                 when {
                     // 已保存预设 → 应用整套预设配置
@@ -2345,6 +2351,29 @@ fun ChatScreen(
             BackHandler { showNovelStudio = false }
             Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
                 com.ai.assistance.quro.ui.novel.NovelStudioScreen(onClose = { showNovelStudio = false })
+            }
+        }
+
+        // 模型组 / 写作档：设置里的独立条目 → 列表 → 详情（另有子代理绑定页）
+        if (showModelGroups) {
+            BackHandler {
+                showModelGroups = false
+                modelGroupDetailId = null
+                showAgentModelBinding = false
+            }
+            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
+                when {
+                    showAgentModelBinding -> QuroAgentModelScreen(onClose = { showAgentModelBinding = false })
+                    modelGroupDetailId != null -> QuroModelGroupDetailScreen(
+                        groupId = modelGroupDetailId!!,
+                        onClose = { modelGroupDetailId = null },
+                    )
+                    else -> QuroModelGroupScreen(
+                        onClose = { showModelGroups = false },
+                        onOpenDetail = { modelGroupDetailId = it },
+                        onOpenAgentBinding = { showAgentModelBinding = true },
+                    )
+                }
             }
         }
 
@@ -5563,6 +5592,7 @@ private fun SheetOverlay(
     onOpenPermission: () -> Unit,
     onOpenLspose: () -> Unit,
     onOpenUsbDebug: () -> Unit,
+    onOpenModelGroups: () -> Unit = {},
     onOpenDefaultApp: () -> Unit,
     onOpenCms: () -> Unit,
     onOpenToolbox: () -> Unit,
@@ -5659,6 +5689,7 @@ private fun SheetOverlay(
                         settingsEnterSend, onSettingsToggleEnter,
                         settingsFontName, onSettingsCycleFont,
                         onOpenModelConfig, onOpenFeatureModelConfig, onOpenPermission, onOpenLspose, onOpenUsbDebug, onOpenDefaultApp, onOpenCms, onOpenToolbox, onOpenKnowledge, onOpenTerminal, onOpenPlugins, onOpenSkills,
+                        onOpenModelGroups,
                         onManagePersona, onOpenVoiceService,
                         onClearChat, settingsVoiceBallEnabled, onSettingsToggleVoiceBall,
                     settingsAiReplyNotify, onSettingsToggleAiReplyNotify,
@@ -5698,6 +5729,7 @@ private fun SettingsSheetContent(
     onOpenPermission: () -> Unit,
     onOpenLspose: () -> Unit,
     onOpenUsbDebug: () -> Unit,
+    onOpenModelGroups: () -> Unit = {},
     onOpenDefaultApp: () -> Unit,
     onOpenCms: () -> Unit,
     onOpenToolbox: () -> Unit,
@@ -5739,6 +5771,11 @@ private fun SettingsSheetContent(
         GroupCaption(stringResource(R.string.qk_00485))
         SetGroup {
             SetRowClickable(Icons.Filled.VolumeUp, stringResource(R.string.qk_03057), stringResource(R.string.qk_03846), "", onOpenVoiceService, scaled)
+        }
+        // Anise Write：模型组 / 写作档（独立条目，不挂在「模型配置」子页面下）
+        GroupCaption(stringResource(R.string.novel_settings_writing))
+        SetGroup {
+            SetRowClickable(Icons.Filled.Layers, stringResource(R.string.novel_model_groups), stringResource(R.string.novel_model_groups_desc), "", onOpenModelGroups, scaled)
         }
         GroupCaption(stringResource(R.string.qk_03831))
         SetGroup {
