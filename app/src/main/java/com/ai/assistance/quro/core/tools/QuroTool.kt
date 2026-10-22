@@ -167,6 +167,8 @@ class QuroToolRegistry {
             "novel_delete_volume",
             "novel_create_chapter",
             "novel_delete_chapter",
+            "novel_rename_chapter",
+            "novel_move_chapter",
             "novel_chapter_stats",
             "novel_materials_get",
             "novel_materials_list",

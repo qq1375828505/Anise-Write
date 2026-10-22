@@ -22,7 +22,7 @@
 Anise Write 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端侧 AI Agent 基座，Apache-2.0）之上改造的**网文写作专用 Agent**。
 
 - **基座提供**：端侧离线推理（MNN / llama.cpp）、proot 终端、脚本引擎、工具运行时、插件与 ACI 框架、记忆与知识库、通用对话界面。
-- **Anise Write 提供**：把「写一章网文」拆成七阶段的领域工作流、38 个写作工具、25 套中文网文流派预设、6 个写作子代理，以及伏笔 / 人物关系 / 记忆三件套图谱。
+- **Anise Write 提供**：把「写一章网文」拆成七阶段的领域工作流、40 个写作工具、25 套中文网文流派预设、6 个写作子代理，以及伏笔 / 人物关系 / 记忆三件套图谱。
 - **工程铁律**（承自基座）：**无兜底**（解析失败即抛错，绝不返回假数据）、**断点续跑**（每阶段状态落盘，杀进程可恢复）、**显式契约**（阶段输入输出编码在数据类上，不靠约定俗成）。
 
 > 本项目原代号 **PenAi**，于 2026-10-22 更名为 **Anise Write**（应用名、仓库名与文档同步更新；Android 包名与内部模块标识保持不变以保证升级兼容）。
@@ -37,7 +37,7 @@ Anise Write 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端�
 
 每个阶段的产出都是强类型数据对象并落盘。某一阶段失败时只把**该阶段**降级为待重跑，其余阶段断点照常恢复——不会因为一处出错丢掉整条进度。
 
-### 四域 38 个写作工具
+### 四域 40 个写作工具
 
 | 域 | 数量 | 能力 |
 |---|:--:|---|
@@ -74,7 +74,7 @@ Anise Write 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端�
                               ▲ 同构扩展（工具域 + 技能套件，不 fork 基座）
 ┌────────────────────────── Anise Write 增量层 ──────────────────────────────────┐
 │ core/novel/           领域契约：作品/卷/章 · 资料资产 · 图谱 · 七阶段工作流 │
-│ core/tools/novel/     38 个写作工具（结构 / 资料 / 图谱 / 写作）          │
+│ core/tools/novel/     40 个写作工具（结构 / 资料 / 图谱 / 写作）          │
 │ assets/skills/penai/  25 套流派预设 + manifest                          │
 │ assets/prompts/subagents/ 6 个子代理提示词 + 委托协议                    │
 │ ui/novel/             Anise Write 写作界面（原生 Compose）                     │
@@ -86,7 +86,7 @@ Anise Write 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端�
 | 路径 | 内容 |
 |---|---|
 | `app/src/main/java/com/ai/assistance/quro/core/novel/` | 领域契约层：作品/卷/章模型、资料仓储、图谱存储、工作流模型与编解码（纯 Kotlin，无 Android 依赖，可 JVM 单测） |
-| `app/src/main/java/com/ai/assistance/quro/core/tools/novel/` | 38 个写作工具实现与工具集注册 |
+| `app/src/main/java/com/ai/assistance/quro/core/tools/novel/` | 40 个写作工具实现与工具集注册 |
 | `app/src/main/assets/skills/penai/` | 25 套流派预设资源包 |
 | `app/src/main/assets/prompts/subagents/` | 子代理提示词与委托协议（`DELEGATION.md`） |
 | `app/src/main/java/com/ai/assistance/quro/ui/novel/` | Anise Write 写作界面与设计令牌 |

@@ -859,6 +859,161 @@ class NovelDeleteChapterTool : QuroTool {
 }
 
 /**
+ * novel_rename_chapter：重命名章节标题（只改元数据，正文不动）。
+ *
+ * 写操作（readOnly=false）。何时用：用户要求改章节名、卷内顺序调整、标题规范化。
+ */
+class NovelRenameChapterTool : QuroTool {
+    override val name = "novel_rename_chapter"
+    override val description =
+        "重命名某章的标题（只改章节元数据，正文 .md 不动）。" +
+            "何时用：用户要求改章节名或标题规范化。新标题为空或与原标题相同则不执行。" +
+            "重命名不影响字数、状态与所在卷。"
+    override val parametersJson = """{
+      "type": "object",
+      "properties": {
+        "work_id": {
+          "type": "string",
+          "description": "作品 id",
+          "example": "b3f1c2a4-0000-0000-0000-123456789abc"
+        },
+        "chapter_id": {
+          "type": "string",
+          "description": "要重命名的章节 id（novel_get_outline 获取）",
+          "example": "d4e6f8a0-0000-0000-0000-123456789abc"
+        },
+        "title": {
+          "type": "string",
+          "description": "新的章节标题（非空）",
+          "example": "第 2 章 旧仓库"
+        }
+      },
+      "required": ["work_id", "chapter_id", "title"]
+    }"""
+
+    override fun run(context: Context, arguments: String): String {
+        val args = parseArgs(arguments)
+            ?: return novelError(ErrCode.INVALID_ARGS, "参数不是合法 JSON", "形如 {\"work_id\":\"...\",\"chapter_id\":\"...\",\"title\":\"第 2 章 ...\"}")
+        val workId = args.optString("work_id", "").trim()
+        if (workId.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "work_id 不能为空", "用 novel_list_works 获取作品 id")
+        }
+        val chapterId = args.optString("chapter_id", "").trim()
+        if (chapterId.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "chapter_id 不能为空", "用 novel_get_outline 查看章节 id")
+        }
+        val newTitle = args.optString("title", "").trim()
+        if (newTitle.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "title 不能为空", "新标题不能是空字符串")
+        }
+        val repo = NovelRepository.fromContext(context)
+        val work = repo.loadWorks().firstOrNull { it.id == workId } ?: return workNotFoundError(repo, workId)
+        val chapter = work.chapters.firstOrNull { it.id == chapterId } ?: return chapterNotFoundError(work, chapterId)
+        if (chapter.title == newTitle) {
+            return JSONObject().apply {
+                put("ok", true)
+                put("changed", false)
+                put("title", chapter.title)
+                put("message", "章节标题已经是「$newTitle」，未做改动。")
+            }.toString()
+        }
+        val updated = runCatching { repo.updateChapterTitle(workId, chapterId, newTitle) }
+            .getOrElse { e ->
+                return novelError(ErrCode.INTERNAL, "重命名失败：${e.message}", "检查 work_id/chapter_id 是否有效")
+            }
+        return JSONObject().apply {
+            put("ok", true)
+            put("changed", true)
+            put("chapterId", updated.id)
+            put("oldTitle", chapter.title)
+            put("title", updated.title)
+            put("message", "已把《${work.title}》的章节「${chapter.title}」重命名为「${updated.title}」（正文未改动）。")
+        }.toString()
+    }
+}
+
+/**
+ * novel_move_chapter：把章节移动到目标卷（排到该卷末尾）。
+ *
+ * 写操作（readOnly=false）。何时用：用户要求调整章节归属、卷顺序整理。
+ */
+class NovelMoveChapterTool : QuroTool {
+    override val name = "novel_move_chapter"
+    override val description =
+        "把某章移动到目标卷（排到该卷末尾，order 重新计算）。" +
+            "何时用：用户要求改章节归属或整理卷内结构。目标卷不存在时不执行；" +
+            "移动不影响章节字数、状态与正文。"
+    override val parametersJson = """{
+      "type": "object",
+      "properties": {
+        "work_id": {
+          "type": "string",
+          "description": "作品 id",
+          "example": "b3f1c2a4-0000-0000-0000-123456789abc"
+        },
+        "chapter_id": {
+          "type": "string",
+          "description": "要移动的章节 id（novel_get_outline 获取）",
+          "example": "d4e6f8a0-0000-0000-0000-123456789abc"
+        },
+        "target_volume_id": {
+          "type": "string",
+          "description": "目标卷 id（novel_get_outline 获取）",
+          "example": "a1b2c3d4-0000-0000-0000-123456789abc"
+        }
+      },
+      "required": ["work_id", "chapter_id", "target_volume_id"]
+    }"""
+
+    override fun run(context: Context, arguments: String): String {
+        val args = parseArgs(arguments)
+            ?: return novelError(ErrCode.INVALID_ARGS, "参数不是合法 JSON", "形如 {\"work_id\":\"...\",\"chapter_id\":\"...\",\"target_volume_id\":\"...\"}")
+        val workId = args.optString("work_id", "").trim()
+        if (workId.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "work_id 不能为空", "用 novel_list_works 获取作品 id")
+        }
+        val chapterId = args.optString("chapter_id", "").trim()
+        if (chapterId.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "chapter_id 不能为空", "用 novel_get_outline 查看章节 id")
+        }
+        val targetVolumeId = args.optString("target_volume_id", "").trim()
+        if (targetVolumeId.isBlank()) {
+            return novelError(ErrCode.INVALID_ARGS, "target_volume_id 不能为空", "用 novel_get_outline 查看卷 id")
+        }
+        val repo = NovelRepository.fromContext(context)
+        val work = repo.loadWorks().firstOrNull { it.id == workId } ?: return workNotFoundError(repo, workId)
+        val chapter = work.chapters.firstOrNull { it.id == chapterId } ?: return chapterNotFoundError(work, chapterId)
+        val target = work.volumes.firstOrNull { it.id == targetVolumeId }
+            ?: return novelError(
+                ErrCode.INVALID_ARGS,
+                "目标卷不存在：$targetVolumeId",
+                "用 novel_get_outline 查看该作品现有的卷 id",
+            )
+        if (chapter.volumeId == targetVolumeId) {
+            return JSONObject().apply {
+                put("ok", true)
+                put("changed", false)
+                put("message", "章节「${chapter.title}」已经在卷「${target.title}」中，未做改动。")
+            }.toString()
+        }
+        val fromTitle = work.volumes.firstOrNull { it.id == chapter.volumeId }?.title ?: chapter.volumeId
+        val updated = runCatching { repo.moveChapterToVolume(workId, chapterId, targetVolumeId) }
+            .getOrElse { e ->
+                return novelError(ErrCode.INTERNAL, "移动失败：${e.message}", "检查 work_id/chapter_id/target_volume_id 是否有效")
+            }
+        return JSONObject().apply {
+            put("ok", true)
+            put("changed", true)
+            put("chapterId", updated.id)
+            put("fromVolume", fromTitle)
+            put("toVolume", target.title)
+            put("order", updated.order)
+            put("message", "已把《${work.title}》的章节「${chapter.title}」从「$fromTitle」移到「${target.title}」（排到该卷末尾）。")
+        }.toString()
+    }
+}
+
+/**
  * novel_chapter_stats：章节统计（作品级或单卷）。
  *
  * 只读（readOnly=true，已入并发白名单）。回答「进度/字数」问题、AI 决定下一篇写什么

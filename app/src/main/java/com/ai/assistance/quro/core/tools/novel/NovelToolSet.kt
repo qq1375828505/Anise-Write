@@ -31,6 +31,8 @@ object NovelToolSet {
         r.register(NovelDeleteVolumeTool())
         r.register(NovelCreateChapterTool())
         r.register(NovelDeleteChapterTool())
+        r.register(NovelRenameChapterTool())
+        r.register(NovelMoveChapterTool())
         r.register(NovelChapterStatsTool())
         r.register(NovelGetChapterTool())
         r.register(NovelUpdateWorkTool())
