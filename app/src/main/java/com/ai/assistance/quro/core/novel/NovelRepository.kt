@@ -275,6 +275,44 @@ class NovelRepository(private val rootDir: File) {
             updated
         }
 
+    /** 重命名章节标题（UI 侧滑「重命名」用；标题是章节元数据，正文不受影响）。 */
+    fun updateChapterTitle(workId: String, chapterId: String, title: String): NovelChapter =
+        synchronized(lock) {
+            val works = loadRawWorks()
+            val idx = works.indexOfFirst { it.id == workId }
+            if (idx < 0) throw IllegalArgumentException("作品不存在: $workId")
+            val work = works[idx]
+            val cidx = work.chapters.indexOfFirst { it.id == chapterId }
+            if (cidx < 0) throw IllegalArgumentException("章节不存在: $chapterId")
+            val now = System.currentTimeMillis()
+            val updated = work.chapters[cidx].copy(title = title, updatedAt = now)
+            val chapters = work.chapters.toMutableList().also { it[cidx] = updated }
+            works[idx] = work.copy(chapters = chapters, updatedAt = now)
+            saveIndex(works)
+            updated
+        }
+
+    /** 把章节移动到目标卷末尾（order 取目标卷当前最大值 +1）。 */
+    fun moveChapterToVolume(workId: String, chapterId: String, targetVolumeId: String): NovelChapter =
+        synchronized(lock) {
+            val works = loadRawWorks()
+            val idx = works.indexOfFirst { it.id == workId }
+            if (idx < 0) throw IllegalArgumentException("作品不存在: $workId")
+            val work = works[idx]
+            if (work.volumes.none { it.id == targetVolumeId }) {
+                throw IllegalArgumentException("卷不存在: $targetVolumeId")
+            }
+            val cidx = work.chapters.indexOfFirst { it.id == chapterId }
+            if (cidx < 0) throw IllegalArgumentException("章节不存在: $chapterId")
+            val now = System.currentTimeMillis()
+            val nextOrder = (work.chapters.filter { it.volumeId == targetVolumeId }.maxOfOrNull { it.order } ?: 0) + 1
+            val updated = work.chapters[cidx].copy(volumeId = targetVolumeId, order = nextOrder, updatedAt = now)
+            val chapters = work.chapters.toMutableList().also { it[cidx] = updated }
+            works[idx] = work.copy(chapters = chapters, updatedAt = now)
+            saveIndex(works)
+            updated
+        }
+
     // ─────────────────────────── 内部 ───────────────────────────
 
     private fun chapterFile(workId: String, chapterId: String): File =

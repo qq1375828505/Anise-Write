@@ -164,6 +164,33 @@ fun NovelStudioScreen(onClose: () -> Unit) {
                                 snapshot = withContext(Dispatchers.IO) { data.load() }
                             }
                         },
+                        onRenameChapter = { chapter, newTitle ->
+                            scope.launch {
+                                val workId = snapshot.selectedWorkId
+                                if (workId != null) {
+                                    withContext(Dispatchers.IO) { data.renameChapter(workId, chapter.id, newTitle) }
+                                    snapshot = withContext(Dispatchers.IO) { data.load(workId) }
+                                }
+                            }
+                        },
+                        onMoveChapter = { chapter, volumeId ->
+                            scope.launch {
+                                val workId = snapshot.selectedWorkId
+                                if (workId != null) {
+                                    withContext(Dispatchers.IO) { data.moveChapter(workId, chapter.id, volumeId) }
+                                    snapshot = withContext(Dispatchers.IO) { data.load(workId) }
+                                }
+                            }
+                        },
+                        onDeleteChapter = { chapter ->
+                            scope.launch {
+                                val workId = snapshot.selectedWorkId
+                                if (workId != null) {
+                                    withContext(Dispatchers.IO) { data.deleteChapter(workId, chapter.id) }
+                                    snapshot = withContext(Dispatchers.IO) { data.load(workId) }
+                                }
+                            }
+                        },
                     )
 
                     NovelTab.ASSETS -> AssetsTab(snapshot)
@@ -227,7 +254,15 @@ private fun ChaptersTab(
     onOpenChapter: (NovelChapter) -> Unit,
     onCreateChapter: (String) -> Unit,
     onCreateWork: () -> Unit,
+    onRenameChapter: (NovelChapter, String) -> Unit,
+    onMoveChapter: (NovelChapter, String) -> Unit,
+    onDeleteChapter: (NovelChapter) -> Unit,
 ) {
+    // 侧滑操作的目标章节
+    var renaming by remember { mutableStateOf<NovelChapter?>(null) }
+    var moving by remember { mutableStateOf<NovelChapter?>(null) }
+    var deleting by remember { mutableStateOf<NovelChapter?>(null) }
+
     if (snapshot.works.isEmpty()) {
         Column(Modifier.fillMaxSize()) {
             NovelEmptyState(
@@ -308,12 +343,20 @@ private fun ChaptersTab(
                     } else {
                         chapters.forEachIndexed { index, chapter ->
                             if (index > 0) NovelDivider()
-                            NovelGroupedRow(
-                                title = chapter.title,
-                                subtitle = "${chapterStatusLabel(chapter.status)} · ${chapter.wordCount} 字",
-                                trailing = chapter.updatedAt.takeIf { it > 0 }?.let { formatDate(it) },
-                                onClick = { onOpenChapter(chapter) },
-                            )
+                            NovelSwipeRow(
+                                actions = listOf(
+                                    NovelSwipeAction("移动", novelPalette.accent) { moving = chapter },
+                                    NovelSwipeAction("改名", Color(0xFF8A8A8E)) { renaming = chapter },
+                                    NovelSwipeAction("删除", novelPalette.danger) { deleting = chapter },
+                                ),
+                            ) {
+                                NovelGroupedRow(
+                                    title = chapter.title,
+                                    subtitle = "${chapterStatusLabel(chapter.status)} · ${chapter.wordCount} 字",
+                                    trailing = chapter.updatedAt.takeIf { it > 0 }?.let { formatDate(it) },
+                                    onClick = { onOpenChapter(chapter) },
+                                )
+                            }
                         }
                     }
                 }
@@ -329,6 +372,49 @@ private fun ChaptersTab(
                 }
             }
         }
+    }
+
+    // 侧滑操作对应的弹层：重命名（输入框）/ 移动（选卷抽屉）/ 删除（确认）
+    renaming?.let { chapter ->
+        NovelPromptDialog(
+            title = "重命名章节",
+            initial = chapter.title,
+            onDismiss = { renaming = null },
+            onConfirm = { newTitle ->
+                if (newTitle.isNotBlank()) onRenameChapter(chapter, newTitle)
+                renaming = null
+            },
+        )
+    }
+    moving?.let { chapter ->
+        NovelSheet(onDismissRequest = { moving = null }) {
+            NovelSectionHeader("移动到")
+            snapshot.volumes.forEach { v ->
+                NovelSheetRow(
+                    title = v.title,
+                    selected = v.id == chapter.volumeId,
+                    showCheck = false,
+                    onClick = {
+                        if (v.id != chapter.volumeId) onMoveChapter(chapter, v.id)
+                        moving = null
+                    },
+                )
+                NovelDivider()
+            }
+        }
+    }
+    deleting?.let { chapter ->
+        NovelConfirmDialog(
+            title = "删除章节",
+            message = "「${chapter.title}」将被删除，正文一并移除。此操作不可撤销。",
+            confirmText = "删除",
+            danger = true,
+            onDismiss = { deleting = null },
+            onConfirm = {
+                onDeleteChapter(chapter)
+                deleting = null
+            },
+        )
     }
 }
 

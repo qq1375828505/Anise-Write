@@ -96,6 +96,12 @@ class NovelStudioData(context: Context) {
     fun deleteChapter(workId: String, chapterId: String): Boolean =
         repo.deleteChapter(workId, chapterId)
 
+    fun renameChapter(workId: String, chapterId: String, title: String): NovelChapter =
+        repo.updateChapterTitle(workId, chapterId, title)
+
+    fun moveChapter(workId: String, chapterId: String, targetVolumeId: String): NovelChapter =
+        repo.moveChapterToVolume(workId, chapterId, targetVolumeId)
+
     fun readChapterContent(workId: String, chapterId: String): String =
         repo.readChapterContent(workId, chapterId)
 
