@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PenAi</string>
+    <string name="app_name">Anise Write</string>
     <string name="quro_accessibility_desc">Zorv AI アクセシビリティサービス：UI自動化や画面内容の読み取りなどの高度な機能に使用します。本バージョンは権限宣言のみで、いかなるプライバシーデータも収集しません。</string>
     <string name="quro_device_admin_label">Zorv AI デバイス管理者</string>
     <string name="quro_device_admin_desc">画面ロック、カメラの無効化または復元の2つの操作のみに使用します。データを削除せず、ロック画面のパスワードも変更しません。</string>
@@ -12,7 +12,7 @@
     <string name="sc_chat_long">直接対話を開く</string>
     <string name="sc_chat_disabled">対話は無効</string>
     <string name="sc_browser_short">ブラウザコンソール</string>
-    <string name="sc_browser_long">PenAi ブラウザコンソール</string>
+    <string name="sc_browser_long">Anise Write ブラウザコンソール</string>
     <string name="sc_browser_disabled">ブラウザコンソールは無効</string>
     <string name="settings_appearance">外観と会話</string>
     <string name="appearance_group_appearance">外観</string>

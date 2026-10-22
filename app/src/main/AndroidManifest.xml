@@ -663,7 +663,7 @@
             android:name=".service.QuroChatTileService"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
-            android:label="PenAi 对话"
+            android:label="Anise Write 对话"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
@@ -675,7 +675,7 @@
             android:name=".service.QuroVoiceTileService"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
-            android:label="PenAi 语音球"
+            android:label="Anise Write 语音球"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
@@ -687,7 +687,7 @@
             android:name=".service.QuroVideoCallTileService"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
-            android:label="PenAi 视频通话"
+            android:label="Anise Write 视频通话"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

@@ -1,4 +1,4 @@
-# PenAi 软件改造计划书
+# Anise Write 软件改造计划书
 
 ## ——基于 ZorvAI 基座的网文写作 AI Agent 改造方案
 
@@ -8,7 +8,7 @@
 
 网文创作是典型的高强度长文本生产活动：一部长篇作品涉及数十万至数百万字的正文、成体系的世界观设定、密集的人物关系与伏笔网络，且对"爽点密度""节奏控制""去 AI 味"等流派技法有专业化要求。通用 AI 对话工具无法承载这一工作流，而纯人工创作的认知负荷极高。
 
-本项目选定 **ZorvAI**（开源安卓端侧 AI Agent，包名 `com.ai.assistance.quro`，当前版本 1.1.7）作为基座，通过领域化改造，构建一款专注于小说创作的 AI Agent 软件 **PenAi**。改造完成后，PenAi 需同时满足两类用户场景：面向读者的"能写"（续写、润色、精修、风格化改写）与面向作者的"能管"（作品结构、资料库、伏笔跟踪、一致性审查）。
+本项目选定 **ZorvAI**（开源安卓端侧 AI Agent，包名 `com.ai.assistance.quro`，当前版本 1.1.7）作为基座，通过领域化改造，构建一款专注于小说创作的 AI Agent 软件 **Anise Write**。改造完成后，Anise Write 需同时满足两类用户场景：面向读者的"能写"（续写、润色、精修、风格化改写）与面向作者的"能管"（作品结构、资料库、伏笔跟踪、一致性审查）。
 
 ### 1.2 产品定位与目标
 
@@ -31,7 +31,7 @@
 | 基座 | ZorvAI v1.1.7（Kotlin 2.3 + Jetpack Compose，Apache-2.0） |
 | 领域资产来源一 | novelIDE（Flutter 网文写作 IDE，MIT，50 工具 + 6 子 Agent + 25 流派预设 + 双轨记忆） |
 | 领域资产来源二 | AIGC-NetNov（Operit 分支的网文化改造尝试，20 张数据表 + 66 工具 + 107 桥接方法的设计资产） |
-| 交付物 | PenAi 安卓应用（仓库 `qq1375828505/PenAi`，应用名 PenAi） |
+| 交付物 | Anise Write 安卓应用（仓库 `qq1375828505/AniseWrite`，应用名 Anise Write） |
 | 基座缺陷输入 | 使用者通过 GitHub Issues #15–#21 提交的 7 项问题（全部纳入第 7 章） |
 
 ### 1.4 术语定义
@@ -55,7 +55,7 @@ ZorvAI 是运行于 Android 8.0+（minSdk 26）的端侧 AI Agent，技术栈为
 
 ### 2.2 Agent 内核能力（可直接复用）
 
-| 能力 | 实现位置 | 对 PenAi 的价值 |
+| 能力 | 实现位置 | 对 Anise Write 的价值 |
 | --- | --- | --- |
 | ReAct 主循环 + 任务级闭环 | `core/QuroAssistant.kt`（1588 行）`reactPass()` + `LongHorizonOrchestrator.runTask` | 写作任务（读前文→产出→自检→重写）的调度骨架现成 |
 | 交付闸门 | `core/agent/orchestration/`：`DefaultTaskPlanner` / `HeuristicDeliverabilityJudge` / `FreePlanComposer` | 章节稿"不可交付则带原因重规划"，直接提升成稿率 |
@@ -64,7 +64,7 @@ ZorvAI 是运行于 Android 8.0+（minSdk 26）的端侧 AI Agent，技术栈为
 | 检查点恢复 | `QuroRunCheckpoint` 每轮落盘 | 长章节生成中断可恢复 |
 | 死循环防护 | 签名滑动窗口（LOOP_WINDOW=16） | 防写作循环空转 |
 
-**结论：Agent 内核无需任何改造， PenAi 的全部工作量集中在领域层。**
+**结论：Agent 内核无需任何改造， Anise Write 的全部工作量集中在领域层。**
 
 ### 2.3 工具系统与扩展机制
 
@@ -91,7 +91,7 @@ interface QuroTool {
 6. （建议）`QuroToolUsageHints.TOOL_USAGE_HINTS` 补口语映射，注入系统提示词；
 7. 按 `app/src/test/` 现成范式补 JVM 单测。
 
-> ⚠️ 第 3、4 步为隐性硬约束：在默认 PROGRESSIVE 配置下，未入 `coreNames` 或 `ALWAYS_ON` 的工具模型永远不可见——这是基座仓库内大量"功能完好但模型调不到"故障的根因，PenAi 工具域必须双写。
+> ⚠️ 第 3、4 步为隐性硬约束：在默认 PROGRESSIVE 配置下，未入 `coreNames` 或 `ALWAYS_ON` 的工具模型永远不可见——这是基座仓库内大量"功能完好但模型调不到"故障的根因，Anise Write 工具域必须双写。
 
 现有 248 个工具注册（`QuroBuiltInTools.kt` 实测 248 处 `register(`），其中 203 个进入 `coreNames` 默认下发白名单、154 个进入 `ALWAYS_ON` 常驻集；按能力域组织（基础/设备、应用管理、通信、文件、联网、代码执行、终端、特权控屏、记忆、知识库、文档生成、UI 组件、生成式界面、多媒体、构建台、CMS/ACI/MCP/插件、集群/工作流、UI 动作、技能工具等）。其中文件读写、联网检索、记忆、知识库、代码执行（QuickJS）、文档生成（AIP 排版）六类与写作场景直接相关，全部保留。
 
@@ -100,7 +100,7 @@ interface QuroTool {
 - **技能系统**：内置技能播种自 `assets/skills/zorv/manifest.json`（`core/skill/QuroSkill.kt` 的 `seedBuiltinZorvSkills`），技能可 `alwaysOn` 注入系统提示词，或 `callable` 注册为 `skill__*` 工具（上限 16 个）。`suite` 字段分组，现有唯一默认启用套件为 `design-studio`。增量播种有一次性守卫 key 机制，新增技能套件需新开守卫 key。
 - **人格卡**：`core/QuroPersona.kt` 的 `seed()`（:163-193）定义默认人格，持久化于 `filesDir/quro_personas.json`；`roleSetting` 即系统提示词核心。
 - **系统提示词组装**：`ui/QuroChatViewModel.kt:1889` `buildSystemPrompt()`，顺序为 `QuroPlatformManifest.SYSTEM`（能力环境基座）→ 语言指令 → 灵魂层 → 真实下发工具集同源生成的工具清单 → alwaysOn 技能段 → 经验库段。新工具注册后自动出现在清单中，无需手写。
-- **本地模型分支**：MNN/llama.cpp 走极简提示词（:1903-1943，仅人格核心 + 回复纪律），且只下发设备类小子集（`deviceToolNames`，:564-576）。PenAi 若主打端侧，写作纪律必须压缩进 persona 核心，且小说工具名需加入该子集。
+- **本地模型分支**：MNN/llama.cpp 走极简提示词（:1903-1943，仅人格核心 + 回复纪律），且只下发设备类小子集（`deviceToolNames`，:564-576）。Anise Write 若主打端侧，写作纪律必须压缩进 persona 核心，且小说工具名需加入该子集。
 
 ### 2.5 数据与记忆层
 
@@ -124,7 +124,7 @@ interface QuroTool {
 
 ### 2.7 许可证分析
 
-ZorvAI 主体代码为 **Apache-2.0**，允许修改、商用与闭源分发，仅需保留 NOTICE 归属。GeckoView（MPL-2.0，file-level copyleft）为可选依赖且当前渲染实际走系统 WebView；端侧 CPython 为 PSF-2.0。**PenAi 基于该基座改造无许可障碍**，但须完整继承 NOTICE 第三方归属清单，并继续遵守签名红线。
+ZorvAI 主体代码为 **Apache-2.0**，允许修改、商用与闭源分发，仅需保留 NOTICE 归属。GeckoView（MPL-2.0，file-level copyleft）为可选依赖且当前渲染实际走系统 WebView；端侧 CPython 为 PSF-2.0。**Anise Write 基于该基座改造无许可障碍**，但须完整继承 NOTICE 第三方归属清单，并继续遵守签名红线。
 
 ## 3. 领域资产移植分析（novelIDE）
 
@@ -155,12 +155,12 @@ novelIDE 为 Flutter 3.8+ / Dart 实现的网文写作 IDE（v2.1.0），业务�
 1. **Prompt 资产抽取**：所有内嵌于 UI 文件与 Provider 的 prompt 统一抽取至 `core/novel/prompts/` 常量文件，消除"改文案要动 UI"的耦合；
 2. **数据结构映射**：Dart 模型 → Kotlin data class + `org.json` 序列化（沿用基座 JSON 持久化风格），或评估 Room 化（见 6.4）；
 3. **调度逻辑映射**：五级模糊匹配、3 轮收敛判定（两轮输出长度差 < 5%）转 Kotlin 纯函数，配 JVM 单测；
-4. **网络层不移植**：novelIDE 的 `ai_service.dart`（Dio）不搬，PenAi 直接用基座 `QuroLlmClient` 云端 + `QuroLocalEngineNative` 端侧双通道；仅借鉴其"多认证头兼容、双协议、条件采样参数"的请求组装策略；
-5. **UI 不移植**：Flutter 页面全部不搬，仅参考信息架构（作品区/资料区/统计三类；树形目录按用户决策砍掉，改为扁平章节列表）；novelIDE 的 WebView 富文本编辑器资产不搬代码，但其交互范式作为 PenAi 独立编辑器模块的设计基线（见 6.7）；
+4. **网络层不移植**：novelIDE 的 `ai_service.dart`（Dio）不搬，Anise Write 直接用基座 `QuroLlmClient` 云端 + `QuroLocalEngineNative` 端侧双通道；仅借鉴其"多认证头兼容、双协议、条件采样参数"的请求组装策略；
+5. **UI 不移植**：Flutter 页面全部不搬，仅参考信息架构（作品区/资料区/统计三类；树形目录按用户决策砍掉，改为扁平章节列表）；novelIDE 的 WebView 富文本编辑器资产不搬代码，但其交互范式作为 Anise Write 独立编辑器模块的设计基线（见 6.7）；
 
 ### 3.4 不宜移植部分
 
-- Flutter Widget 树、Riverpod Provider、主题皮肤（8 套）、富文本 WebView 编辑器资产（不直接复用代码，其交互范式作为 PenAi 编辑器模块的设计基线，见 6.7）；
+- Flutter Widget 树、Riverpod Provider、主题皮肤（8 套）、富文本 WebView 编辑器资产（不直接复用代码，其交互范式作为 Anise Write 编辑器模块的设计基线，见 6.7）；
 - `humanize_text` 的"执行器只校验、AI 按工具描述改写"模式需保留其设计思想（规则即 prompt），但实现重写；
 - 语音通话、系统通知等系统能力绑定部分。
 
@@ -172,20 +172,20 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 
 ### 4.2 已验证有效的架构决策
 
-1. **插件包承载业务、宿主最小改造**：网文业务以独立插件包（66 个 `novelide:` 前缀工具 + 7 个子 Agent）承载，原生层只加导航入口、数据表、桥接 API。该路线使上游可同步、裁剪可回滚，PenAi 应采用同构路线（ZorvAI 侧对应"工具域 + 技能套件"，而非插件 APK）；
-2. **三层数据流边界**：UI 层无数据访问权，全部经桥接 → Repository → 存储。该安全边界正确，PenAi 照搬；
+1. **插件包承载业务、宿主最小改造**：网文业务以独立插件包（66 个 `novelide:` 前缀工具 + 7 个子 Agent）承载，原生层只加导航入口、数据表、桥接 API。该路线使上游可同步、裁剪可回滚，Anise Write 应采用同构路线（ZorvAI 侧对应"工具域 + 技能套件"，而非插件 APK）；
+2. **三层数据流边界**：UI 层无数据访问权，全部经桥接 → Repository → 存储。该安全边界正确，Anise Write 照搬；
 3. **领域建模资产完整**：20 张表（作品/卷/章节/8 类资料/番茄预设/技能/关系图/事件）、25 个番茄预设种子（含完整 systemPrompt）、7 个子 Agent 调度（3 轮推敲 + 相似度 > 90% 收敛提前退出）、"章节状态机 unwritten→draft→polishing→completed→exported"——**与基座无关，可直接平移**；
-4. **上下文管理显式化**：章节/角色/设定三类上下文选择器 + 4000-8000 字符预算 + 结构化模板，是长篇连贯性保障，PenAi 第一天就要设计；
+4. **上下文管理显式化**：章节/角色/设定三类上下文选择器 + 4000-8000 字符预算 + 结构化模板，是长篇连贯性保障，Anise Write 第一天就要设计；
 5. **AI 辅助工程化配方**：CI 构建日志回流给 AI、分阶段验收（每阶段带禁止事项）、commit 规范、多子代理分工（planner / reviewer / build-resolver）、预编译大资源走 Release Assets 不进 git。
 
-### 4.3 失败模式分析（PenAi 必须规避）
+### 4.3 失败模式分析（Anise Write 必须规避）
 
-| 失败模式 | 事实 | PenAi 对策 |
+| 失败模式 | 事实 | Anise Write 对策 |
 | --- | --- | --- |
 | 最后一公里未闭环 | HTML 调 `window.NativeBridge.*` 而实际注入名为 `NovelNativeBridge`；`Tools.callNative` 的 novel 方法未注册，页面数据链路断裂，自称 95% 实为"代码写完" | **第一里程碑必须是端到端最小闭环**（入口→页面→建作品→AI 写一章→保存），链路通了才算完成 |
 | 基座运行时被打桩 | 17 个上游文件被 stub 以通过 CI，ToolPkg 运行时残缺，插件能否加载无法验证 | 与基座运行时的兼容性验证先于功能开发；不为过编译而桩改基座 |
 | 双轨 UI 债务 | 同时维护 HTML 设计稿与原生 DSL 页面两套界面，且存在 `UI/` 与 `examples/novelide/` 两个同源工程 | 开跑前冻结唯一 UI 技术路线 |
-| 命名空间晚期更改 | `com.ai.assistance.operit`→`novelide` 的全仓 R 类污染 | applicationId / namespace / App 名第一天定死（PenAi 已在 Stage 0 确定） |
+| 命名空间晚期更改 | `com.ai.assistance.operit`→`novelide` 的全仓 R 类污染 | applicationId / namespace / App 名第一天定死（Anise Write 已在 Stage 0 确定） |
 | 规划反复翻烙饼 | 数据库版本 v21→v22→v20→v21、存储方案文件系统→Room、Screen order 三改 | 冻结唯一决策文档，所有分册引用，不允许分册自相矛盾 |
 | 半裁剪 | gradle 摘了 NDK 模块但 web-chat 仍在构建；NavItem 写了没接线 | 裁剪决策落到构建脚本与注册处，可验证 |
 | 安全设计纸面化 | WebView `allowFileAccess=true`、API Key 明文、无证书锁定 | 安全配置与功能同轴上线 |
@@ -198,13 +198,13 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 2. **端到端闭环先行**：任何阶段以"用户可走完一条完整创作路径"为完成定义；
 3. **单一决策文档**：存储方案、包名版本、UI 路线、工具命名在本文档冻结，实现期不允许分册自相矛盾；
 4. **软裁剪优先**：通用功能裁剪以"不注册工具 + 移除设置入口"为主，模块级硬裁剪仅在有包体/合规确需时执行；
-5. **资产平移而非重造**：novelIDE 与 AIGC-NetNov 已验证的 prompt、数据模型、规则集直接平移，PenAi 不重复造轮子。
+5. **资产平移而非重造**：novelIDE 与 AIGC-NetNov 已验证的 prompt、数据模型、规则集直接平移，Anise Write 不重复造轮子。
 
 ### 5.2 目标架构
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ PenAi 应用层（com.ai.assistance.quro，重命名/换皮后交付）  │
+│ Anise Write 应用层（com.ai.assistance.quro，重命名/换皮后交付）  │
 │  ChatScreen（主对话，继承基座）                          │
 │    └─ NovelStudioScreen（小说工作台：章节/编辑器/资料库/   │
 │       关系图/统计，数据落工作区文件直管）                   │
@@ -343,18 +343,23 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 
 ### 6.7 界面设计
 
-**视觉风格：现代文学出版风**（用户决策：去陶土色、去中式文艺范）：
+**视觉风格：iOS 对齐范式**（用户决策：去陶土色、去中式文艺范；2026-10-22 定为 iOS 分组列表语汇，取代此前的"现代文学出版风"）：
 
 | 令牌 | 取值 | 用途 |
 | --- | --- | --- |
-| 底色 | 暖白纸 `#FAF8F3`（中性化，不偏黄陶土） | 页面背景 |
-| 文字 | 墨黑 `#1F1E1C` | 正文 |
-| 标题 | Noto Serif SC（衬线，非楷体） | 各级标题 |
-| 强调色 | 低饱和深靛蓝 `#3E5C76` | 主按钮、选中态、链接 |
-| 分隔 | 1px 细线 `#E5E1D8` | 卡片边界、列表分隔 |
-| 留白 | 16/24/32dp 梯度大间距 | 阅读区呼吸感 |
+| 页面底 | `#F2F2F7` 亮 / `#000000` 暗（iOS systemGroupedBackground） | 页面背景 |
+| 卡片 | `#FFFFFF` 亮 / `#1C1C1E` 暗（中性分组卡片，不着主色） | 分组容器 |
+| 文字 | `#1C1C1E` 亮（对比度 15.6:1）/ `#F2F2F7` 暗（14.2:1） | 正文 |
+| 强调色 | 去饱和 iOS 蓝 `#528AD2` 亮 / `#6A94CE` 暗 | 主按钮、选中态、链接、分组标题 |
+| 分隔 | 0.5px `#D1D1D6` 亮 / `#38383A` 暗，**自卡片左缘内缩 16dp** | 行分隔 |
+| 圆角 | 卡片 12dp / 行首图标 29dp 见方 + 6.5dp 圆角 / 底部 Sheet 10dp | 容器 |
+| 节奏 | 屏幕内缩 16dp、行高 44dp、组内行距 8dp、组间距 24dp、Tab 栏 49dp | 布局 |
 
-整体气质参照现代文学出版社装帧：衬线标题 + 细线 + 大留白，安静、适合长时间阅读。
+整体气质参照 iOS 系统应用（分组列表 + inset 分隔线 + 大标题 + 彩色圆角图标）：安静、克制、信息密度高，适合长时间操作。
+
+**规范与实现**：完整规范见 `docs/design/AniseWrite_UI_SPEC.md`，令牌见 `docs/design/design_tokens.json`，代码侧收在单一真相源 `ui/novel/NovelDesignTokens.kt`（`NovelDesign` / `NovelPalette` / `NovelType`）——**所有界面只允许引用，禁止内联硬编码数值**。
+
+方法论参考 OpenMinis(GPL-3.0) 的 iOS 对齐范式（逐像素测量、单一真相源、对比度实测入注释），**只取方法与数值，实现独立编写，未复制其源码或素材**（详见 NOTICE "DESIGN METHODOLOGY REFERENCE"）。
 
 **NovelStudioScreen**（新建文件，最小侵入接线）：
 
@@ -386,7 +391,7 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 
 ## 7. 基座缺陷修复与优化
 
-本章收录使用者向 ZorvAI 官方仓库反馈的全部 7 项 issue（#15–#21，均处于 open 状态）。所有条目经对 v1.1.7 源码的代码级核实，按"必须修复 / 建议修复 / 复验后处置"分级。修复随 PenAi 分支同步进行，**修复 Patch 同步向上游提交，履行开源回馈义务**。
+本章收录使用者向 ZorvAI 官方仓库反馈的全部 7 项 issue（#15–#21，均处于 open 状态）。所有条目经对 v1.1.7 源码的代码级核实，按"必须修复 / 建议修复 / 复验后处置"分级。修复随 Anise Write 分支同步进行，**修复 Patch 同步向上游提交，履行开源回馈义务**。
 
 ### 7.1 修复总览与优先级
 
@@ -412,7 +417,7 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 3. 子代理失败返回附带上文占用估算，便于调用方定位；
 4. 补 JVM 单测：构造超预算子代理会话，断言触发压缩而非超轮失败。
 
-**影响面**：`core/QuroAssistant.kt` 子代理段（约 :1388-1500）。**PenAi 相关性：高**——"读前文稿 + 产出章节/报告"是写作 Agent 的核心调用形态。
+**影响面**：`core/QuroAssistant.kt` 子代理段（约 :1388-1500）。**Anise Write 相关性：高**——"读前文稿 + 产出章节/报告"是写作 Agent 的核心调用形态。
 
 ### 7.3 Issue #16：长耗时任务进度不可观测
 
@@ -425,7 +430,7 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 3. 网络类工具自动重试时展示重试过程；
 4. 子代理返回非最终结论时打标记，调用方可见状态。
 
-**影响面**：`QuroToolEngine` 执行回调 + 子代理结果判定。**PenAi 相关性：高**——章节生成属典型长任务。
+**影响面**：`QuroToolEngine` 执行回调 + 子代理结果判定。**Anise Write 相关性：高**——章节生成属典型长任务。
 
 ### 7.4 Issue #17：文件读取链路与技能库工具缺口
 
@@ -437,7 +442,7 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 2. `file_read` 增加 `offset`/`maxBytes`；`read_text_file` 支持绝对路径或在报错中说明可访问根；两者行为对齐；
 3. 新增 `skill_list` / `skill_enable` / `skill_disable` 工具（七步法注册，注意 coreNames + ALWAYS_ON 双写），打通"安装→启用"链路。
 
-**影响面**：`core/tools/` 文件读取族 + 技能系统。**PenAi 相关性：高**——长篇小说章节文件常在数百 KB 级，网文技能包的启用依赖第 3 项。
+**影响面**：`core/tools/` 文件读取族 + 技能系统。**Anise Write 相关性：高**——长篇小说章节文件常在数百 KB 级，网文技能包的启用依赖第 3 项。
 
 ### 7.5 Issue #18：技能列表中文化
 
@@ -449,7 +454,7 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 2. 技能选择界面优先显示中文，无则降级英文；支持中文关键词搜索（复用 `ToolCapabilityDirectory.matchToolsByIntent` 分词）；
 3. 与 7.4 第 3 项联动：AI 用中文给出启用裁决清单，用户确认后经 `skill_enable` 代启用。
 
-**影响面**：技能模型 + 技能页 UI。**PenAi 相关性：高**——novel-writing 套件面向中文作者，此为实现易用性的前置。
+**影响面**：技能模型 + 技能页 UI。**Anise Write 相关性：高**——novel-writing 套件面向中文作者，此为实现易用性的前置。
 
 ### 7.6 Issue #19 / #20：甘特图卡片渲染崩溃（复验项）
 
@@ -457,7 +462,7 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 
 **核实结论**：v1.1.7 源码该行已为 `val total = (card.total.takeIf { it > 0 } ?: card.tasks.maxOfOrNull { it.start + it.duration } ?: 1).coerceAtLeast(1)`，且存在 `if (card.tasks.isEmpty())` 空数据分支与相应注释，**疑似已在某版本修复**。
 
-**处置**：PenAi 分支基于 v1.1.7 构建后，按 issue 复现路径（对话框渲染 gantt 卡片）真机复验。若仍现，执行原修复建议（空安全 + 空数据降级为 note 卡 + 三类单测：空数组/缺字段/畸形 JSON）；若已修，补回归单测防回潮，issue 标注关闭。
+**处置**：Anise Write 分支基于 v1.1.7 构建后，按 issue 复现路径（对话框渲染 gantt 卡片）真机复验。若仍现，执行原修复建议（空安全 + 空数据降级为 note 卡 + 三类单测：空数组/缺字段/畸形 JSON）；若已修，补回归单测防回潮，issue 标注关闭。
 
 ### 7.7 Issue #21：深度思考开关对 Anthropic 兼容端点不生效
 
@@ -472,7 +477,7 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 3. 通用化：对"协议特征探测"（如端点响应 `anthropic-version` 头）增加兜底识别，避免逐厂商打补丁；
 4. 补 `QuroReasoningControlTest` 用例：Agnes 端点 + 开关两态断言请求体差异。
 
-**影响面**：`core/network/QuroReasoningControl.kt`。**PenAi 相关性：高**——国产 Anthropic 兼容端点是中文网文作者的常用模型来源。
+**影响面**：`core/network/QuroReasoningControl.kt`。**Anise Write 相关性：高**——国产 Anthropic 兼容端点是中文网文作者的常用模型来源。
 
 ## 8. 实施路线图
 
@@ -480,13 +485,13 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 
 | 阶段 | 目标 | 出口验收 | 禁止事项 |
 | --- | --- | --- | --- |
-| Phase 0 环境与基线 | 仓库改名（applicationId/namespace/App 名 PenAi）、签名配置、跑通基座干净构建、锁工具链、建 feature/penai 分支、冻结决策文档 | `assembleFullRelease` 产出可安装包 | 未跑通构建不动业务代码 |
+| Phase 0 环境与基线 | 仓库改名（applicationId/namespace/App 名 Anise Write）、签名配置、跑通基座干净构建、锁工具链、建 feature/penai 分支、冻结决策文档 | `assembleFullRelease` 产出可安装包 | 未跑通构建不动业务代码 |
 | Phase 1 端到端最小闭环 | NovelStudioScreen 空壳 + 入口 + `ui_open_novel` + 作品/章节 JSON 存取 + 手动写一章 | 用户可：打开工作台→建作品→写一章→保存→重进仍在 | 不接 AI、不做资料库 |
 | Phase 2 AI 闭环 | 人格替换 + 3 个核心工具（novel_write_chapter / novel_get_chapter / novel_build_context）+ 云端续写通 | 对话框说"续写第三章"→正文落盘→页面可见 | 不上子 Agent |
 | Phase 3 工具域全量 | 30 个工具族 + 8 类资料 + 伏笔跟踪 + 前文检索 + 关系图三表数据层 | AI 可完成"读资料→写章节→更新角色卡"全链路 | 不忘 coreNames/ALWAYS_ON 双写 |
 | Phase 4 技能与流派 | novel-writing + tomato-genre 双套件 + 25 预设注入链路 + 技能页中文化（7.5） | 用户选流派→AI 输出符合流派规约，用户可改提示词 | 不挤爆本地提示词预算 |
 | Phase 5 子 Agent | 6 个子 Agent 技能化 + 模糊匹配 + 3 轮收敛 + 职责边界矩阵落地 | 爽点/水文/标题/去AI味报告可产出，写操作全部经主 AI | 子 Agent 不得绕过主 AI 直写数据 |
-| Phase 6 基座修复 | 7.4 / 7.7 修复 + 7.6 复验 + 7.3 / 7.5 优化（7.2 随集群移除在 PenAi 分支失去触发路径，仅向上游提交 Patch） | 各 issue 复现路径通过 + 单测 | 不桩改基座代码 |
+| Phase 6 基座修复 | 7.4 / 7.7 修复 + 7.6 复验 + 7.3 / 7.5 优化（7.2 随集群移除在 Anise Write 分支失去触发路径，仅向上游提交 Patch） | 各 issue 复现路径通过 + 单测 | 不桩改基座代码 |
 | Phase 7 关系图与编辑器 | 关系图三表 + Canvas 物理渲染 + 独立富文本编辑器模块（桥接契约冻结） | 关系图可交互渲染；编辑器端到端读写通；模块摘除后功能降级不阻塞 | 桥接对象名/schema 未冻结不动工 |
 | Phase 8 审查与精修 | 一致性审查 + 精修 + 工作区绑定验证（卸载重装不丢稿） | 审查报告可产出；重装恢复验证通过 | 安全配置不同轴不上线 |
 | Phase 9 裁剪与发布 | 硬裁剪集群 + 软裁剪 IM/设备控制等 + MCP 动手术 + 包体优化 + R8 keep 规则 + 签名发布 | 发布包体积较基座下降且功能回归通过 | 裁剪不落地可验证不算完成 |
@@ -529,7 +534,7 @@ JDK 17+、Android SDK（compileSdk 36 / NDK r27）、阿里云 Maven 镜像配�
 
 ## 11. 预期产出
 
-1. PenAi 安卓应用（可安装发布包，中文网文创作定位）；
+1. Anise Write 安卓应用（可安装发布包，中文网文创作定位）；
 2. 网文工具域（30 工具）+ 双技能套件 + 6 子 Agent 的完整领域层代码；
 3. 25 流派预设库与全套 prompt 资产（中文，用户可改）；
 4. 基座修复 Patch（回馈上游）；

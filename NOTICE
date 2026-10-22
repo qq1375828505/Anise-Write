@@ -1,7 +1,7 @@
-PenAi
-Copyright 2025-2026 PenAi (qq1375828505)
+Anise Write
+Copyright 2025-2026 Anise Write (qq1375828505)
 
-This product includes software developed by third parties. PenAi is a
+This product includes software developed by third parties. Anise Write is a
 derivative work based on the ZorvAI codebase (see the first section
 below). The upstream source code is provided under the Apache License,
 Version 2.0. Bundled third-party components retain their own licenses,
@@ -14,19 +14,19 @@ obligations.
 UPSTREAM BASE ATTRIBUTION
 ----------------------------------------------------------------------
 
-ZorvAI (upstream base of PenAi)
+ZorvAI (upstream base of Anise Write)
   License: Apache-2.0
   Copyright: 2025-2026 Quro AI
   Source:  https://github.com/Quor-a/ZorvAI
-  Note:    PenAi is derived from this codebase (web-novel writing AI
+  Note:    Anise Write is derived from this codebase (web-novel writing AI
            Agent positioning). All third-party attribution entries of
            the upstream NOTICE are inherited below in full; see
            "ADDITIONAL COMPONENTS" for entries added during the Phase 7a
            license audit.
 
-PenAi (this application)
+Anise Write (this application)
   License: Apache-2.0
-  Source:  https://github.com/qq1375828505/PenAi
+  Source:  https://github.com/qq1375828505/AniseWrite
 
 AndroidX / Jetpack / Jetpack Compose / Material Components
   License: Apache-2.0
@@ -78,7 +78,7 @@ GeckoView (Mozilla)
   License: MPL-2.0 (file-level copyleft; unmodified upstream build, source
            available from Mozilla per MPL-2.0 §3.2)
   Source:  https://maven.mozilla.org/maven2/
-  Note:    Optional built-in browser engine. Per the PenAi planning
+  Note:    Optional built-in browser engine. Per the Anise Write planning
            document §2.7, general rendering can fall back to the system
            WebView; if this dependency is removed in a later phase, this
            entry is removed accordingly.
@@ -352,7 +352,25 @@ org.json — org.json:json:20240303
            dependency is optional for compile-time.
 
 ----------------------------------------------------------------------
-ADDITIONAL COMPONENTS (added by the PenAi Phase 7a NOTICE audit;
+DESIGN METHODOLOGY REFERENCE
+----------------------------------------------------------------------
+
+OpenMinis (github.com/OpenMinis/OpenMinis)
+  License: GPL-3.0
+  Source:  https://github.com/OpenMinis/OpenMinis
+  Note:    The Anise Write mobile UI specification
+           (docs/design/AniseWrite_UI_SPEC.md) adopts OpenMinis's
+           iOS-alignment *methodology* — pixel-measured values from iOS
+           reference screenshots, a single-source-of-truth design object,
+           measured contrast ratios recorded in comments, and semantic
+           token naming. Only the methodology and factual numeric values
+           (spacing, radii, type scale, color values) were referenced.
+           No OpenMinis source code, component implementation, icon
+           artwork, or screenshot assets were copied into this repository.
+           All Anise Write UI code is an independent implementation.
+
+----------------------------------------------------------------------
+ADDITIONAL COMPONENTS (added by the Anise Write Phase 7a NOTICE audit;
 declared in the build files but missing from the inherited upstream list)
 ----------------------------------------------------------------------
 
@@ -433,7 +451,7 @@ TRADEMARKS
 not grant rights to use these trademarks except as required to describe
 the origin of the software.
 
-"PenAi" is the project name of this derivative work. This NOTICE does not
+"Anise Write" is the project name of this derivative work. This NOTICE does not
 grant rights to use the upstream trademarks above.
 
 ----------------------------------------------------------------------

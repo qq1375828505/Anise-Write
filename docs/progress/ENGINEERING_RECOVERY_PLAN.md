@@ -1,6 +1,6 @@
-# PenAi 工程恢复方案与进度总表
+# Anise Write 工程恢复方案与进度总表
 
-> 快照：2026-10-20 | 产出：主编排层 | 仓库：`qq1375828505/PenAi`
+> 快照：2026-10-20 | 产出：主编排层 | 仓库：`qq1375828505/AniseWrite`
 > 约束红线：**本地不构建、不产出 APK**（编译打包只走 GitHub Actions）；**不接触任何签名私钥材料**。
 
 ---
@@ -66,7 +66,7 @@ object ClusterToolSet {
 
 注释明确：*「在 QuroBuiltInTools 的注册处加一行即可：`ClusterToolSet.registerAll(QuroToolRegistry.active!!)`」*
 
-**PenAi 应照抄该模式**：
+**Anise Write 应照抄该模式**：
 
 1. 新增 `core/tools/novel/NovelToolSet.kt`：
 

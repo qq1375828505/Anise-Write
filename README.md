@@ -1,6 +1,6 @@
 <div align="center">
 
-# PenAi
+# Anise Write
 
 ### 运行在 Android 上的网文写作 AI Agent · 把「想故事」变成「可交付章节」
 
@@ -11,7 +11,7 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.3-7F52FF.svg)](https://kotlinlang.org)
 [![Compose](https://img.shields.io/badge/Jetpack%20Compose-1.10.2-4285F4.svg)](https://developer.android.com/compose)
 [![基座](https://img.shields.io/badge/base-ZorvAI%20v1.1.7-8A8A8A.svg)](https://github.com/Quor-a/ZorvAI)
-[![CI](https://img.shields.io/github/actions/workflow/status/qq1375828505/PenAi/.github/workflows/build.yml?branch=main)](https://github.com/qq1375828505/PenAi/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/qq1375828505/AniseWrite/.github/workflows/build.yml?branch=main)](https://github.com/qq1375828505/AniseWrite/actions)
 
 </div>
 
@@ -19,11 +19,13 @@
 
 ## 这是什么
 
-PenAi 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端侧 AI Agent 基座，Apache-2.0）之上改造的**网文写作专用 Agent**。
+Anise Write 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端侧 AI Agent 基座，Apache-2.0）之上改造的**网文写作专用 Agent**。
 
 - **基座提供**：端侧离线推理（MNN / llama.cpp）、proot 终端、脚本引擎、工具运行时、插件与 ACI 框架、记忆与知识库、通用对话界面。
-- **PenAi 提供**：把「写一章网文」拆成七阶段的领域工作流、38 个写作工具、25 套中文网文流派预设、6 个写作子代理，以及伏笔 / 人物关系 / 记忆三件套图谱。
+- **Anise Write 提供**：把「写一章网文」拆成七阶段的领域工作流、38 个写作工具、25 套中文网文流派预设、6 个写作子代理，以及伏笔 / 人物关系 / 记忆三件套图谱。
 - **工程铁律**（承自基座）：**无兜底**（解析失败即抛错，绝不返回假数据）、**断点续跑**（每阶段状态落盘，杀进程可恢复）、**显式契约**（阶段输入输出编码在数据类上，不靠约定俗成）。
+
+> 本项目原代号 **PenAi**，于 2026-10-22 更名为 **Anise Write**（应用名、仓库名与文档同步更新；Android 包名与内部模块标识保持不变以保证升级兼容）。
 
 ## 核心能力
 
@@ -70,12 +72,12 @@ PenAi 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端侧 AI 
 │ 记忆与知识库 · 通用对话与设置界面                                         │
 └───────────────────────────────────────────────────────────────────────────┘
                               ▲ 同构扩展（工具域 + 技能套件，不 fork 基座）
-┌────────────────────────── PenAi 增量层 ──────────────────────────────────┐
+┌────────────────────────── Anise Write 增量层 ──────────────────────────────────┐
 │ core/novel/           领域契约：作品/卷/章 · 资料资产 · 图谱 · 七阶段工作流 │
 │ core/tools/novel/     38 个写作工具（结构 / 资料 / 图谱 / 写作）          │
 │ assets/skills/penai/  25 套流派预设 + manifest                          │
 │ assets/prompts/subagents/ 6 个子代理提示词 + 委托协议                    │
-│ ui/novel/             PenAi 写作界面（原生 Compose）                     │
+│ ui/novel/             Anise Write 写作界面（原生 Compose）                     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,8 +89,8 @@ PenAi 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端侧 AI 
 | `app/src/main/java/com/ai/assistance/quro/core/tools/novel/` | 38 个写作工具实现与工具集注册 |
 | `app/src/main/assets/skills/penai/` | 25 套流派预设资源包 |
 | `app/src/main/assets/prompts/subagents/` | 子代理提示词与委托协议（`DELEGATION.md`） |
-| `app/src/main/java/com/ai/assistance/quro/ui/novel/` | PenAi 写作界面与设计令牌 |
-| `docs/plan-v1.1/` | 《PenAi 软件改造计划书》（含目标形态、裁剪清单、UI 路线裁决） |
+| `app/src/main/java/com/ai/assistance/quro/ui/novel/` | Anise Write 写作界面与设计令牌 |
+| `docs/plan-v1.1/` | 《Anise Write 软件改造计划书》（含目标形态、裁剪清单、UI 路线裁决） |
 | `docs/progress/` | 工程恢复方案、阶段落地说明与交接文档 |
 
 ## 开发进度
@@ -100,10 +102,12 @@ PenAi 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端侧 AI 
 | Phase 3c | 图谱域：伏笔 / 关系 / 记忆 + 一致性检查 | ✅ |
 | Phase 4a | 写作域：流派、标题候选、去 AI 味、水字数/双点仪表盘、子代理委托 | ✅ |
 | Phase 5 | 契约对齐：工作流模型与 Phase 1/3a/3b 同源（无第二套章节/大纲/资料真相） | ✅ |
-| Phase 6 | PenAi 写作界面（Compose） | 🚧 进行中 |
+| Phase 6 | Anise Write 写作界面（Compose） | 🚧 进行中 |
 | Phase 7b | 正式签名打包与发布 | ⏳ 待办 |
 
 > UI 路线（计划书已冻结）：**沿用上游原生 Kotlin + Jetpack Compose**；写作界面自研，不移植 Flutter 代码——仅参考 novelIDE 的信息架构与交互范式。富文本编辑器为独立 `:novel-editor` 模块（WebView 承载，可摘除降级纯文本），关系图为自研 Compose Canvas 渲染。
+>
+> 视觉规范：[`docs/design/AniseWrite_UI_SPEC.md`](docs/design/AniseWrite_UI_SPEC.md)——**iOS 对齐范式**（分组列表、inset 分隔线、去饱和 iOS 蓝强调色），数值自 iOS 参考截图逐像素测量，统一收在单一真相源 `NovelDesign` 中；方法论参考 OpenMinis(GPL-3.0)，实现独立编写，未复制其代码或素材。
 
 ## 从源码构建
 
@@ -116,8 +120,8 @@ PenAi 是在 **[ZorvAI](https://github.com/Quor-a/ZorvAI)**（Android 端侧 AI 
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/qq1375828505/PenAi
-cd PenAi
+git clone https://github.com/qq1375828505/AniseWrite
+cd Anise Write
 
 # 2. 准备环境
 #    - 安装 JDK 17+，在 local.properties 配置 sdk.dir=/path/to/Android/Sdk
@@ -145,15 +149,16 @@ cd PenAi
 
 | 文档 | 内容 |
 |---|---|
-| [`docs/plan-v1.1/plan.md`](docs/plan-v1.1/plan.md) | 《PenAi 软件改造计划书》：目标形态、能力裁剪清单、UI 路线与分层裁决 |
+| [`docs/plan-v1.1/plan.md`](docs/plan-v1.1/plan.md) | 《Anise Write 软件改造计划书》：目标形态、能力裁剪清单、UI 路线与分层裁决 |
 | [`docs/progress/ENGINEERING_RECOVERY_PLAN.md`](docs/progress/ENGINEERING_RECOVERY_PLAN.md) | 工程恢复方案与 Phase 5 逐类型裁决表 |
 | [`docs/progress/HANDOFF_2026-10-21.md`](docs/progress/HANDOFF_2026-10-21.md) | 阶段交接文档（跨软件迁移与修复记录） |
 | [`docs/progress/PHASE5_2026-10-22.md`](docs/progress/PHASE5_2026-10-22.md) | Phase 5 契约对齐落地说明（类型映射表与 JSON 契约变更） |
+| [`docs/design/AniseWrite_UI_SPEC.md`](docs/design/AniseWrite_UI_SPEC.md) | 移动端界面设计规范（iOS 对齐范式；单一真相源、对比度实测、许可边界） |
 | [`docs/architecture/`](docs/architecture/) | 终端、浏览器等基座架构文档 |
 
 ## 许可与归属
 
-- PenAi 基于 **ZorvAI**（Apache-2.0）改造，**NOTICE** 完整保留上游与全部第三方归属清单；本项目同样以 Apache-2.0 发布。
+- Anise Write 基于 **ZorvAI**（Apache-2.0）改造，**NOTICE** 完整保留上游与全部第三方归属清单；本项目同样以 Apache-2.0 发布。
 - 领域资产来源 **novelIDE**（MIT）：仅参考其**信息架构与交互范式**，**未移植其 Flutter 代码**；若后续引入代码，须按 MIT 要求保留版权声明。
 - 第三方组件（GeckoView / MPN-2.0 等）各自遵循其许可证，见 [`NOTICE`](./NOTICE) 与 [`LICENSE`](./LICENSE)。
 

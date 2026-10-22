@@ -1,7 +1,7 @@
-# PenAi 移植工程 · 进度记录（PROJECT_STATUS）
+# Anise Write 移植工程 · 进度记录（PROJECT_STATUS）
 
 > 快照时间：2026-10-16 18:40（GMT+8）
-> 仓库：`qq1375828505/PenAi`（本文件所在仓库）
+> 仓库：`qq1375828505/AniseWrite`（本文件所在仓库）
 > 上位文档：[docs/plan-v1.1/](../plan-v1.1/)（规划书 V1.1 全套）
 > 工程约定：[ENGINEERING_CONVENTIONS.md](../../ENGINEERING_CONVENTIONS.md)
 
@@ -9,9 +9,9 @@
 
 ## 1. 工程概览
 
-**PenAi** = 基于 **ZorvAI v1.1.7**（开源安卓端侧 AI Agent，`com.ai.assistance.quro`，Kotlin 2.3 + Compose，Apache-2.0）改造的**网文写作 AI Agent**。
+**Anise Write** = 基于 **ZorvAI v1.1.7**（开源安卓端侧 AI Agent，`com.ai.assistance.quro`，Kotlin 2.3 + Compose，Apache-2.0）改造的**网文写作 AI Agent**。
 
-- 基座代码已完整入库（3262 文件），App 更名 PenAi，包名冻结不变
+- 基座代码已完整入库（3262 文件），App 更名 Anise Write，包名冻结不变
 - 施工方式：**子代理并行分工写代码，主编排层验收合并**，Git worktree 隔离（每阶段独立分支）
 - 构建方式：**本地不构建、不产安装包**；代码推送本仓库后由 **GitHub Actions 云端打包**（见 §6）
 
@@ -31,7 +31,7 @@
 | 2 | `sdkmanager --licenses` 退出 1 | cmdline-tools 16.0 许可证交互流程变化 | 弃用该 action，用 runner 预装 sdkmanager 直装组件 |
 | 3 | `ClassNotFoundException: GradleWrapperMain` | 上游 .gitignore 滤掉了 gradle-wrapper.jar | 本地生成 jar 强制入库 |
 | 4/重跑 | KSP 2.3.9 "not found in any sources" | 构件**实际存在**（Maven Central POM/JAR 均 200）；首轮网络抖动被 Gradle 缓存为"缺失"并随 Actions 缓存扩散 | gradlew 加 `--refresh-dependencies` |
-| 进行中 | 第 5 轮构建 | — | 结果见 [Actions](https://github.com/qq1375828505/PenAi/actions) |
+| 进行中 | 第 5 轮构建 | — | 结果见 [Actions](https://github.com/qq1375828505/AniseWrite/actions) |
 
 ## 3. 阶段状态总表
 
@@ -57,7 +57,7 @@
    - `.github/workflows/release.yml`（161 行）：tag `v*` 触发，Secrets 注入签名凭证（fail-fast 预检），`assembleFullRelease` + sign.sh 幂等补签 + SHA256SUMS + Release 附件；**workflow 内无写死密钥**
    - `.github/workflows/README.md`：CI 说明与 Secrets 配置指南
    - `NOTICE`：343 行基座清单完整继承 + 补齐 Room/SQLCipher/Markwon/kaml/BouncyCastle 等 13 项审计缺口 + UPSTREAM BASE ATTRIBUTION（ZorvAI 上游归属）
-3. `（本次）` 验收合并 Phase 0 更名 `9b3e6c0`：rootProject.name + 12 locale app_name（"Zorv AI"→"PenAi"）+ sc_browser_long 桌面标签 + 3 处 QS 磁贴标签 + 伴随 APK 显示名；**applicationId/namespace 保持 `com.ai.assistance.quro`（冻结决策）**
+3. `（本次）` 验收合并 Phase 0 更名 `9b3e6c0`：rootProject.name + 12 locale app_name（"Zorv AI"→"Anise Write"）+ sc_browser_long 桌面标签 + 3 处 QS 磁贴标签 + 伴随 APK 显示名；**applicationId/namespace 保持 `com.ai.assistance.quro`（冻结决策）**
 
 ### 验收结论依据
 - Phase 7a：YAML 双校验通过（yaml.safe_load + bash -n）、SDK 组件与 build.gradle.kts 完全对齐、发现并解决 `signingConfigs` 配置期 NPE（占位 keystore.properties 方案）、Secrets 仅列名不落值

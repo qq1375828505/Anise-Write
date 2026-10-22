@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PenAi</string>
+    <string name="app_name">Anise Write</string>
     <string name="quro_accessibility_desc">Служба специальных возможностей Zorv AI: используется для автоматизации интерфейса и чтения содержимого экрана, а также других расширенных возможностей. В этой версии только объявление разрешений, никакие личные данные не собираются.</string>
     <string name="quro_device_admin_label">Администратор устройства Zorv AI</string>
     <string name="quro_device_admin_desc">Используется только для двух операций: блокировка экрана, отключение или восстановление камеры. Не удаляет данные и не меняет пароль блокировки.</string>
@@ -12,7 +12,7 @@
     <string name="sc_chat_long">Открыть чат напрямую</string>
     <string name="sc_chat_disabled">Чат отключён</string>
     <string name="sc_browser_short">Консоль браузера</string>
-    <string name="sc_browser_long">Консоль браузера PenAi</string>
+    <string name="sc_browser_long">Консоль браузера Anise Write</string>
     <string name="sc_browser_disabled">Консоль браузера отключена</string>
     <string name="settings_appearance">Внешний вид и беседа</string>
     <string name="appearance_group_appearance">Внешний вид</string>

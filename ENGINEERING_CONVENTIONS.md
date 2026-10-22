@@ -1,11 +1,11 @@
-# PenAi 工程约定（ENGINEERING_CONVENTIONS）
+# Anise Write 工程约定（ENGINEERING_CONVENTIONS）
 
-> 本文件是 PenAi 移植工程所有子代理与主编排层的共同契约。任何分支的代码必须遵守。
-> 上位文档：《PenAi 软件改造计划书 V1.1》（`/workspace/penai/规划书V1.1-源稿.md`）。
+> 本文件是 Anise Write 移植工程所有子代理与主编排层的共同契约。任何分支的代码必须遵守。
+> 上位文档：《Anise Write 软件改造计划书 V1.1》（`/workspace/penai/规划书V1.1-源稿.md`）。
 
 ## 1. 工程布局
 
-- 构造仓库：`/workspace/penai/PenAi`（分支 `feature/penai`，origin = `https://github.com/qq1375828505/PenAi.git`）
+- 构造仓库：`/workspace/penai/Anise Write`（分支 `feature/penai`，origin = `https://github.com/qq1375828505/AniseWrite.git`）
 - 各阶段在独立 worktree + 独立分支作业：`git worktree add /workspace/penai/worktrees/<名> -b phase/<N>-<名>`
 - 参考克隆（只读）：`/workspace/penai/repos/{ZorvAI,novelIDE,AIGC-NetNov}`
 - **不在本地构建**：本机不装 Android SDK、不跑 gradle。编译与打包由 GitHub Actions 云端完成（见 Phase 7a 的 `.github/workflows/`）。

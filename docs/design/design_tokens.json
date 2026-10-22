@@ -1,0 +1,86 @@
+{
+  "$name": "anise-write-ios-parity",
+  "$version": "1.0.0",
+  "$description": "Anise Write 移动端设计令牌（iOS 对齐范式，方法论参考 OpenMinis）。以 iOS 参考截图为基准逐像素测量；所有数值为唯一真相源，代码必须引用，禁止内联硬编码。单位：dp / sp。",
+  "reference": "docs/design/AniseWrite_UI_SPEC.md",
+  "license": "数值与方法论参考 OpenMinis(GPL-3.0) 的设计范式并独立实现，未复制其代码或素材。",
+  "color": {
+    "pageBackground": { "light": "#F2F2F7", "dark": "#000000", "role": "页面底（iOS systemGroupedBackground）" },
+    "cardSurface": { "light": "#FFFFFF", "dark": "#1C1C1E", "role": "分组卡片 / 行容器" },
+    "cardElevated": { "light": "#F7F7FA", "dark": "#2C2C2E", "role": "卡片内次级块" },
+    "separator": { "light": "#D1D1D6", "dark": "#38383A", "role": "行分隔线（iOS separator）" },
+    "outline": { "light": "#C6C6C8", "dark": "#48484A", "role": "卡片外描边 / 输入框描边" },
+    "textPrimary": { "light": "#1C1C1E", "dark": "#F2F2F7", "role": "正文与行标题", "contrast": "亮 15.6:1 / 暗 14.2:1" },
+    "textSecondary": { "light": "#3C3C43", "dark": "#AEAEB2", "role": "描述与元信息", "contrast": "亮 10.2:1 / 暗 8.1:1" },
+    "textTertiary": { "light": "#8E8E93", "dark": "#8E8E93", "role": "占位符 / 分组脚注" },
+    "accent": { "light": "#528AD2", "dark": "#6A94CE", "role": "主色：选中态、链接、分组标题", "note": "iOS 蓝 #3686EE/#5490E4 降饱和约 30%，色相与明度不变；明度不抬高以保住亮色模式 4.5:1" },
+    "onAccent": { "light": "#FFFFFF", "dark": "#0B1A2E" },
+    "accentSoft": { "light": "#E4EDFB", "dark": "#1B2C48" },
+    "success": { "light": "#34C759", "dark": "#30D158" },
+    "warning": { "light": "#FF9F0A", "dark": "#FF9F0A" },
+    "danger": { "light": "#FF3B30", "dark": "#FF453A" },
+    "info": { "light": "#5AC8FA", "dark": "#64D2FF" },
+    "categoryPalette": {
+      "$note": "行首彩色圆角图标取色；八类资料等饱和度等明度，不因类别而异",
+      "character": "#4C8DF6",
+      "faction": "#F59E42",
+      "location": "#3FB984",
+      "item": "#A78BFA",
+      "ability": "#F2626B",
+      "plotline": "#5B7CFA",
+      "setting": "#2BB8C4",
+      "reference": "#8A8A8E"
+    }
+  },
+  "typography": {
+    "largeTitle": { "size": 34, "lineHeight": 41, "weight": 700 },
+    "title1": { "size": 28, "lineHeight": 34, "weight": 600 },
+    "title2": { "size": 22, "lineHeight": 28, "weight": 600 },
+    "title3": { "size": 20, "lineHeight": 25, "weight": 600 },
+    "headline": { "size": 17, "lineHeight": 22, "weight": 600 },
+    "body": { "size": 17, "lineHeight": 22, "weight": 400 },
+    "reading": { "size": 19, "lineHeight": 30, "weight": 400 },
+    "callout": { "size": 16, "lineHeight": 21, "weight": 400 },
+    "subhead": { "size": 15, "lineHeight": 20, "weight": 500 },
+    "footnote": { "size": 13, "lineHeight": 18, "weight": 400 },
+    "caption1": { "size": 12, "lineHeight": 16, "weight": 400 },
+    "note": "全部 sp，跟随系统字号缩放；行高以倍数给出（lineHeight/size）。"
+  },
+  "rhythm": {
+    "screenHorizontalPadding": 16,
+    "cardCornerRadius": 12,
+    "firstSectionTopGap": 16,
+    "sectionTopGap": 24,
+    "headerToCardGap": 8,
+    "cardToFooterGap": 8,
+    "interRowGap": 8,
+    "rowMinHeight": 44,
+    "rowIconSize": 29,
+    "rowIconRadius": 6.5,
+    "dividerInset": 16,
+    "tabBarHeight": 49,
+    "sheetCornerRadius": 10,
+    "touchTargetMin": 44,
+    "swipeThreshold": 96,
+    "editorReadingSize": 19,
+    "editorReadingLineHeight": 30,
+    "note": "单位 dp。全部来自 iOS 参考截图测量，改动须同步更新本文件与 NovelDesign.kt。"
+  },
+  "motion": {
+    "duration": { "quick": 120, "standard": 200, "sheet": 320 },
+    "easing": {
+      "standard": "cubic-bezier(0.2, 0, 0, 1)",
+      "decelerate": "cubic-bezier(0, 0, 0, 1)",
+      "accelerate": "cubic-bezier(0.3, 0, 1, 1)"
+    },
+    "spring": { "dampingRatio": 0.9, "stiffness": 380 },
+    "pressScale": 0.97,
+    "note": "单位 ms。顶部不做转场动画（iOS largeTitle 惯例）。"
+  },
+  "accessibility": {
+    "bodyContrastMin": 4.5,
+    "largeTextContrastMin": 3.0,
+    "fontScaleCap": 1.3,
+    "note": "色值定义处必须附对比度实测值；图标装饰性则 contentDescription 置 null。"
+  }
+}

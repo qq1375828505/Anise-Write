@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PenAi</string>
+    <string name="app_name">Anise Write</string>
     <string name="quro_accessibility_desc">Service d accessibilite Zorv AI : utilise pour l automation de l interface et la lecture du contenu d ecran, entre autres capacites avancees. Cette version ne fait que declarer les permissions et ne collecte aucune donnee privee.</string>
     <string name="quro_device_admin_label">Administrateur d appareil Zorv AI</string>
     <string name="quro_device_admin_desc">Utilise uniquement pour deux operations : verrouillage de l ecran, desactivation ou restauration de l appareil photo. Ne supprime pas les donnees et ne modifie pas le mot de passe de verrouillage.</string>
@@ -12,7 +12,7 @@
     <string name="sc_chat_long">Ouvrir la conversation directement</string>
     <string name="sc_chat_disabled">Chat desactive</string>
     <string name="sc_browser_short">Console de navigateur</string>
-    <string name="sc_browser_long">Console navigateur PenAi</string>
+    <string name="sc_browser_long">Console navigateur Anise Write</string>
     <string name="sc_browser_disabled">Console de navigateur desactivee</string>
     <string name="settings_appearance">Apparence et conversation</string>
     <string name="appearance_group_appearance">Apparence</string>
