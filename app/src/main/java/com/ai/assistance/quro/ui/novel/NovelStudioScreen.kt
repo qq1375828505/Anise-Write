@@ -416,13 +416,17 @@ private fun categoryColor(type: AssetType): Color = when (type) {
 }
 
 /**
- * 关系图 Tab：Canvas 绘制节点与边（环形布局，物理模拟见计划书 §6.8，Phase 6b 补），
- * 下方列出关系明细。
+ * 关系图 Tab：人物关系可视化（规范 §5.8）。
+ *
+ * 数据：人物卡（姓名/身份/势力）+ 关系表 + 人物卡内关系，三源并入同一张图；
+ * 布局：力导向（斥力 + 弹簧 + 阻尼），平移缩放，点选高亮一跳邻居。
  */
 @Composable
 private fun GraphTab(snapshot: NovelStudioSnapshot) {
-    val nodes = snapshot.graphNodes
-    if (nodes.isEmpty()) {
+    val model = remember(snapshot.assets, snapshot.relationships) {
+        buildGraphModel(snapshot.assets, snapshot.relationships)
+    }
+    if (model.nodes.isEmpty()) {
         NovelEmptyState(
             title = "还没有人物关系",
             hint = "让 AI 记录人物之间的关系，这里会生成关系图。",
@@ -431,80 +435,30 @@ private fun GraphTab(snapshot: NovelStudioSnapshot) {
         return
     }
 
-    Column(Modifier.fillMaxSize()) {
-        // Canvas 的绘制 lambda 不是 @Composable，颜色必须在外部取出
-        val accent = novelPalette.accent
-        val nodeSurface = novelPalette.cardSurface
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(260.dp)
-                .background(novelPalette.pageBackground),
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                val n = nodes.size
-                val radius = minOf(size.width, size.height) * 0.34f
-                val cx = size.width / 2f
-                val cy = size.height / 2f
-                val pos = HashMap<String, androidx.compose.ui.geometry.Offset>()
-                nodes.forEachIndexed { i, name ->
-                    val angle = (2.0 * Math.PI * i / n) - Math.PI / 2.0
-                    pos[name] = androidx.compose.ui.geometry.Offset(
-                        x = cx + (radius * kotlin.math.cos(angle)).toFloat(),
-                        y = cy + (radius * kotlin.math.sin(angle)).toFloat(),
-                    )
-                }
-                // 边：强度 1~5 → 线宽 1~4dp
-                snapshot.relationships.forEach { rel ->
-                    val a = pos[rel.fromName] ?: return@forEach
-                    val b = pos[rel.toName] ?: return@forEach
-                    drawLine(
-                        color = accent.copy(alpha = 0.55f),
-                        start = a,
-                        end = b,
-                        strokeWidth = (1f + rel.strength.coerceIn(1, 5) * 0.75f) * density,
-                    )
-                }
-                // 节点
-                pos.values.forEach { p ->
-                    drawCircle(
-                        color = nodeSurface,
-                        radius = 26f * density,
-                        center = p,
-                    )
-                    drawCircle(
-                        color = accent,
-                        radius = 26f * density,
-                        center = p,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f * density),
-                    )
-                }
-            }
-        }
+    var selected by remember { mutableStateOf<String?>(null) }
+    val selectedNode = selected?.let { model.byName[it] }
 
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
-        ) {
-            item {
-                Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
-                    NovelSectionHeader("关系 · ${snapshot.relationships.size}")
-                }
-            }
-            item {
-                NovelGroupedCard(
-                    modifier = Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding),
-                ) {
-                    snapshot.relationships.forEachIndexed { index, rel ->
-                        if (index > 0) NovelDivider()
-                        NovelGroupedRow(
-                            title = "${rel.fromName} → ${rel.toName}",
-                            subtitle = "${rel.type.ifBlank { "关系" }} · 强度 ${rel.strength}",
-                            showChevron = false,
-                        )
-                    }
-                }
-            }
+    Box(Modifier.fillMaxSize()) {
+        NovelGraphView(
+            model = model,
+            modifier = Modifier.fillMaxSize(),
+            onSelect = { selected = it },
+        )
+
+        NovelGraphLegend(
+            model = model,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(10.dp),
+        )
+
+        if (selectedNode != null) {
+            NovelGraphNodeDetail(
+                node = selectedNode,
+                neighbors = model.neighborsOf(selectedNode.name).toList(),
+                modifier = Modifier.align(Alignment.BottomCenter),
+                onDismiss = { selected = null },
+            )
         }
     }
 }
