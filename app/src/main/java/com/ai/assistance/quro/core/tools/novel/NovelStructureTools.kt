@@ -48,6 +48,7 @@ private object ErrCode {
     const val VOLUME_NOT_FOUND = "volume_not_found"
     const val CHAPTER_NOT_FOUND = "chapter_not_found"
     const val CONFIRM_REQUIRED = "confirm_required"
+    const val INTERNAL = "internal_error"
 }
 
 /** 结构化错误：code 供调用方分流，hint 告诉调用方下一步该干什么（对齐基座 NOT_FOUND 修正语义）。 */

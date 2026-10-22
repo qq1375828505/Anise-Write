@@ -416,7 +416,7 @@ fun QuroModelGroupDetailScreen(
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 for (t in listOf("", "off", "low", "medium", "high", "xhigh")) {
-                                    RoleChip(t.ifBlank { "不覆盖" } else t, thinking == t) { thinking = t }
+                                    RoleChip(if (t.isBlank()) "不覆盖" else t, thinking == t) { thinking = t }
                                 }
                             }
                         }
