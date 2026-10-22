@@ -343,23 +343,22 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 
 ### 6.7 界面设计
 
-**视觉风格：iOS 对齐范式**（用户决策：去陶土色、去中式文艺范；2026-10-22 定为 iOS 分组列表语汇，取代此前的"现代文学出版风"）：
+**视觉风格：完全沿用 Minis 界面布局**（用户决策，2026-10-22 敲定）：
 
-| 令牌 | 取值 | 用途 |
-| --- | --- | --- |
-| 页面底 | `#F2F2F7` 亮 / `#000000` 暗（iOS systemGroupedBackground） | 页面背景 |
-| 卡片 | `#FFFFFF` 亮 / `#1C1C1E` 暗（中性分组卡片，不着主色） | 分组容器 |
-| 文字 | `#1C1C1E` 亮（对比度 15.6:1）/ `#F2F2F7` 暗（14.2:1） | 正文 |
-| 强调色 | 去饱和 iOS 蓝 `#528AD2` 亮 / `#6A94CE` 暗 | 主按钮、选中态、链接、分组标题 |
-| 分隔 | 0.5px `#D1D1D6` 亮 / `#38383A` 暗，**自卡片左缘内缩 16dp** | 行分隔 |
-| 圆角 | 卡片 12dp / 行首图标 29dp 见方 + 6.5dp 圆角 / 底部 Sheet 10dp | 容器 |
-| 节奏 | 屏幕内缩 16dp、行高 44dp、组内行距 8dp、组间距 24dp、Tab 栏 49dp | 布局 |
+> Anise Write 的界面**完全使用 Minis 的界面布局**：页面骨架、分组列表、Tab 栏、底部 Sheet、
+> 设置条目一律照 Minis 来；新增界面**先在 Minis 里找对应页面/组件**再映射到本项目实现，
+> **不再自创视觉语言**。此前两版（"现代文学出版风"、自创"暗色玻璃"）均已作废。
 
-整体气质参照 iOS 系统应用（分组列表 + inset 分隔线 + 大标题 + 彩色圆角图标）：安静、克制、信息密度高，适合长时间操作。
+数值以 Minis 实测值为准（iOS 参考截图逐像素测量）：页面底 `#F2F2F7`/`#000000`、
+卡片 `#FFFFFF`/`#1C1C1E`、正文 `#1C1E1E`/`#F2F2F7`、去饱和 iOS 蓝 `#528AD2`/`#6A94CE`、
+0.5dp 分隔线自卡片左缘内缩 16dp、卡片圆角 12dp、行首图标 29dp/6.5dp、行高 44dp、Tab 栏 49dp。
 
-**规范与实现**：完整规范见 `docs/design/AniseWrite_UI_SPEC.md`，令牌见 `docs/design/design_tokens.json`，代码侧收在单一真相源 `ui/novel/NovelDesignTokens.kt`（`NovelDesign` / `NovelPalette` / `NovelType`）——**所有界面只允许引用，禁止内联硬编码数值**。
+**规范与实现**：完整规范见 `docs/design/AniseWrite_UI_SPEC.md`（含 **Minis 组件 → 本项目实现**对照表），
+令牌见 `docs/design/design_tokens.json`，代码侧收在单一真相源 `ui/novel/NovelDesignTokens.kt`
+（`NovelDesign` / `NovelPalette` / `NovelType`）——**所有界面只允许引用，禁止内联硬编码数值**。
 
-方法论参考 OpenMinis(GPL-3.0) 的 iOS 对齐范式（逐像素测量、单一真相源、对比度实测入注释），**只取方法与数值，实现独立编写，未复制其源码或素材**（详见 NOTICE "DESIGN METHODOLOGY REFERENCE"）。
+Minis = OpenMinis（GPL-3.0）：**只取布局与数值，实现独立编写，未复制其源码或素材**
+（详见 NOTICE "DESIGN METHODOLOGY REFERENCE"）。
 
 **NovelStudioScreen**（新建文件，最小侵入接线）：
 
@@ -388,6 +387,30 @@ AIGC-NetNov 是 AAswordman/Operit v1.10.1 的深度改造分支（包名 `com.ai
 - 端侧：MNN/llama.cpp GGUF，模型经 `QuroLocalModelManager` 导入；端侧提示词按 6.3 压缩；
 - 任务路由：按 novelIDE `model_router` 策略，重任务（全文审查）走云端、轻任务（润色/校对）可端侧；
 - 工具调用降级：移植 novelIDE XML 降级三层机制，保障不支持的 function calling 的模型可用。
+
+### 6.10 模型组 / 写作档（2026-10-22 新增，决策已敲定）
+
+**问题**：6 个写作子代理 + 全部 novel 工具**共用同一个模型**（`callLlm` 写死 `cfg.model`）。
+细纲/正文要强模型、润色/标题要快而便宜的小模型、一致性审查要长上下文——一档模型打天下必然次优。
+
+**决策**（用户）：**全套做**；入口放在**设置里的独立条目**（不挂「模型配置」子页、不进工作台页签）。
+
+**设计要点**（详见 `docs/design/ModelGroup_SPEC.md`）：
+
+| 要素 | 规定 |
+| --- | --- |
+| 组 | 命名的一组**有序**成员 `(providerId, model)` + 角色 + 组级上下文上限/思考档 |
+| 角色 | `DEFAULT`（默认组）/ `LIGHT`（轻量组）/ `CUSTOM` |
+| 预置 | `默认写作组` / `轻量组` / `审查组`（成员为空，添加后生效） |
+| 委派接口 | 委派方只表达**意图**：`same_as_me` / `default_model` / `sub_model`，**不写模型名** |
+| 优先级 | **用户钉住 > 委派意图 > 父会话模型** |
+| 不可用 | 目标组无可用成员 → 回落父会话模型，并**显式标记** `model_group_unavailable`（不静默换模型） |
+| 复用基座 | provider 级故障转移交给 `QuroFailoverManager`，本层不重复造 |
+| 信封 | `novel_delegate_subagent` 信封新增 `model_group` 字段（§4.1 schema 同步） |
+| UI | 设置 → 独立条目「模型组」→ 列表 → 详情（成员增删/排序/上下文/思考档）；另含「子代理模型」绑定页 |
+| 许可 | Minis = OpenMinis(GPL-3.0)：只借鉴方法学与布局，代码独立编写（NOTICE 已声明） |
+
+**当前进度**：数据模型 + 仓储 + 路由 + 委派工具接入已写（WIP `0835675`）；UI、schema、预置引导、真机验证待做。
 
 ## 7. 基座缺陷修复与优化
 
