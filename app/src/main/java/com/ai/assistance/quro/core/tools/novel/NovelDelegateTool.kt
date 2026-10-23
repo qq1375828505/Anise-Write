@@ -47,6 +47,16 @@ private fun gSubagentListHint(): String =
     "可用子代理：" + SUBAGENT_TITLES.entries.joinToString("；") { "${it.key}（${it.value}）" }
 
 /**
+ * 解析子代理输入（P0-2 五级模糊匹配）：精确 ID 直通；其余交给 [matchSubagent]
+ * （中文名/互相包含/触发词/描述），结果必须落在白名单 [SUBAGENT_TITLES] 内
+ * （防 assets 混入未知文件）。未命中返回 null —— 调用方报错并附清单，不兜底。
+ */
+private fun resolveSubagent(context: Context, input: String): String? {
+    if (input in SUBAGENT_TITLES) return input
+    return matchSubagent(input, loadSubagentMetas(context))?.id?.takeIf { it in SUBAGENT_TITLES }
+}
+
+/**
  * 读子代理提示词：返回 (frontmatter, systemPrompt 正文)。
  * 文件缺失 / assets IO 失败 → null（调用方报错，不兜底）。
  */
@@ -151,7 +161,7 @@ class NovelDelegateSubagentTool : QuroTool {
     override val parametersJson = """{
       "type": "object",
       "properties": {
-        "subagent": { "type": "string", "enum": ["outline", "character", "foreshadow", "polish", "review", "consistency"], "description": "目标子代理" },
+        "subagent": { "type": "string", "enum": ["outline", "character", "foreshadow", "polish", "review", "consistency"], "description": "目标子代理：ID 或中文名/任务词（如「润色」「帮我审读这段」），服务端五级模糊匹配" },
         "task": { "type": "string", "description": "自然语言任务（主 AI 转写，须自足可执行）" },
         "work_id": { "type": "string", "description": "作品 id（novel_list_works 获取）" },
         "chapter_id": { "type": "string", "description": "单章任务必填（polish/review 单章；自动预取该章正文进 context.chapter）" },
@@ -171,14 +181,18 @@ class NovelDelegateSubagentTool : QuroTool {
             ?: return gError(GErr.INVALID_ARGS, "参数不是合法 JSON", "形如 {\"subagent\":\"outline\",\"task\":\"…\",\"work_id\":\"…\"}。${gSubagentListHint()}")
 
         // ---- 1. 基础校验（全部失败可见，附子代理清单） ----
-        val subagent = args.optString("subagent", "").trim()
-        if (subagent !in SUBAGENT_TITLES) {
-            return gError(
-                GErr.INVALID_ARGS,
-                "subagent 不合法：「$subagent」",
-                "取值须为 outline/character/foreshadow/polish/review/consistency。${gSubagentListHint()}",
-            )
+        // 五级模糊匹配（P0-2）：精确 ID → 中文名 → 互相包含 → 触发词 → 描述包含。
+        // 用户/模型传「帮我润色这段」这类自然表达时也能落到正确子代理。
+        val subagentInput = args.optString("subagent", "").trim()
+        if (subagentInput.isBlank()) {
+            return gError(GErr.INVALID_ARGS, "subagent 不能为空", "用 ID 或中文名指定目标子代理。${gSubagentListHint()}")
         }
+        val subagent = resolveSubagent(context, subagentInput)
+            ?: return gError(
+                GErr.INVALID_ARGS,
+                "subagent 无法匹配：「$subagentInput」",
+                "支持 ID（outline 等）、中文名（润色代理）或任务词（帮我润色这段）。${gSubagentListHint()}",
+            )
         val task = args.optString("task", "").trim()
         if (task.isBlank()) return gError(GErr.INVALID_ARGS, "task 不能为空", "写清要子代理做什么，如「为第 81-100 章展开细纲」")
         val workId = args.optString("work_id", "").trim()

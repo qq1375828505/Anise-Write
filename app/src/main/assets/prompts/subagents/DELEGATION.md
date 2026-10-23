@@ -186,7 +186,7 @@ zero-write: true              # 硬约束标记，加载器与调度器可断言
   "parametersJson": {
     "type": "object",
     "properties": {
-      "subagent": { "type": "string", "enum": ["outline","character","foreshadow","polish","review","consistency"] },
+      "subagent": { "type": "string", "enum": ["outline","character","foreshadow","polish","review","consistency"], "description": "目标子代理；也接受中文名/任务词，服务端五级模糊匹配（P0-2）" },
       "task": { "type": "string", "description": "自然语言任务" },
       "work_id": { "type": "string" },
       "chapter_id": { "type": "string", "description": "单章任务必填" },
