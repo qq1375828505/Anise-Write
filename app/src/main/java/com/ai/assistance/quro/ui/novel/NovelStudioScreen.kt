@@ -64,6 +64,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -254,6 +260,15 @@ fun NovelStudioScreen(onClose: () -> Unit) {
                                 }
                             }
                         },
+                        onReorderChapters = { volumeId, orderedIds ->
+                            scope.launch {
+                                val workId = snapshot.selectedWorkId
+                                if (workId != null) {
+                                    withContext(Dispatchers.IO) { data.reorderChapters(workId, volumeId, orderedIds) }
+                                    snapshot = withContext(Dispatchers.IO) { data.load(workId) }
+                                }
+                            }
+                        },
                     )
 
                     NovelTab.ASSETS -> AssetsTab(snapshot)
@@ -334,6 +349,7 @@ private fun ChaptersTab(
     onDeleteVolume: (NovelVolume) -> Unit,
     onCreateVolume: () -> Unit,
     onSetChapterStatus: (NovelChapter, NovelChapterStatus) -> Unit,
+    onReorderChapters: (String, List<String>) -> Unit,
 ) {
     // 侧滑操作的目标章节
     var renaming by remember { mutableStateOf<NovelChapter?>(null) }
@@ -348,6 +364,19 @@ private fun ChaptersTab(
     // 章节状态 / 伏笔详情
     var statusTarget by remember { mutableStateOf<NovelChapter?>(null) }
     var hookTarget by remember { mutableStateOf<NovelHook?>(null) }
+    // 打磨-⑨ 卷内拖拽排序：拖拽卷 / 起点 / 悬停位 / 指尖偏移（px）
+    var dragVolumeId by remember { mutableStateOf<String?>(null) }
+    var dragFrom by remember { mutableStateOf(-1) }
+    var dragTo by remember { mutableStateOf(-1) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val dragDensity = LocalDensity.current
+    val dragStepPx = with(dragDensity) { 60.dp.toPx() }
+    fun resetDrag() {
+        dragVolumeId = null
+        dragFrom = -1
+        dragTo = -1
+        dragOffsetY = 0f
+    }
 
     if (snapshot.works.isEmpty()) {
         Column(Modifier.fillMaxSize()) {
@@ -482,20 +511,68 @@ private fun ChaptersTab(
                     } else {
                         chapters.forEachIndexed { index, chapter ->
                             if (index > 0) NovelDivider()
-                            NovelSwipeRow(
-                                actions = listOf(
-                                    NovelSwipeAction("移动", novelPalette.accent) { moving = chapter },
-                                    NovelSwipeAction("改名", Color(0xFF8A8A8E)) { renaming = chapter },
-                                    NovelSwipeAction("状态", Color(0xFF4ADE80)) { statusTarget = chapter },
-                                    NovelSwipeAction("删除", novelPalette.danger) { deleting = chapter },
-                                ),
+                            // 打磨-⑨：长按拖动排序（卷内）。拖过半格即与相邻行换位，松手落库。
+                            val isDragging = dragVolumeId == volume.id && dragFrom == index
+                            val shiftedY = when {
+                                dragVolumeId != volume.id -> 0f
+                                isDragging -> dragOffsetY
+                                dragTo > dragFrom && index in (dragFrom + 1)..dragTo -> -dragStepPx
+                                dragTo < dragFrom && index in dragTo until dragFrom -> dragStepPx
+                                else -> 0f
+                            }
+                            Box(
+                                Modifier
+                                    .zIndex(if (isDragging) 1f else 0f)
+                                    .graphicsLayer { translationY = shiftedY }
+                                    .pointerInput(volume.id, chapters.map { it.id }) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                dragVolumeId = volume.id
+                                                dragFrom = index
+                                                dragTo = index
+                                                dragOffsetY = 0f
+                                            },
+                                            onDragEnd = {
+                                                if (dragVolumeId == volume.id && dragFrom >= 0 && dragTo != dragFrom) {
+                                                    val ordered = chapters.toMutableList().apply {
+                                                        val item = removeAt(dragFrom)
+                                                        add(dragTo.coerceIn(0, size), item)
+                                                    }.map { it.id }
+                                                    onReorderChapters(volume.id, ordered)
+                                                }
+                                                resetDrag()
+                                            },
+                                            onDragCancel = { resetDrag() },
+                                            onDrag = { change, delta ->
+                                                change.consume()
+                                                dragOffsetY += delta.y
+                                                while (dragOffsetY > dragStepPx / 2f && dragTo < chapters.lastIndex) {
+                                                    dragTo += 1
+                                                    dragOffsetY -= dragStepPx
+                                                }
+                                                while (dragOffsetY < -dragStepPx / 2f && dragTo > 0) {
+                                                    dragTo -= 1
+                                                    dragOffsetY += dragStepPx
+                                                }
+                                            },
+                                        )
+                                    },
                             ) {
-                                NovelGroupedRow(
-                                    title = chapter.title,
-                                    subtitle = "${chapterStatusLabel(chapter.status)} · ${chapter.wordCount} 字",
-                                    trailing = chapter.updatedAt.takeIf { it > 0 }?.let { formatDate(it) },
-                                    onClick = { onOpenChapter(chapter) },
-                                )
+                                NovelSwipeRow(
+                                    actions = listOf(
+                                        NovelSwipeAction("移动", novelPalette.accent) { moving = chapter },
+                                        NovelSwipeAction("改名", Color(0xFF8A8A8E)) { renaming = chapter },
+                                        NovelSwipeAction("状态", Color(0xFF4ADE80)) { statusTarget = chapter },
+                                        NovelSwipeAction("删除", novelPalette.danger) { deleting = chapter },
+                                    ),
+                                ) {
+                                    NovelGroupedRow(
+                                        title = chapter.title,
+                                        subtitle = "${chapterStatusLabel(chapter.status)} · ${chapter.wordCount} 字",
+                                        trailing = chapter.updatedAt.takeIf { it > 0 }?.let { formatDate(it) },
+                                        onClick = { onOpenChapter(chapter) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -833,6 +910,12 @@ private fun StatsTab(
     var report by remember { mutableStateOf<NovelAnalysisReportState?>(null) }
     var memoryDetail by remember { mutableStateOf<NovelMemory?>(null) }
     var memoryToDelete by remember { mutableStateOf<NovelMemory?>(null) }
+    // 打磨-⑩ 二级指标（从快照现算，无额外 IO）
+    val statChapters = snapshot.selectedWork?.chapters ?: emptyList()
+    val avgChapterWords = if (statChapters.isEmpty()) 0 else snapshot.totalWords / statChapters.size
+    val hookTotal = snapshot.openHookCount + snapshot.closedHookCount
+    val hookRecovery = if (hookTotal == 0) "—" else "${snapshot.closedHookCount * 100 / hookTotal}%"
+    val completedCount = statChapters.count { it.status == NovelChapterStatus.COMPLETED }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
@@ -863,6 +946,31 @@ private fun StatsTab(
             }
         }
         item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = NovelDesign.screenHorizontalPadding)
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                NovelStatCard(
+                    label = "平均章字数",
+                    value = avgChapterWords.toString(),
+                    modifier = Modifier.weight(1f),
+                )
+                NovelStatCard(
+                    label = "伏笔回收率",
+                    value = hookRecovery,
+                    modifier = Modifier.weight(1f),
+                )
+                NovelStatCard(
+                    label = "已完成",
+                    value = completedCount.toString(),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        item {
             Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
                 Spacer(Modifier.height(NovelDesign.sectionTopGap))
                 NovelSectionHeader("概况")
@@ -887,6 +995,12 @@ private fun StatsTab(
                 NovelGroupedRow(
                     title = "资料条目",
                     trailing = snapshot.assets.size.toString(),
+                    showChevron = false,
+                )
+                NovelDivider()
+                NovelGroupedRow(
+                    title = "章节状态",
+                    subtitle = "已完成 $completedCount · 润色中 ${statChapters.count { it.status == NovelChapterStatus.POLISHING }} · 草稿 ${statChapters.count { it.status == NovelChapterStatus.DRAFT }} · 未写 ${statChapters.count { it.status == NovelChapterStatus.UNWRITTEN }}",
                     showChevron = false,
                 )
             }

@@ -2,6 +2,7 @@ package com.ai.assistance.quro.ui.novel
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -598,26 +599,41 @@ fun NovelGraphLegend(
         modifier = modifier,
     ) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-            Text(
-                text = "关系类型",
-                style = NovelType.caption1,
-                color = novelPalette.textTertiary,
-            )
-            Spacer(Modifier.height(6.dp))
-            for (type in used.sortedBy { NovelRelationColors.ordered.indexOf(it).let { i -> if (i < 0) 99 else i } }) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                    Box(
-                        Modifier
-                            .size(width = 14.dp, height = 2.5.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(NovelRelationColors.of(type)),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = type,
-                        style = NovelType.caption1,
-                        color = novelPalette.textSecondary,
-                    )
+            // 打磨-⑫：图例可折叠 —— 点标题栏收起/展开，收起后只留「关系类型 ▸ N」。
+            var collapsed by remember { mutableStateOf(false) }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { collapsed = !collapsed },
+            ) {
+                Text(
+                    text = "关系类型",
+                    style = NovelType.caption1,
+                    color = novelPalette.textTertiary,
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = if (collapsed) "▸ ${used.size}" else "▾",
+                    style = NovelType.caption1,
+                    color = novelPalette.textTertiary,
+                )
+            }
+            if (!collapsed) {
+                Spacer(Modifier.height(6.dp))
+                for (type in used.sortedBy { NovelRelationColors.ordered.indexOf(it).let { i -> if (i < 0) 99 else i } }) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                        Box(
+                            Modifier
+                                .size(width = 14.dp, height = 2.5.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(NovelRelationColors.of(type)),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = type,
+                            style = NovelType.caption1,
+                            color = novelPalette.textSecondary,
+                        )
+                    }
                 }
             }
         }

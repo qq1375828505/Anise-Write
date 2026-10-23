@@ -133,4 +133,8 @@ class NovelStudioData(context: Context) {
     /** 删除一条记忆（P1-7 记忆 UI）。 */
     fun deleteMemory(workId: String, memoryId: String): Boolean =
         graph.deleteMemory(workId, memoryId)
+
+    /** 卷内章节重排（打磨-⑨ 拖拽排序）。 */
+    fun reorderChapters(workId: String, volumeId: String, orderedIds: List<String>): Boolean =
+        repo.reorderChapters(workId, volumeId, orderedIds)
 }

@@ -330,6 +330,36 @@ class NovelRepository(private val rootDir: File) {
             updated
         }
 
+    /**
+     * 卷内重排（打磨-⑨ 拖拽排序）：按给定章节 id 顺序重写该卷内章节的 order。
+     *
+     * - 只影响本卷章节；列表外的 id 忽略，未列到的章节保持相对顺序追加尾部；
+     * - order 规整为 0..n-1；**不更新 updatedAt**（排序不是写作行为，
+     *   不能污染「近 7 天字数」等统计）。
+     */
+    fun reorderChapters(workId: String, volumeId: String, orderedIds: List<String>): Boolean =
+        synchronized(lock) {
+            val works = loadRawWorks()
+            val idx = works.indexOfFirst { it.id == workId }
+            if (idx < 0) throw IllegalArgumentException("作品不存在: $workId")
+            val work = works[idx]
+            val inVolume = work.chapters.filter { it.volumeId == volumeId }.sortedBy { it.order }
+            if (inVolume.size < 2) return@synchronized false
+            val target = inVolume.map { it.id }
+            val wanted = orderedIds.filter { it in target }
+            if (wanted.size < 2) return@synchronized false
+            val wantedSet = wanted.toSet()
+            val reordered = wanted + target.filterNot { it in wantedSet }
+            val orderOf = reordered.withIndex().associate { (i, id) -> id to i }
+            val chapters = work.chapters.map { ch ->
+                val newOrder = orderOf[ch.id] ?: return@map ch
+                if (ch.order == newOrder) ch else ch.copy(order = newOrder)
+            }
+            works[idx] = work.copy(chapters = chapters)
+            saveIndex(works)
+            true
+        }
+
     // ─────────────────────────── 内部 ───────────────────────────
 
     private fun chapterFile(workId: String, chapterId: String): File =
