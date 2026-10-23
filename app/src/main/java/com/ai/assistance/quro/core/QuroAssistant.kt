@@ -14,6 +14,7 @@ import com.ai.assistance.quro.core.network.QuroLocalEnginePrefs
 import com.ai.assistance.quro.core.network.LocalModelLoaders
 import com.ai.assistance.quro.core.network.LocalModelLoader
 import com.ai.assistance.quro.core.network.QuroLocalToolsCodec
+import com.ai.assistance.quro.core.network.QuroTextToolCallBridge
 import com.ai.assistance.quro.core.QuroLlmResult
 import com.ai.assistance.quro.core.tools.QuroToolEngine
 import com.ai.assistance.quro.core.tools.QuroToolFeedback
@@ -530,7 +531,7 @@ class QuroAssistant(
                     }
                     Unit
                 }
-                val result = runCatching {
+                val rawResult = runCatching {
                     if (cfg.provider == "MNN" || cfg.provider == "LLAMA_CPP") {
                         // 本地离线模型（MNN / llama.cpp）：走本地推理引擎，不发起 HTTP 请求。
                         // contextWindow 必须下传：本地会话据此决定 n_ctx，否则原生层按 2048 截断 prompt。
@@ -639,6 +640,15 @@ class QuroAssistant(
                     )
                     QuroLlmResult.Error("请求失败[$srcTag]：${e.message}$hint")
                 }
+
+                // ── P0-1（层③）：文本态工具调用升格 —— 不支持 function-calling 的模型
+                //   （含经层①去 tools 降级后的上游）会把调用写进正文；解析出来即合成
+                //   ToolCalls 走下方完整执行链，绝不把「声明要调工具」当最终答复交出去。
+                val knownToolNames = runCatching {
+                    if (activeToolRouter != null) activeToolRouter!!.activeSpecs().map { it.name }
+                    else agentAwareSpecs.map { it.name }
+                }.getOrElse { emptyList() }
+                val result = QuroTextToolCallBridge.upgrade(rawResult, knownToolNames)
 
                 when (result) {
                     is QuroLlmResult.Text -> {
@@ -1450,7 +1460,7 @@ class QuroAssistant(
         var lastText = ""
         for (round in 0 until maxRounds) {
             val msgs = subStore.toLlmMessages(system, SUBAGENT_CONTEXT_WINDOW_TOKENS, 0)
-            val res = runCatching {
+            val rawRes = runCatching {
                 client.chat(
                     baseUrl = cfg.baseUrl,
                     apiKey = cfg.apiKey,
@@ -1462,6 +1472,9 @@ class QuroAssistant(
                     stream = false,
                 )
             }.getOrElse { e -> QuroLlmResult.Error("子智能体调用失败：${e.message}") }
+
+            // ── P0-1（层③）：子智能体同样支持文本态工具调用（端侧小模型刚需）──
+            val res = QuroTextToolCallBridge.upgrade(rawRes, subSpecs.map { it.name })
 
             when (res) {
                 is QuroLlmResult.Text -> {

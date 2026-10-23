@@ -237,14 +237,29 @@ class QuroLlmClient(
             Log.d(TAG, "    tool_names=[${tools.joinToString(", ") { it.name }}]")
             if (tools.size > 25) Log.w(TAG, "    ⚠️ 工具数量 ${tools.size} 偏多（内置工具+技能）！部分 API 中转可能静默丢弃 tools 字段，导致模型无法调用工具。可考虑关闭部分技能的「常驻系统提示词」或在设置关闭「完整工具集」。")
         }
-        val req = Request.Builder().url(url)
+        // ── P0-1（层①）：预构建「去 tools」请求体 —— 上游 400/422（不支持 function
+        //    calling 的模型/中转，如 MiMo）时改发这一份重试一次，配合层②③让文本调用可执行。
+        val bodyNoTools: String? = if (tools.isNotEmpty()) {
+            JSONObject(body.toString()).apply {
+                remove("tools")
+                remove("tool_choice")
+            }.toString()
+        } else null
+        // 请求构建参数化：重试循环里换 body 时重建（认证头与旧版逐字节一致）。
+        fun buildReq(payload: String): Request = Request.Builder().url(url)
             .addHeader("Authorization", "Bearer $apiKey")
             .addHeader("Content-Type", "application/json")
-            .post(bodyStr.toRequestBody("application/json".toMediaType()))
+            .post(payload.toRequestBody("application/json".toMediaType()))
             .build()
         // 流式路径：逐字回调，不走重试（避免半截 token 后重试造成内容错乱）。
         if (stream && onToken != null) {
-            return streamChat(req, bodyStr, onToken, onThinking)
+            // ── P0-1（层①·流式）：随请求带好「去 tools」备胎 —— streamChat 在首 token 前
+            //   遇 400/422 时直接改发它（与下方非流式路径同策略）。
+            return streamChat(
+                buildReq(bodyStr), bodyStr, onToken, onThinking,
+                retryReq = bodyNoTools?.let { buildReq(it) },
+                retryBody = bodyNoTools,
+            )
         }
         // 重试策略：网关类临时故障（5xx / 429）与网络异常（超时/连接失败）自动重试，
         // 避免 openresty 等反向代理偶发 502/503 直接把原始错误甩给用户。
@@ -252,6 +267,8 @@ class QuroLlmClient(
         val maxRetries = 2
         val retryableCodes = setOf(429, 500, 502, 503, 504)
         var lastErr: String? = null
+        var activeBody: String = bodyStr // P0-1：当前请求体（400/422 时切到去 tools 版）
+        var toolsDropped = false
         for (attempt in 0..maxRetries) {
             if (attempt > 0) {
                 val backoff = 800L * attempt
@@ -265,7 +282,7 @@ class QuroLlmClient(
             //      超时置 timedOut 并中止调用。
             //   随后在 catch 里按「超时 / 用户取消 / 真实网络错误」三分支区分，绝不再把
             //   CancellationException 或 OkHttp 的 abort(IOException("Canceled")) 包成网络错误气泡。
-            val call = client.newCall(req)
+            val call = client.newCall(buildReq(activeBody))
             // 3a 加固：计时器协程写、执行线程读，普通 Boolean 存在可见性竞态 → AtomicBoolean
             // （局部被捕获变量无法标注 @Volatile，AtomicBoolean 是等价且更明确的修法）。
             val timedOut = AtomicBoolean(false)
@@ -301,15 +318,27 @@ class QuroLlmClient(
                         //    落在 retryableCodes 里就会被无脑重试 2 轮。
                         if (QuroLlmErrors.isContextLengthExceeded(text)) {
                             Log.w(TAG, "<<< CONTEXT LIMIT HTTP=${resp.code}：确定性失败，不重试")
-                            dumpLlmErrorPayload(resp.code, text, bodyStr, url)
+                            dumpLlmErrorPayload(resp.code, text, activeBody, url)
                             return@use QuroLlmResult.Error(QuroLlmErrors.contextLimitMessage(text), terminal = true)
+                        }
+                        // ── P0-1（层①）：400/422 = 上游不认 tools 字段（不支持 function
+                        //    calling 的小模型/中转）→ 换「去 tools」请求体重试一次。
+                        //    置位后本轮返回 null 进入重试循环，下一轮 buildReq(activeBody) 发无 tools 版。
+                        if ((resp.code == 400 || resp.code == 422) && bodyNoTools != null &&
+                            !toolsDropped && attempt < maxRetries
+                        ) {
+                            toolsDropped = true
+                            activeBody = bodyNoTools
+                            lastErr = "HTTP ${resp.code} (tools unsupported → retry without tools)"
+                            Log.w(TAG, "<<< TOOLS UNSUPPORTED HTTP=${resp.code}：剥离 tools 降级重试")
+                            return@use null
                         }
                         if (resp.code in retryableCodes && attempt < maxRetries) {
                             return@use null // 临时故障 → 进入下一次重试
                         }
                         // 🔧 把真实发出的请求体 + 上游响应双写到 Download/QuroAI_logs/，
                         // 用户用文件管理器即可取到（无需 adb），用于定位到底哪条消息/哪个字段非法。
-                        dumpLlmErrorPayload(resp.code, text, bodyStr, url)
+                        dumpLlmErrorPayload(resp.code, text, activeBody, url)
                         return@use QuroLlmResult.Error(friendlyHttpError(resp.code, text))
                     }
                     return@use parse(text)
@@ -330,7 +359,7 @@ class QuroLlmClient(
                         lastErr = e.message
                         Log.e(TAG, "<<< NETWORK ERROR attempt=$attempt: ${e.message}", e)
                         if (attempt < maxRetries) continue // 超时/连接失败等网络异常重试
-                        dumpLlmErrorPayload(-1, "网络/解析异常: ${e.message}", bodyStr, url)
+                        dumpLlmErrorPayload(-1, "网络/解析异常: ${e.message}", activeBody, url)
                         return QuroLlmResult.Error(friendlyNetError(e))
                     }
                 }
@@ -857,7 +886,15 @@ class QuroLlmClient(
      *    这与非流式 chat() 的重试策略对齐，也对齐「其他客户端连得上」的体感——
      *    单次建连因路由/解析抖动失败不该直接判死，给一次重连机会；已吐出内容则不重试（避免错乱）。
      */
-    private suspend fun streamChat(req: Request, requestBody: String, onToken: (String) -> Unit, onThinking: ((String) -> Unit)? = null): QuroLlmResult {
+    private suspend fun streamChat(
+        req: Request,
+        requestBody: String,
+        onToken: (String) -> Unit,
+        onThinking: ((String) -> Unit)? = null,
+        /** P0-1（层①）：400/422 时改发「去 tools」请求重试一次（由 chat() 注入；null = 不适用）。 */
+        retryReq: Request? = null,
+        retryBody: String? = null,
+    ): QuroLlmResult {
         val contentAcc = StringBuilder()
         val reasoningAcc = StringBuilder()
         // 🔧 思考标签剥离：DeepSeek-R1 / Qwen-Think 等推理模型把 <think>…</think> 直接混进 content 流，
@@ -932,6 +969,12 @@ class QuroLlmClient(
                             Log.w(TAG, "<<< STREAM CONTEXT LIMIT HTTP=$code：确定性失败，不重试")
                             dumpLlmErrorPayload(code, respText, requestBody, req.url.toString())
                             return@use QuroLlmResult.Error(QuroLlmErrors.contextLimitMessage(respText), terminal = true)
+                        }
+                        // ── P0-1（层①·流式）：400/422 = 上游不认 tools 字段 → 去 tools 降级重试一次 ──
+                        //   非流式路径同策略；400/422 场景必然尚未吐出任何内容（首 token 前失败），直接重开。
+                        if ((code == 400 || code == 422) && retryReq != null && retryBody != null) {
+                            Log.w(TAG, "<<< STREAM TOOLS UNSUPPORTED HTTP=$code：剥离 tools 降级重试")
+                            return@use streamChat(retryReq, retryBody, onToken, onThinking)
                         }
                         // 🔧 toolfix9：流式首 token 前遇到可重试状态码（5xx/429）→ 重试，
                         //   对齐非流式 chat() 路径。此前流式 500 直接判死甩给用户，
