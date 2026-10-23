@@ -13,7 +13,7 @@ import android.content.Context
  *      修正参考实现里「'AI味' 因大小写永不命中」的缺陷）；
  *   5. **描述包含**（`description.contains(input)`）。
  *
- * 元数据来源 = `assets/prompts/subagents/*.md` 的 YAML frontmatter（唯一真相源；
+ * 元数据来源 = `assets/prompts/subagents` 下的 `*.md` 的 YAML frontmatter（唯一真相源；
  * 加载时校验 `zero-write: true`，与提示词加载同口径，自动跳过
  * DELEGATION/CONVERGENCE/ORCHESTRATION 等无标记文件）。
  * 匹配顺序 = 文件名字典序，多候选取第一个（确定性）。
