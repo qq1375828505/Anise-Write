@@ -2,6 +2,8 @@
 
 # Anise Write
 
+> 📌 **项目进度 / AI 接手先读：[PROGRESS.md](./PROGRESS.md)**（已完成 ✓ / 未完成 ⏳ / 已取消 ❌，避免全仓扫描）
+
 ### 运行在 Android 上的网文写作 AI Agent · 把「想故事」变成「可交付章节」
 
 *On-device AI writing agent for Chinese web novels — a seven-stage chapter workflow, 38 writing tools, 25 genre presets and a character-relationship graph, all on your phone.*

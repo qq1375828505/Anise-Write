@@ -1,6 +1,7 @@
 # Anise Write · 项目记录（Project Record）
 
 > **这是项目的权威档案。** 想知道"这是什么、做到哪、接下来做什么"，读这一份就够。
+> 📌 **最新进度（AI 先读）：[PROGRESS.md](./PROGRESS.md)** —— 进度状态以 PROGRESS.md 为准，本文件是技术细节档案。
 > 最后更新：2026-10-23（会话收尾）
 > 配套：[UI 规范](docs/design/AniseWrite_UI_SPEC.md) · [模型组规范](docs/design/ModelGroup_SPEC.md) · [续作指引](docs/progress/HANDOFF_2026-10-22.md) · [验收清单](docs/progress/ACCEPTANCE_CHECKLIST.md)
 
