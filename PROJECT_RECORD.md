@@ -3,7 +3,7 @@
 > **这是项目的权威档案。** 想知道"这是什么、做到哪、接下来做什么"，读这一份就够。
 > 📌 **最新进度（AI 先读）：[PROGRESS.md](./PROGRESS.md)** —— 进度状态以 PROGRESS.md 为准，本文件是技术细节档案。
 > 最后更新：2026-10-23（会话收尾）
-> 配套：[UI 规范](docs/design/AniseWrite_UI_SPEC.md) · [模型组规范](docs/design/ModelGroup_SPEC.md) · [续作指引](docs/progress/HANDOFF_2026-10-22.md) · [验收清单](docs/progress/ACCEPTANCE_CHECKLIST.md)
+> 配套：[UI 规范](docs/design/AniseWrite_UI_SPEC.md) · [模型组规范](docs/design/ModelGroup_SPEC.md) · [当日交接](docs/progress/HANDOFF_2026-10-23.md) · [验收清单](docs/progress/ACCEPTANCE_CHECKLIST.md)
 
 ---
 
@@ -109,7 +109,7 @@ app/src/main/java/com/ai/assistance/quro/
 | 静态自检 | `python3 /var/minis/workspace/check_phase6.py` |
 | 看 CI | `python3 /var/minis/workspace/poll_ci.py <sha前8位> <最长分钟>` |
 | UI 视觉稿 | `/var/minis/workspace/anise-ui-preview.html`、`anise-graph-preview.html` |
-| 打包 Secret 步骤 | docs/progress/HANDOFF_2026-10-22.md §4b |
+| 打包 Secret 步骤 | .github/workflows/README.md（Secrets 清单与配置方法） |
 
 ## 8. 文档索引
 
@@ -117,7 +117,7 @@ app/src/main/java/com/ai/assistance/quro/
 |---|---|
 | 计划书 | docs/plan-v1.1/plan.md（§6.7 界面、§6.8 关系图、§6.10 模型组） |
 | 设计规范 | docs/design/AniseWrite_UI_SPEC.md（**Minis 组件对照表**）、design_tokens.json、ModelGroup_SPEC.md |
-| 进度 | docs/progress/HANDOFF_2026-10-23.md（**续作先读**）、HANDOFF_2026-10-22.md、PHASE6_2026-10-22.md（全量）、ENGINEERING_RECOVERY_PLAN.md（§8 契约裁决表）、ACCEPTANCE_CHECKLIST.md |
+| 进度 | **PROGRESS.md（唯一真相源）** · docs/progress/HANDOFF_2026-10-23.md（当日交接） · ACCEPTANCE_CHECKLIST.md（验收清单）；历史进度文档已清理 |
 | 自述 | README.md |
 
 ---

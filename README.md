@@ -157,13 +157,8 @@ cd Anise Write
 | 文档 | 内容 |
 |---|---|
 | [`docs/plan-v1.1/plan.md`](docs/plan-v1.1/plan.md) | 《Anise Write 软件改造计划书》：目标形态、能力裁剪清单、UI 路线与分层裁决 |
-| [`docs/progress/ENGINEERING_RECOVERY_PLAN.md`](docs/progress/ENGINEERING_RECOVERY_PLAN.md) | 工程恢复方案与 Phase 5 逐类型裁决表 |
-| [`docs/progress/HANDOFF_2026-10-21.md`](docs/progress/HANDOFF_2026-10-21.md) | 阶段交接文档（跨软件迁移与修复记录） |
-| [`docs/progress/PHASE5_2026-10-22.md`](docs/progress/PHASE5_2026-10-22.md) | Phase 5 契约对齐落地说明（类型映射表与 JSON 契约变更） |
 | [`docs/design/AniseWrite_UI_SPEC.md`](docs/design/AniseWrite_UI_SPEC.md) | 移动端界面设计规范（**完全沿用 Minis 界面布局**；组件对照表、单一真相源、对比度实测、许可边界） |
 | [`docs/design/ModelGroup_SPEC.md`](docs/design/ModelGroup_SPEC.md) | 模型组 / 写作档规范（按任务选模：意图三选一、钉住优先、显式回落） |
-| [`docs/progress/PHASE6_2026-10-22.md`](docs/progress/PHASE6_2026-10-22.md) | Phase 6 进度报告（工作台、关系图 v2、改名、设计范式敲定、模型组方案、事故清单） |
-| [`docs/progress/HANDOFF_2026-10-22.md`](docs/progress/HANDOFF_2026-10-22.md) | 交接文档（**续作先读**：路径、优先级、坑、文件索引） |
 | [`docs/progress/ACCEPTANCE_CHECKLIST.md`](docs/progress/ACCEPTANCE_CHECKLIST.md) | 真机验收清单（Phase 8/9 前置，逐条可勾） |
 | [`docs/architecture/`](docs/architecture/) | 终端、浏览器等基座架构文档 |
 
