@@ -53,6 +53,17 @@ import com.ai.assistance.quro.core.novel.NovelVolume
 import com.ai.assistance.quro.core.novel.NovelWork
 import com.ai.assistance.quro.core.novel.NovelChapterStatus
 import com.ai.assistance.quro.core.novel.asset.AssetType
+import com.ai.assistance.quro.core.novel.graph.NovelMemory
+import com.ai.assistance.quro.core.tools.novel.NovelConsistencyCheckTool
+import com.ai.assistance.quro.core.tools.novel.NovelShuangdianReportTool
+import com.ai.assistance.quro.core.tools.novel.NovelTitleCandidatesTool
+import com.ai.assistance.quro.core.tools.novel.NovelWaterReportTool
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -249,7 +260,15 @@ fun NovelStudioScreen(onClose: () -> Unit) {
 
                     NovelTab.GRAPH -> GraphTab(snapshot)
 
-                    NovelTab.STATS -> StatsTab(snapshot)
+                    NovelTab.STATS -> StatsTab(
+                        snapshot = snapshot,
+                        data = data,
+                        onRefresh = {
+                            scope.launch {
+                                snapshot = withContext(Dispatchers.IO) { data.load(snapshot.selectedWorkId) }
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -802,9 +821,18 @@ private fun GraphTab(snapshot: NovelStudioSnapshot) {
     }
 }
 
-/** 统计 Tab：三个数据卡 + 概况分组。 */
+/** 统计 Tab：三个数据卡 + 概况分组 + AI 分析（P1-6）+ 记忆（P1-7）。 */
 @Composable
-private fun StatsTab(snapshot: NovelStudioSnapshot) {
+private fun StatsTab(
+    snapshot: NovelStudioSnapshot,
+    data: NovelStudioData,
+    onRefresh: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var report by remember { mutableStateOf<NovelAnalysisReportState?>(null) }
+    var memoryDetail by remember { mutableStateOf<NovelMemory?>(null) }
+    var memoryToDelete by remember { mutableStateOf<NovelMemory?>(null) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
@@ -863,6 +891,121 @@ private fun StatsTab(snapshot: NovelStudioSnapshot) {
                 )
             }
         }
+
+        // ── P1-6：AI 分析入口（爽点 / 水文 / 标题 / 一致性）──────────────
+        if (snapshot.selectedWork != null) {
+            item(key = "analysis-head") {
+                Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
+                    Spacer(Modifier.height(NovelDesign.sectionTopGap))
+                    NovelSectionHeader("AI 分析")
+                }
+            }
+            item(key = "analysis-body") {
+                NovelGroupedCard(
+                    modifier = Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding),
+                ) {
+                    for ((index, kind) in NovelAnalysisKind.entries.withIndex()) {
+                        if (index > 0) NovelDivider()
+                        NovelGroupedRow(
+                            title = kind.title,
+                            subtitle = kind.hint,
+                            showChevron = false,
+                            onClick = {
+                                val work = snapshot.selectedWork
+                                if (work != null) {
+                                    report = NovelAnalysisReportState(kind.title, "正在生成…", loading = true)
+                                    scope.launch {
+                                        val text = runNovelAnalysisTool(ctx.applicationContext, kind, work.id)
+                                        report = NovelAnalysisReportState(kind.title, text, loading = false)
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── P1-7：记忆（memories）──────────────────────────────────
+        item(key = "memory-head") {
+            Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
+                Spacer(Modifier.height(NovelDesign.sectionTopGap))
+                NovelSectionHeader("记忆 · ${snapshot.memories.size}")
+            }
+        }
+        item(key = "memory-body") {
+            NovelGroupedCard(
+                modifier = Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding),
+            ) {
+                if (snapshot.memories.isEmpty()) {
+                    NovelGroupedRow(
+                        title = "暂无记忆",
+                        subtitle = "AI 写作中会自动沉淀关键事实，这里可以随时查看与清理。",
+                        showChevron = false,
+                    )
+                } else {
+                    for ((index, m) in snapshot.memories.sortedByDescending { it.updatedAt }.take(20).withIndex()) {
+                        if (index > 0) NovelDivider()
+                        NovelGroupedRow(
+                            title = memoryTitle(m),
+                            subtitle = memorySubtitle(m),
+                            showChevron = true,
+                            onClick = { memoryDetail = m },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    report?.let { r ->
+        NovelAnalysisReportDialog(report = r, onDismiss = { report = null })
+    }
+    memoryDetail?.let { m ->
+        NovelSheet(onDismissRequest = { memoryDetail = null }) {
+            Column(Modifier.padding(horizontal = NovelDesign.screenHorizontalPadding)) {
+                Text("记忆详情", style = NovelType.headline, color = novelPalette.textPrimary)
+                Spacer(Modifier.height(10.dp))
+                SelectionContainer {
+                    Text(
+                        text = m.content,
+                        style = NovelType.callout,
+                        color = novelPalette.textPrimary,
+                    )
+                }
+                m.chapterRef?.let { ref ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "锚定章节：${ref.title.ifBlank { ref.chapterId }}",
+                        style = NovelType.footnote,
+                        color = novelPalette.textSecondary,
+                    )
+                }
+                Spacer(Modifier.height(18.dp))
+                NovelSecondaryButton(
+                    text = "删除这条记忆",
+                    onClick = { memoryToDelete = m },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+    memoryToDelete?.let { m ->
+        NovelConfirmDialog(
+            title = "删除这条记忆？",
+            message = memoryTitle(m) + "\n\n删除后 AI 将不再引用这条记忆。",
+            confirmText = "删除",
+            danger = true,
+            onDismiss = { memoryToDelete = null },
+            onConfirm = {
+                scope.launch {
+                    withContext(Dispatchers.IO) { data.deleteMemory(m.workId, m.id) }
+                    memoryToDelete = null
+                    memoryDetail = null
+                    onRefresh()
+                }
+            },
+        )
     }
 }
 
@@ -938,4 +1081,102 @@ private fun NovelChapterEditor(
             )
         }
     }
+}
+
+
+// ───────────────────────── P1-6：AI 分析工具入口 ─────────────────────────
+
+/** 四个分析工具（统计页入口）。 */
+private enum class NovelAnalysisKind(val title: String, val hint: String) {
+    SHUANGDIAN("爽点报告", "分析最近 5 章的爽点密度与分布"),
+    WATER("水文检测", "检测最近 5 章的水字、废话与冗余"),
+    TITLE("标题候选", "按流派与人物生成书名 / 章节标题候选"),
+    CONSISTENCY("一致性检查", "规则级检查（伏笔 / 关系 / 记忆），不耗模型额度"),
+}
+
+private data class NovelAnalysisReportState(
+    val title: String,
+    val content: String,
+    val loading: Boolean,
+)
+
+/**
+ * 直接调用分析工具（不经聊天主循环）。
+ * 工具内部为同步 LLM 调用（runBlocking），必须放 IO 线程执行。
+ */
+private suspend fun runNovelAnalysisTool(
+    context: android.content.Context,
+    kind: NovelAnalysisKind,
+    workId: String,
+): String = withContext(Dispatchers.IO) {
+    val args = org.json.JSONObject().put("work_id", workId).toString()
+    runCatching {
+        when (kind) {
+            NovelAnalysisKind.SHUANGDIAN -> NovelShuangdianReportTool().run(context, args)
+            NovelAnalysisKind.WATER -> NovelWaterReportTool().run(context, args)
+            NovelAnalysisKind.TITLE -> NovelTitleCandidatesTool().run(context, args)
+            NovelAnalysisKind.CONSISTENCY -> NovelConsistencyCheckTool().run(context, args)
+        }
+    }.getOrElse { e -> "分析失败：${e.message ?: e.javaClass.simpleName}" }
+}
+
+/** 报告对话框：加载中转圈，完成后可滚动的可选文本。 */
+@Composable
+private fun NovelAnalysisReportDialog(
+    report: NovelAnalysisReportState,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(20.dp),
+        containerColor = novelPalette.cardSurface,
+        title = { Text(report.title, style = NovelType.headline, color = novelPalette.textPrimary) },
+        text = {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+            ) {
+                if (report.loading) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = novelPalette.accent,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(report.content, style = NovelType.callout, color = novelPalette.textSecondary)
+                    }
+                } else {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        SelectionContainer {
+                            Text(report.content, style = NovelType.callout, color = novelPalette.textPrimary)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text("关闭", style = NovelType.subhead, color = novelPalette.accent)
+            }
+        },
+    )
+}
+
+/** 记忆行标题：无独立 title 字段，用内容首段。 */
+private fun memoryTitle(m: NovelMemory): String {
+    val t = m.content.replace('\n', ' ').trim()
+    return if (t.length > 22) t.take(22) + "…" else t.ifBlank { "（空记忆）" }
+}
+
+/** 记忆行副标题：种类 + 最近更新。 */
+private fun memorySubtitle(m: NovelMemory): String {
+    val kind = when (m.kind) {
+        "fact" -> "事实"
+        "event" -> "事件"
+        "setting" -> "设定"
+        else -> m.kind
+    }
+    return "$kind · ${formatDate(m.updatedAt)}"
 }

@@ -11,6 +11,7 @@ import com.ai.assistance.quro.core.novel.asset.NovelAsset
 import com.ai.assistance.quro.core.novel.asset.NovelAssetRepository
 import com.ai.assistance.quro.core.novel.graph.GraphStore
 import com.ai.assistance.quro.core.novel.graph.NovelRelationship
+import com.ai.assistance.quro.core.novel.graph.NovelMemory
 import com.ai.assistance.quro.core.novel.graph.hook.NovelHook
 
 /**
@@ -27,6 +28,8 @@ data class NovelStudioSnapshot(
     val assets: List<NovelAsset> = emptyList(),
     val hooks: List<NovelHook> = emptyList(),
     val relationships: List<NovelRelationship> = emptyList(),
+    /** P1-7：作品记忆（memories）——此前界面无入口，并入快照。 */
+    val memories: List<NovelMemory> = emptyList(),
     val loading: Boolean = false,
 ) {
     /** 当前作品：优先取选中项，没有则取第一本。 */
@@ -81,6 +84,7 @@ class NovelStudioData(context: Context) {
             assets = work?.let { assetRepo.listAll(it.id) } ?: emptyList(),
             hooks = work?.let { graph.listHooks(it.id) } ?: emptyList(),
             relationships = work?.let { graph.listRelationships(it.id) } ?: emptyList(),
+            memories = work?.let { graph.listMemories(it.id) } ?: emptyList(),
             loading = false,
         )
     }
@@ -126,6 +130,7 @@ class NovelStudioData(context: Context) {
     fun writeChapterContent(workId: String, chapterId: String, content: String): NovelChapter =
         repo.writeChapterContent(workId, chapterId, content)
 
-    fun setChapterStatus(workId: String, chapterId: String, status: com.ai.assistance.quro.core.novel.NovelChapterStatus): NovelChapter =
-        repo.setChapterStatus(workId, chapterId, status)
+    /** 删除一条记忆（P1-7 记忆 UI）。 */
+    fun deleteMemory(workId: String, memoryId: String): Boolean =
+        graph.deleteMemory(workId, memoryId)
 }
