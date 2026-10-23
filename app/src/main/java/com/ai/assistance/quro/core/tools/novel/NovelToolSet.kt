@@ -44,6 +44,9 @@ object NovelToolSet {
         r.register(NovelMemorySaveTool())
         r.register(NovelMemoryQueryTool())
         r.register(NovelMemoryOverviewTool())
+        r.register(NovelMemoryTextTool())
+        r.register(NovelMemoryLinkTool())
+        r.register(NovelMemoryGraphTool())
         r.register(NovelQueryPreviousTool())
         r.register(NovelConsistencyCheckTool())
         // Phase 3b · 资料域

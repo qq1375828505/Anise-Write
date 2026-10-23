@@ -8,6 +8,8 @@ import com.ai.assistance.quro.core.novel.graph.ChapterRef
 import com.ai.assistance.quro.core.novel.graph.GraphStore
 import com.ai.assistance.quro.core.novel.graph.NovelMemory
 import com.ai.assistance.quro.core.novel.graph.NovelRelationship
+import com.ai.assistance.quro.core.novel.graph.memory.NovelMemorySearch
+import com.ai.assistance.quro.core.novel.graph.memory.NovelTextMemoryCache
 import com.ai.assistance.quro.core.novel.graph.analysis.NovelAnalyzer
 import com.ai.assistance.quro.core.novel.graph.hook.NovelHook
 import com.ai.assistance.quro.core.novel.graph.hook.NovelHookPriority
@@ -54,7 +56,7 @@ internal fun gError(code: String, message: String, hint: String? = null): String
     if (hint != null) put("hint", hint)
 }.toString()
 
-private fun gArgs(arguments: String): JSONObject? = runCatching { JSONObject(arguments) }.getOrNull()
+internal fun gArgs(arguments: String): JSONObject? = runCatching { JSONObject(arguments) }.getOrNull()
 
 /** 作品不存在错误（hint 附现有作品，一次重发即可修正）。 */
 internal fun gWorkNotFound(repo: NovelRepository, workId: String): String {
@@ -445,7 +447,10 @@ class NovelMemorySaveTool : QuroTool {
         "content": { "type": "string", "description": "记忆内容（一句话到三句话，写「可检索的事实」而非感想）", "example": "林晚在第三章把玉佩抵押给了当铺，赎回期限是中元节" },
         "kind": { "type": "string", "description": "记忆类型（可选，默认 fact）", "enum": ["fact", "decision", "timeline", "setting"] },
         "tags": { "type": "array", "items": { "type": "string" }, "description": "标签（可选，建议带人物名）", "example": ["林晚", "玉佩"] },
-        "chapter_id": { "type": "string", "description": "锚定章节 id（可选：这条记忆来自/关于哪一章）" }
+        "chapter_id": { "type": "string", "description": "锚定章节 id（可选：这条记忆来自/关于哪一章）" },
+        "title": { "type": "string", "description": "标题（可选，一句话摘要；检索时标题命中权重高于正文）", "example": "玉佩抵押" },
+        "importance": { "type": "number", "description": "重要度 0.0~1.0（可选，默认 0.5；界面与上下文组装按此排序）" },
+        "source": { "type": "string", "description": "来源（可选，默认 ai）：user=用户口述 / ai=AI 提炼 / auto_generated=批处理" }
       },
       "required": ["work_id", "content"]
     }"""
@@ -471,13 +476,20 @@ class NovelMemorySaveTool : QuroTool {
                 id = "", workId = workId, content = content,
                 kind = args.optString("kind", "fact").trim().ifBlank { "fact" },
                 tags = tags, chapterRef = anchor,
+                title = args.optString("title", "").trim().ifBlank { content.take(20) },
+                importance = args.optDouble("importance", 0.5).let { if (it.isNaN()) 0.5 else it }.coerceIn(0.0, 1.0),
+                source = args.optString("source", "ai").trim().ifBlank { "ai" },
             ),
         )
+        // 记忆变了，文本轨快照立即失效（下次取用重建）
+        NovelTextMemoryCache.shared.invalidate(workId)
         return JSONObject().apply {
             put("ok", true)
             put("memory", JSONObject().apply {
                 put("id", saved.id)
+                put("title", saved.title)
                 put("kind", saved.kind)
+                put("importance", saved.importance)
                 put("tags", JSONArray().also { a -> saved.tags.forEach { a.put(it) } })
                 saved.chapterRef?.let { put("chapterRef", it.toJson()) }
                 put("createdAt", saved.createdAt)
@@ -494,15 +506,19 @@ class NovelMemoryQueryTool : QuroTool {
     override val name = "novel_memory_query"
     override val readOnly = true
     override val description =
-        "查询写作记忆：按关键词（content 包含匹配）和/或标签（精确匹配）过滤，按时间倒序返回。" +
+        "查询写作记忆（混合检索）：关键词（标题 + 正文）+ 标签 + 语义 + 图谱邻域四路召回，" +
+            "按倒数排名融合（RRF，K=60）排序，返回带得分的命中。" +
             "何时用：写新章前回想「玉佩那条线到哪了」；核对某人物之前的决定。总览用 novel_memory。"
     override val parametersJson = """{
       "type": "object",
       "properties": {
         "work_id": { "type": "string", "description": "作品 id（novel_list_works 获取）" },
-        "keyword": { "type": "string", "description": "关键词（content 包含匹配，可选）", "example": "玉佩" },
-        "tag": { "type": "string", "description": "标签精确匹配（可选）", "example": "林晚" },
+        "keyword": { "type": "string", "description": "关键词（标题与正文匹配；`|` 表示或，`*` 表示通配，可选）", "example": "玉佩" },
+        "tag": { "type": "string", "description": "标签名（并入同一套混合检索，可选）", "example": "林晚" },
         "kind": { "type": "string", "description": "类型过滤（可选）", "enum": ["fact", "decision", "timeline", "setting"] },
+        "score_mode": { "type": "string", "description": "评分模式（可选，默认 balanced）", "enum": ["balanced", "keywordFirst", "semanticFirst"] },
+        "tag_weight": { "type": "number", "description": "标签权重（可选，默认 0 = 标签只作为查询词参与）" },
+        "threshold": { "type": "number", "description": "得分下限（可选，默认 0 = 不过滤）" },
         "limit": { "type": "integer", "description": "最多返回条数，默认 10，上限 50" }
       },
       "required": ["work_id"]
@@ -517,18 +533,43 @@ class NovelMemoryQueryTool : QuroTool {
         val tag = args.optString("tag", "").trim()
         val kind = args.optString("kind", "").trim()
         val limit = args.optInt("limit", 10).coerceIn(1, 50)
-        val all = GraphStore.fromContext(context).listMemories(workId)
-        val hits = all.asSequence()
-            .filter { keyword.isBlank() || it.content.contains(keyword, ignoreCase = true) }
-            .filter { tag.isBlank() || it.tags.contains(tag) }
-            .filter { kind.isBlank() || it.kind == kind }
-            .sortedByDescending { it.createdAt }
-            .take(limit)
-            .toList()
+        val store = GraphStore.fromContext(context).memoryStore
+        val query = listOf(keyword, tag).filter { it.isNotBlank() }.joinToString("|")
+        val hits = if (query.isBlank()) {
+            // 无检索词 = 「最近记了什么」：按时间倒序（不走 RRF，得分留 0）
+            store.listMemories(workId)
+                .filter { kind.isBlank() || it.kind == kind }
+                .sortedByDescending { it.createdAt }
+                .take(limit)
+                .map { NovelMemorySearch.Hit(memory = it, score = 0.0) }
+        } else {
+            store.search(
+                workId = workId,
+                query = query,
+                kind = kind,
+                config = NovelMemorySearch.Config(
+                    scoreMode = NovelMemorySearch.ScoreMode.fromKey(args.optString("score_mode", "")),
+                    tagWeight = args.optDouble("tag_weight", NovelMemorySearch.DEFAULT_TAG_WEIGHT)
+                        .let { if (it.isNaN()) NovelMemorySearch.DEFAULT_TAG_WEIGHT else it },
+                ),
+                limit = limit,
+                threshold = args.optDouble("threshold", 0.0).let { if (it.isNaN()) 0.0 else it },
+            )
+        }
+        // 记录访问时间（「最近用到」排序与陈旧记忆清理参考）
+        store.touchAccessed(workId, hits.map { it.memory.id })
         val arr = JSONArray().also { a ->
-            hits.forEach { m ->
+            hits.forEach { hit ->
+                val m = hit.memory
                 a.put(JSONObject().apply {
-                    put("id", m.id); put("content", m.content); put("kind", m.kind)
+                    put("id", m.id)
+                    put("title", m.title)
+                    put("content", m.content)
+                    put("kind", m.kind)
+                    put("importance", m.importance)
+                    put("score", hit.score)
+                    if (hit.keywordRank > 0) put("keywordRank", hit.keywordRank)
+                    if (hit.viaLink) put("viaLink", true)
                     put("tags", JSONArray().also { t -> m.tags.forEach { t.put(it) } })
                     m.chapterRef?.let { put("chapterRef", it.toJson()) }
                     put("createdAt", m.createdAt)
@@ -538,11 +579,12 @@ class NovelMemoryQueryTool : QuroTool {
         return JSONObject().apply {
             put("ok", true)
             put("total", hits.size)
+            put("query", query)
             put("memories", arr)
             put(
                 "message",
                 if (hits.isEmpty()) "没有命中的记忆（条件：keyword=$keyword tag=$tag kind=$kind）。"
-                else "命中 ${hits.size} 条（按时间倒序）。"
+                else "命中 ${hits.size} 条（RRF 混合检索，按得分降序）。"
             )
         }.toString()
     }
@@ -570,7 +612,8 @@ class NovelMemoryOverviewTool : QuroTool {
             ?: return gError(GErr.INVALID_ARGS, "参数不是合法 JSON", "形如 {\"work_id\":\"…\"}")
         val workId = args.optString("work_id", "").trim()
         if (workId.isBlank()) return gError(GErr.INVALID_ARGS, "work_id 不能为空", "用 novel_list_works 获取作品 id")
-        val all = GraphStore.fromContext(context).listMemories(workId)
+        val store = GraphStore.fromContext(context).memoryStore
+        val all = store.listMemories(workId)
         val kinds = JSONObject().apply {
             listOf("fact", "decision", "timeline", "setting").forEach { k -> put(k, all.count { it.kind == k }) }
         }
@@ -588,6 +631,14 @@ class NovelMemoryOverviewTool : QuroTool {
             put("kinds", kinds)
             put("topTags", JSONArray().also { a -> tagTop.forEach { a.put("${it.key}(${it.value})") } })
             put("recent", recentArr)
+            // P1-4 五表口径：节点 / 标签 / 标签关系 / 边 / 属性
+            put("tables", JSONObject().apply {
+                put("memories", all.size)
+                put("memory_tags", store.listTags(workId).size)
+                put("memory_tag_relations", store.listTagRelations(workId).size)
+                put("memory_links", store.listLinks(workId).size)
+                put("memory_properties", store.listProperties(workId).size)
+            })
             put("message", if (all.isEmpty()) "记忆库还是空的（novel_memory_save 存第一条）。" else "共 ${all.size} 条记忆。")
         }.toString()
     }

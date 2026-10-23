@@ -6,6 +6,8 @@ import com.ai.assistance.quro.core.novel.asset.AssetType
 import com.ai.assistance.quro.core.novel.asset.NovelAssetRepository
 import com.ai.assistance.quro.core.novel.graph.GraphStore
 import com.ai.assistance.quro.core.novel.graph.hook.NovelHookStatus
+import com.ai.assistance.quro.core.novel.graph.memory.NovelTextMemory
+import com.ai.assistance.quro.core.novel.graph.memory.NovelTextMemoryCache
 import com.ai.assistance.quro.core.tools.QuroTool
 import org.json.JSONArray
 import org.json.JSONObject
@@ -184,7 +186,8 @@ class NovelBuildContextTool : QuroTool {
     override val name = "novel_build_context"
     override val readOnly = true
     override val description =
-        "按预算（默认 6000 字符）组装作品上下文：大纲摘要 + 最近已写章尾部 + 人物卡 + 未回收伏笔 + 强关系。" +
+        "按预算（默认 6000 字符）组装作品上下文：大纲摘要 + 最近已写章尾部 + 人物卡 + 未回收伏笔 + 强关系" +
+            " + 十节记忆快照（P1-4 文本轨，预算有余时补充，5 分钟缓存）。" +
             "输出键名与子代理委派信封 context 字段对齐（outline/previous_chapters/materials.*），可直接填入委派。" +
             "何时用：写新章前组装上文；委派子代理前的预取（DELEGATION §3）。"
     override val parametersJson = """{
@@ -307,6 +310,21 @@ class NovelBuildContextTool : QuroTool {
             sections.optJSONObject("materials")?.put("relationships", arr)
         }
 
+        // 6) 十节记忆快照（P1-4 文本轨：5 分钟缓存；预算有余时补充，剩余不足下限直接让位）
+        run {
+            val remaining = budget - used
+            if (remaining >= MEMORY_SNAPSHOT_MIN_CHARS) {
+                val snapshot = NovelTextMemoryCache.shared.get(workId) {
+                    val input = NovelTextMemoryProvider.input(context, workId)
+                        ?: NovelTextMemory.Input(work = NovelTextMemory.WorkInfo(id = workId, title = work.title))
+                    NovelTextMemory.build(input)
+                }
+                val text = snapshot.take(remaining)
+                used += text.length
+                sections.put("memory_snapshot", text)
+            }
+        }
+
         return JSONObject().apply {
             put("ok", true)
             put("charsUsed", used)
@@ -317,5 +335,10 @@ class NovelBuildContextTool : QuroTool {
                 "上下文已组装：大纲 + 最近章 + 人物${if (used > budget) "（已达预算，低优先段被截断）" else ""}；键名对齐委派信封，可直接作 context 字段。",
             )
         }.toString()
+    }
+
+    private companion object {
+        /** 快照补充段的最小可观长度：不足此长度不塞（免得只剩半句占预算）。 */
+        const val MEMORY_SNAPSHOT_MIN_CHARS = 200
     }
 }

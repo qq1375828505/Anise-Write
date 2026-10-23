@@ -3,6 +3,7 @@ package com.ai.assistance.quro.core.novel.graph
 import android.content.Context
 import android.util.Log
 import com.ai.assistance.quro.core.novel.graph.hook.NovelHook
+import com.ai.assistance.quro.core.novel.graph.memory.NovelMemoryStore
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -105,32 +106,20 @@ class GraphStore(private val rootDir: File) {
         removed
     }
 
-    // ─────────────────────────── 记忆表 ───────────────────────────
+    // ─────────────────────────── 记忆表（P1-4：五表图谱） ───────────────────────────
 
-    fun listMemories(workId: String): List<NovelMemory> = synchronized(lock) {
-        readItems(memFile(workId)) { NovelMemory.fromJson(it) }
-    }
+    /** 五表记忆存储（memories / memory_tags / memory_tag_relations / memory_links / memory_properties）。 */
+    val memoryStore: NovelMemoryStore = NovelMemoryStore(rootDir)
 
-    fun addMemory(memory: NovelMemory): NovelMemory = synchronized(lock) {
-        val items = readItems(memFile(memory.workId)) { NovelMemory.fromJson(it) }.toMutableList()
-        val now = System.currentTimeMillis()
-        val stored = memory.copy(id = if (memory.id.isBlank()) UUID.randomUUID().toString() else memory.id, createdAt = now, updatedAt = now)
-        items.add(stored)
-        writeItems(memFile(memory.workId), items) { it.toJson() }
-        stored
-    }
+    fun listMemories(workId: String): List<NovelMemory> = memoryStore.listMemories(workId)
 
-    fun deleteMemory(workId: String, memoryId: String): Boolean = synchronized(lock) {
-        val items = readItems(memFile(workId)) { NovelMemory.fromJson(it) }.toMutableList()
-        val removed = items.removeIf { it.id == memoryId }
-        if (removed) writeItems(memFile(workId), items) { it.toJson() }
-        removed
-    }
+    fun addMemory(memory: NovelMemory): NovelMemory = memoryStore.addMemory(memory)
+
+    fun deleteMemory(workId: String, memoryId: String): Boolean = memoryStore.deleteMemory(workId, memoryId)
 
     // ─────────────────────────── 内部 ───────────────────────────
 
     private fun relFile(workId: String): File = rootDir.resolve(workId).resolve("relationships.json")
-    private fun memFile(workId: String): File = rootDir.resolve(workId).resolve("memories.json")
     private fun hookFile(workId: String): File = rootDir.resolve(workId).resolve("hooks.json")
 
     /** 读条目数组；文件缺失/损坏返回空列表（记日志，不假数据兜底——图谱可重建，用户资产在章节正文里）。 */
@@ -242,6 +231,22 @@ data class NovelMemory(
     val kind: String = "fact",
     val tags: List<String> = emptyList(),
     val chapterRef: ChapterRef? = null,
+    /** 标题（P1-4 图谱轨新增）：一句话标签，检索时标题命中权重高于正文（RRF 先按标题排名）。 */
+    val title: String = "",
+    /** 内容类型（对齐 SQLite `memories.content_type`）。 */
+    val contentType: String = "text/plain",
+    /** 来源（user=用户口述 / ai=AI 自动提炼 / auto_generated=资料分析等批处理）。 */
+    val source: String = "user",
+    /** 可信度 0.0~1.0（对齐 SQLite `memories.credibility`）。 */
+    val credibility: Double = 0.5,
+    /** 重要度 0.0~1.0（对齐 SQLite `memories.importance`；界面按此降序取前若干条）。 */
+    val importance: Double = 0.5,
+    /** 归档路径（对齐 SQLite `memories.folder_path`；空 = 未归档）。 */
+    val folderPath: String = "",
+    /** 语义向量（P1-4 语义路；空 = 该条不参与语义召回，端侧无向量服务时的常态）。 */
+    val embedding: List<Double> = emptyList(),
+    /** 最后访问时间（检索命中后由存储层回写）。 */
+    val lastAccessedAt: Long = 0L,
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
 ) {
@@ -252,6 +257,16 @@ data class NovelMemory(
         put("kind", kind)
         put("tags", JSONArray().also { arr -> tags.forEach { arr.put(it) } })
         chapterRef?.let { put("chapterRef", it.toJson()) }
+        put("title", title)
+        put("contentType", contentType)
+        put("source", source)
+        put("credibility", credibility)
+        put("importance", importance)
+        put("folderPath", folderPath)
+        if (embedding.isNotEmpty()) {
+            put("embedding", JSONArray().also { arr -> embedding.forEach { arr.put(it) } })
+        }
+        put("lastAccessedAt", lastAccessedAt)
         put("createdAt", createdAt)
         put("updatedAt", updatedAt)
     }
@@ -266,6 +281,16 @@ data class NovelMemory(
                 (0 until arr.length()).map { arr.optString(it, "") }.filter { it.isNotBlank() }
             } ?: emptyList(),
             chapterRef = o.optJSONObject("chapterRef")?.let { ChapterRef.fromJson(it) },
+            title = o.optString("title", ""),
+            contentType = o.optString("contentType", "text/plain"),
+            source = o.optString("source", "user"),
+            credibility = o.optDouble("credibility", 0.5).let { if (it.isNaN()) 0.5 else it },
+            importance = o.optDouble("importance", 0.5).let { if (it.isNaN()) 0.5 else it },
+            folderPath = o.optString("folderPath", ""),
+            embedding = o.optJSONArray("embedding")?.let { arr ->
+                (0 until arr.length()).map { arr.optDouble(it, 0.0) }
+            } ?: emptyList(),
+            lastAccessedAt = o.optLong("lastAccessedAt", 0L),
             createdAt = o.optLong("createdAt", 0L),
             updatedAt = o.optLong("updatedAt", 0L),
         )
