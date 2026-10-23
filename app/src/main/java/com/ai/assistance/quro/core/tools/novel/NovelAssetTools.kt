@@ -19,6 +19,7 @@ import org.json.JSONObject
  * | [NovelMaterialsAddTool] | 写 | 建档 |
  * | [NovelMaterialsUpdateTool] | 写 | 浅合并更新 |
  * | [NovelMaterialsDeleteTool] | 写 | 删除 + 引用完整性警告（不阻断） |
+ * | [NovelMaterialsAnalyzeTool] | 写 | AI 资料自动分析（P1-3）：6 类提取 + 只补空合并，见 NovelMaterialAnalyze.kt |
  *
  * 规划书原文只列 get/add/update/delete 四个，list/search 为任务书要求的「list/查询类」补充
  * （资料库没有 list 就无法在不扫盘的前提下让模型盘点；search 服务 Phase 5 上下文预算的资料召回）。

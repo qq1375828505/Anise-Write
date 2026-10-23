@@ -176,6 +176,7 @@ class QuroToolRegistry {
             "novel_materials_add",
             "novel_materials_update",
             "novel_materials_delete",
+            "novel_materials_analyze",
             "novel_get_chapter",
             "novel_update_work",
             "novel_chapter_status",
