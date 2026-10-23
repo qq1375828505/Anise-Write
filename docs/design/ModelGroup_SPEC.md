@@ -1,6 +1,6 @@
 # 模型组 / 写作档 · 设计规范 v1
 
-> 状态：**设计已敲定，UI 与接线待做**（数据层已写，WIP 提交 `0835675`）
+> 状态：**已实现**（数据层 / UI / 传参透传（⑪）/ 重轻自动路由（P1-5）均已接；剩：真机验证、成员排序拖拽）
 > 决策人：用户，2026-10-22（"全套做" + "放在设置页面，单独，不要放在模型设置子界面"）
 > 界面规范：[AniseWrite_UI_SPEC.md](./AniseWrite_UI_SPEC.md)（完全沿用 Minis 界面布局）
 
@@ -93,6 +93,18 @@ data class QuroModelGroupSettings(groups, agentBindings: Map<子代理名, 组id
 组内成员**有序**，默认取第一个可用成员；失败时可按序切下一个（轮转，绕回）。
 provider 级故障转移仍由基座 `QuroFailoverManager` 负责，两层职责不重叠。
 
+### 4.5 重/轻任务自动路由（P1-5，2026-10-23 已接）
+
+委派方未显式给 `model_group` 时，服务端按任务重量自动补意图（判不准保持 `same_as_me`，**不猜**）：
+
+| 任务 | 重量 | 去向 |
+|---|---|---|
+| polish（全部）、review（单章：`chapter_id` 或 `from==to`） | 轻 | 轻量组 |
+| outline / consistency / foreshadow / character / review（多章·全书·范围不明） | 重 | 默认组 |
+
+保守原则：**拿不准向重靠**（质量损失比成本损失更贵）。优先级不变：用户钉住 > 显式意图 > 自动路由。
+实现：`core/model/QuroTaskWeightRouter.kt`（纯函数 + JVM 单测）。
+
 ## 5. UI 规格（Minis 界面布局）
 
 **入口**：**设置 → 独立条目「模型组」**（用户决策：单独一条，不挂在「模型配置」子页面下，不进工作台页签）。
@@ -142,3 +154,4 @@ Minis = OpenMinis，**GPL-3.0**。本项目（Anise Write，Apache-2.0）**只�
 | 真机验证（切组 → 委派 → 看 `model_used`） | ⬜ 待做（需装 APK 实测） |
 | 组级上下文上限 / 思考档透传调用链（⑪） | ✅ `callLlm` → `chat(thinkingLevel=…)`；max_tokens 按「输入估算+输出≤上限」钳制 |
 | 成员排序拖拽 | ⬜ 待做 |
+| 重/轻任务自动路由（P1-5） | ✅ 未显式给意图时按任务重量自动选组（纯函数 `QuroTaskWeightRouter` + 单测） |

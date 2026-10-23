@@ -5,6 +5,7 @@ import com.ai.assistance.quro.core.model.QuroModelConfigRepository
 import com.ai.assistance.quro.core.model.QuroModelGroupRepository
 import com.ai.assistance.quro.core.model.QuroModelGroupRouter
 import com.ai.assistance.quro.core.model.QuroModelIntent
+import com.ai.assistance.quro.core.model.QuroTaskWeightRouter
 import com.ai.assistance.quro.core.model.QuroModelTarget
 import com.ai.assistance.quro.core.model.QuroMultiProviderRepository
 import com.ai.assistance.quro.core.novel.NovelRepository
@@ -162,6 +163,7 @@ class NovelDelegateSubagentTool : QuroTool {
       "type": "object",
       "properties": {
         "subagent": { "type": "string", "enum": ["outline", "character", "foreshadow", "polish", "review", "consistency"], "description": "目标子代理：ID 或中文名/任务词（如「润色」「帮我审读这段」），服务端五级模糊匹配" },
+        "model_group": { "type": "string", "enum": ["same_as_me", "default_model", "sub_model"], "description": "本次委派用哪一档模型：same_as_me=跟当前会话同一模型、default_model=用户默认组（通常最强）、sub_model=用户轻量组（通常更快更便宜）。只表达意图不写模型名。未给时服务端按任务重量自动路由（重→默认组/轻→轻量组）；用户为该子代理钉死组时本字段被忽略" },
         "task": { "type": "string", "description": "自然语言任务（主 AI 转写，须自足可执行）" },
         "work_id": { "type": "string", "description": "作品 id（novel_list_works 获取）" },
         "chapter_id": { "type": "string", "description": "单章任务必填（polish/review 单章；自动预取该章正文进 context.chapter）" },
@@ -294,9 +296,20 @@ class NovelDelegateSubagentTool : QuroTool {
         }
 
         // ---- 4. 模型组解析：钉住的组 > 委派请求的意图 > 当前会话模型 ----
+        // P1-5：委派方未显式给意图时，按任务重量自动路由
+        // （重→默认组 / 轻→轻量组 / 判不准→不干预回落父会话，绝不瞎猜）。
         val groupRepo = QuroModelGroupRepository(context)
         val groupSettings = groupRepo.load()
-        val intent = QuroModelIntent.fromKey(args.optString("model_group", "").trim())
+        val explicitIntent = args.optString("model_group", "").trim()
+        val intent = if (explicitIntent.isNotBlank()) {
+            QuroModelIntent.fromKey(explicitIntent)
+        } else {
+            QuroTaskWeightRouter.inferIntent(
+                subagent = subagent,
+                chapterRange = args.optJSONObject("chapter_range"),
+                chapterId = args.optString("chapter_id", "").trim(),
+            ) ?: QuroModelIntent.SAME_AS_PARENT
+        }
         val pinnedGroup = groupSettings.groupForAgent(subagent)
         val providers = QuroMultiProviderRepository(context)
         val globalCfg = QuroModelConfigRepository(context).load()
