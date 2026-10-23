@@ -9,6 +9,7 @@ import com.ai.assistance.quro.core.QuroPersonaRepository
 import com.ai.assistance.quro.core.model.QuroModelConfigRepository
 import com.ai.assistance.quro.core.model.QuroModelTarget
 import com.ai.assistance.quro.core.network.QuroLlmClient
+import com.ai.assistance.quro.core.network.QuroReasoningControl
 import com.ai.assistance.quro.core.novel.NovelChapter
 import com.ai.assistance.quro.core.novel.NovelRepository
 import com.ai.assistance.quro.core.novel.NovelWork
@@ -324,6 +325,14 @@ internal object NovelWriteSupport {
             )
         }
         return try {
+            // 模型组⑪：组级思考档 / 上下文上限透传（无组目标时二者均为默认，与旧行为一致）
+            val requestThinking = thinkingLevelOf(if (useTarget) target!!.thinkingLevel else null)
+            val requestMaxTokens = maxTokensForCall(
+                configured = cfg.maxTokens,
+                contextLimit = if (useTarget) target!!.contextLimitTokens else 0,
+                system = system,
+                user = user,
+            )
             val result = runBlocking {
                 QuroLlmClient().chat(
                     baseUrl = if (useTarget) target!!.baseUrl else cfg.baseUrl,
@@ -334,7 +343,8 @@ internal object NovelWriteSupport {
                         QuroChatMessage(role = "user", content = user),
                     ),
                     temperature = temperature,
-                    maxTokens = cfg.maxTokens,
+                    maxTokens = requestMaxTokens,
+                    thinkingLevel = requestThinking,
                 )
             }
             when (result) {
@@ -352,12 +362,49 @@ internal object NovelWriteSupport {
         }
     }
 
+    /**
+     * 组级思考档字符串 → 引擎档位（模型组⑪ 透传）。
+     *
+     * UI 选项为 `off/low/medium/high/xhigh`；引擎枚举 `QuroReasoningControl.ThinkingLevel`
+     * 最深到 HIGH，故 `xhigh` 钳到 HIGH。空 / 未识别 → AUTO（不干预，与此前逐字节一致）。
+     */
+    internal fun thinkingLevelOf(raw: String?): QuroReasoningControl.ThinkingLevel =
+        when (raw?.trim()?.lowercase()) {
+            "off" -> QuroReasoningControl.ThinkingLevel.OFF
+            "low" -> QuroReasoningControl.ThinkingLevel.LOW
+            "medium" -> QuroReasoningControl.ThinkingLevel.MEDIUM
+            "high", "xhigh" -> QuroReasoningControl.ThinkingLevel.HIGH
+            else -> QuroReasoningControl.ThinkingLevel.AUTO
+        }
+
+    /**
+     * 组级上下文上限 → 本轮 max_tokens（模型组⑪ 透传）。
+     *
+     * 语义：`估算输入 tokens + 本轮输出 max_tokens ≤ 组上限`。`0` = 不限（沿用配置值）。
+     * 输入估算已超限时保留 [MIN_OUTPUT_TOKENS] 下限——不把请求制造为必然失败，
+     * 真实是否放得下交给上游服务端判断（宁可少传，不猜）。
+     */
+    internal fun maxTokensForCall(configured: Int, contextLimit: Int, system: String, user: String): Int {
+        if (contextLimit <= 0) return configured
+        val inputEstimate = approxTokens(system) + approxTokens(user)
+        return (contextLimit - inputEstimate).coerceAtLeast(MIN_OUTPUT_TOKENS).coerceAtMost(configured)
+    }
+
+    /** 保守 token 估算：CJK（含日文假名）按 1 token/字，其余按 4 字符/token（同 ContextPacker 口径）。 */
+    private fun approxTokens(text: String): Int {
+        if (text.isEmpty()) return 0
+        val cjk = text.count { it.code in 0x4E00..0x9FFF || it.code in 0x3040..0x30FF }
+        return cjk + (text.length - cjk) / 4
+    }
+
     /** 汇报用的章节定位串，如 `《书名》第3章「章名」`。 */
     fun chapterLabel(work: NovelWork, chapter: NovelChapter): String =
         "《${work.title}》第${globalOrdinal(work, chapter)}章「${chapter.title}」"
 
     private const val MAX_LISTED_CHAPTERS = 20
     private const val OVERLAP_TAIL_CHARS = 300
+    /** 组级上下文上限钳制时的输出下限（见 [maxTokensForCall]）。 */
+    private const val MIN_OUTPUT_TOKENS = 512
 }
 
 // ─────────────────────────── novel_write ───────────────────────────

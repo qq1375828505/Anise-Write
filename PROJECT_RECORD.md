@@ -81,7 +81,7 @@ app/src/main/java/com/ai/assistance/quro/
 6. **审读/爽点/水文/标题工具的 UI 入口** —— 工具层全有，工作台一处没用
 7. **记忆（memories）UI 入口** —— 数据层已加载，界面未露
 
-**打磨**：⑧ 富文本编辑器 :novel-editor（WebView，工作量最大） ⑨ 卷内拖拽排序 ⑩ 统计页二级指标 ⑪ 模型组上下文上限/思考档透传调用链 ⑫ 关系图图例可折叠
+**打磨**：⑧ 富文本编辑器 :novel-editor（WebView，工作量最大） ⑨ 卷内拖拽排序 ⑩ 统计页二级指标 ~~⑪ 模型组上下文上限/思考档透传调用链~~✅（2026-10-22 已接） ⑫ 关系图图例可折叠
 
 **流程**：⑬ **Phase 7b 正式打包**（用户手动配 4 个 Secret：ZORV_KEYSTORE_BASE64 / ZORV_KEY_ALIAS / ZORV_STORE_PASS / ZORV_KEY_PASS，再打 v* tag） ⑭ **Phase 8/9 验收发布**（按 ACCEPTANCE_CHECKLIST.md 逐条走）
 

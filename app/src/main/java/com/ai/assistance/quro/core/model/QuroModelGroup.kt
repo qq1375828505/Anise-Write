@@ -94,6 +94,16 @@ data class QuroModelTarget(
     val fellBack: Boolean = false,
     /** 具体是"钉住的组不可用"导致的回落（需要在结果里如实告诉用户）。 */
     val pinnedGroupUnavailable: Boolean = false,
+    /**
+     * 组级默认思考档（off/low/medium/high/xhigh）；空 = 不覆盖。
+     * 由调用链透传给 `QuroLlmClient.chat(thinkingLevel = …)`（模型组⑪）。
+     */
+    val thinkingLevel: String = "",
+    /**
+     * 组级上下文上限（token）；0 = 不限。
+     * 由调用链透传：用于把本轮 max_tokens 按「估算输入 + 输出 ≤ 上限」钳制（模型组⑪）。
+     */
+    val contextLimitTokens: Int = 0,
 )
 
 /** 全部模型组设置 + 子代理绑定。 */
@@ -376,6 +386,8 @@ object QuroModelGroupRouter {
             model = m.model,
             groupId = group.id,
             groupName = group.name,
+            thinkingLevel = group.defaultThinkingLevel,
+            contextLimitTokens = group.contextLimitTokens,
         )
     }
 

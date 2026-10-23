@@ -140,4 +140,5 @@ Minis = OpenMinis，**GPL-3.0**。本项目（Anise Write，Apache-2.0）**只�
 | 预置三档的成员引导与空态 | ✅ 列表页空态 + 「尚未添加模型」提示 |
 | 委派结果可观测（`model_used` / `model_group_unavailable`） | ✅ 已写入返回体 |
 | 真机验证（切组 → 委派 → 看 `model_used`） | ⬜ 待做（需装 APK 实测） |
-| 成员排序拖拽、组级思考档真正生效（当前只存不用） | ⬜ 待做 |
+| 组级上下文上限 / 思考档透传调用链（⑪） | ✅ `callLlm` → `chat(thinkingLevel=…)`；max_tokens 按「输入估算+输出≤上限」钳制 |
+| 成员排序拖拽 | ⬜ 待做 |
