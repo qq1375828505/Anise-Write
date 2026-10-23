@@ -1,7 +1,7 @@
 # Anise Write · 项目记录（Project Record）
 
 > **这是项目的权威档案。** 想知道"这是什么、做到哪、接下来做什么"，读这一份就够。
-> 最后更新：2026-10-22（会话收尾）
+> 最后更新：2026-10-23（会话收尾）
 > 配套：[UI 规范](docs/design/AniseWrite_UI_SPEC.md) · [模型组规范](docs/design/ModelGroup_SPEC.md) · [续作指引](docs/progress/HANDOFF_2026-10-22.md) · [验收清单](docs/progress/ACCEPTANCE_CHECKLIST.md)
 
 ---
@@ -32,14 +32,14 @@ app/src/main/java/com/ai/assistance/quro/
 │   ├─ NovelRepository.kt        作品数据仓库（原子写，正文 .md）
 │   ├─ asset/                    8 类资料模型 + 仓储
 │   └─ graph/                    伏笔/关系/记忆 + 一致性分析
-├─ core/tools/novel/             4677 行 · 40 工具（结构 15 / 资料 6 / 图谱 8 / 写作 11）
+├─ core/tools/novel/             4677 行 · 41 工具（结构 15 / 资料 7 / 图谱 8 / 写作 11）
 ├─ core/model/QuroModelGroup.kt   384 行 · 模型组数据层 + 路由（意图三选一/钉住优先/显式回落）
 ├─ ui/novel/                     2520 行 · 写作工作台（令牌 + 分组组件 + 四页签 + 关系图 v2）
 └─ ui/QuroModelGroupScreen.kt     784 行 · 模型组界面（列表/详情/成员选择/子代理绑定）
 ```
 
 **资产**：`assets/skills/penai/` 25 套流派预设 · `assets/prompts/subagents/` 6 个子代理提示词 + DELEGATION.md 委托协议 + 人格卡
-**文档**：70 篇 · **提交**：60 次 · **novel 域代码**约 1.1 万行
+**文档**：71 篇 · **提交**：69 次 · **novel 域代码**约 1.2 万行
 
 ## 3. 功能清单（已交付）
 
@@ -114,9 +114,9 @@ app/src/main/java/com/ai/assistance/quro/
 |---|---|
 | 计划书 | docs/plan-v1.1/plan.md（§6.7 界面、§6.8 关系图、§6.10 模型组） |
 | 设计规范 | docs/design/AniseWrite_UI_SPEC.md（**Minis 组件对照表**）、design_tokens.json、ModelGroup_SPEC.md |
-| 进度 | docs/progress/PHASE6_2026-10-22.md（全量）、HANDOFF_2026-10-22.md（**续作先读**）、ENGINEERING_RECOVERY_PLAN.md（§8 契约裁决表）、ACCEPTANCE_CHECKLIST.md |
+| 进度 | docs/progress/HANDOFF_2026-10-23.md（**续作先读**）、HANDOFF_2026-10-22.md、PHASE6_2026-10-22.md（全量）、ENGINEERING_RECOVERY_PLAN.md（§8 契约裁决表）、ACCEPTANCE_CHECKLIST.md |
 | 自述 | README.md |
 
 ---
 
-**一句话现状**：功能与骨架已成（40 工具 / 25 流派 / 6 子代理 / 四页签工作台 / 关系图 v2 / 模型组），代码在 feature/penai 与 main 同线上；**下一步是 P0 的端侧兼容（XML 降级 + 子代理模糊匹配）**，再之后是验收与正式打包。
+**一句话现状**：**P0 全清、P1 过半** —— 41 工具 / 25 流派 / 6 子代理 / 四页签工作台（新增 AI 分析区 + 记忆区）/ 关系图 v2（图例可折叠）/ 模型组（思考档·上下文上限透传、重轻自动路由）/ 子代理五级模糊匹配 / XML 工具调用降级三层 / 资料自动分析；CI 在 9dbd62a 构建通过（六项一起验证）。**下一步：P1-4 记忆双轨 与 ⑧ 富文本编辑器，之后验收与正式打包。**
