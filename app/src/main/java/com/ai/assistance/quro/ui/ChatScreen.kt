@@ -575,9 +575,7 @@ fun ChatScreen(
                     //
                     // 旧实现把连续的 assistant 消息全部并进一个气泡、且 author 硬编码成人格名，
                     // 于是 8 个角色的发言变成一段没人能认领的自言自语 ——
-                    // 这就是用户报的「集群像黑盒，不知道他们在干什么、讨论了什么」。
-                    // 气泡名字行会显示 [qk_04061] 渲染出的「集群 · 角色名」，
-                    // 每个角色一个气泡，先后顺序即发言顺序，参与感由此而来。
+                    // 气泡名字行会显示发送人名，每个角色一个气泡，先后顺序即发言顺序。
                     val sp = m.senderName?.trim()?.takeIf { it.isNotEmpty() && it != selectedPersona.name }
                     if (hasAgg && sp != null && sp != aggSpeaker) flushAgg()
                     aggIds.add(m.id)
@@ -756,14 +754,12 @@ fun ChatScreen(
     var showCleanup by remember { mutableStateOf(false) }
     var showFileManager by remember { mutableStateOf(false) }
     // ACI 管理中心屏：从设置「功能 → ACI 管理中心」进入（此前仅有 AI 工具 ui_open_aci 可打开，无手动按钮）
-    var showAci by remember { mutableStateOf(false) }
     // ACI 应用选择器对话框
     var showAciSelector by remember { mutableStateOf(false) }
     // 工作区选择器对话框
     var showWorkspaceSelector by remember { mutableStateOf(false) }
     // 工作区代码编辑器（写代码 / 浏览代码）全屏页
     var showCodeWorkspace by remember { mutableStateOf(false) }
-    // 集群配置页入口：🔴 纯配置，**不承担对话**（见 QuroClusterSettingsScreen）
     // 功能模型配置屏（从设置「功能模型配置」进入）：为 5 类 AI 子能力各自绑定模型
     var showFeatureModelConfig by remember { mutableStateOf(false) }
     var showAppearance by remember { mutableStateOf(false) }
@@ -780,17 +776,14 @@ fun ChatScreen(
     var modelConfigFromSettings by remember { mutableStateOf(false) }
     // 权限管理页（从设置页入口进入）
     var showPermission by remember { mutableStateOf(false) }
-    var showLspose by remember { mutableStateOf(false) }
     // USB / 无线调试 (ADB) 页（从设置页入口进入）
     var showUsbDebug by remember { mutableStateOf(false) }
     // 默认应用角色管理页（从设置页入口进入）
     var showDefaultApp by remember { mutableStateOf(false) }
     // 包管理页（插件 / 工具包 / 技能 / MCP，从设置页入口进入）
-    var showCms by remember { mutableStateOf(false) }
     // 工具箱（设置页入口：文件管理 / 包名查询 / 代码运行 / 内置浏览器）
     var showToolbox by remember { mutableStateOf(false) }
     // 插件运行时 Demo 入口
-    var showPlugins by remember { mutableStateOf(false) }
     // 技能 SKILL 管理入口
     var showSkills by remember { mutableStateOf(false) }
     // 技能选择对话框（从输入框工具菜单/上下文标识栏进入）
@@ -820,14 +813,11 @@ fun ChatScreen(
     var modelGroupDetailId by remember { mutableStateOf<String?>(null) }
     var showAgentModelBinding by remember { mutableStateOf(false) }
     // 机器人设置页（C2）：从工具箱「机器人」入口进入
-    var showBots by remember { mutableStateOf(false) }
     // 应用内文档查看器（本地渲染引擎，替代原 Collabora/外跳 ONLYOFFICE；已整合原「文档中心」）
     var showOnlyOffice by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     var showBrowser by remember { mutableStateOf(false) }
-    var showMcp by remember { mutableStateOf(false) }
     // 多角色集群设置（招人 / 绑模型 / 主持熔断 / 发起任务）
-    var showClusterSettings by remember { mutableStateOf(false) }
     // 聚合式「系统状态」浏览界面（设备 / 权限 / 模块运行态 / 人格心跳）
     var showSystemStatus by remember { mutableStateOf(false) }
     // 可视化组件画廊
@@ -927,12 +917,9 @@ fun ChatScreen(
             "ui_open_toolbox" -> showToolbox = true
             "ui_open_kaleidobox" -> { toolCenterInitial = "kaleidobox"; showToolCenter = true }
             "ui_open_build" -> showBuild = true
-            "ui_open_plugins" -> showPlugins = true
-            "ui_open_skills" -> showSkills = true
+                        "ui_open_skills" -> showSkills = true
             "ui_open_schedule" -> showSchedule = true
-            "ui_open_bots" -> showBots = true
-            "ui_open_cms" -> showCms = true
-            "ui_open_system_status" -> showSystemStatus = true
+                                    "ui_open_system_status" -> showSystemStatus = true
             "ui_open_permission" -> showPermission = true
             "ui_open_model_config" -> showModelConfig = true
             "ui_open_voice" -> showVoice = true
@@ -941,8 +928,7 @@ fun ChatScreen(
             "ui_open_voice_service" -> showVoiceService = true
             "ui_open_doc_viewer" -> showOnlyOffice = true
             "ui_open_about" -> showAbout = true
-            "ui_open_aci" -> showAci = true
-            "ui_open_appearance" -> showAppearance = true
+                        "ui_open_appearance" -> showAppearance = true
             "ui_open_soul" -> showSoulSheet = true
             "ui_open_memory" -> showMemoryDialog = true
             "ui_open_sheet_model" -> sheet = SheetType.Model
@@ -1045,8 +1031,6 @@ fun ChatScreen(
                             "toolbox" -> showToolbox = true
                             "knowledge" -> showKnowledge = true
                             "novel" -> showNovelStudio = true
-                            "cms" -> showCms = true
-                            "aci" -> showAci = true
                             "about" -> showAbout = true
                             "appearance" -> showAppearance = true
                             "soul" -> showSoulSheet = true
@@ -1746,8 +1730,8 @@ fun ChatScreen(
 
         // 任意「设置子页」浮层是否开着：用于禁用设置 sheet 的返回回调，保证逐级返回
         val settingsChildOpen = showModelConfig || showToolbox || showVoice || showAbout || showAppearance ||
-            showPermission || showCms || showPlugins || showKnowledge || showTerminal || showSchedule || showBots ||
-            showTts || showStt || showVoiceService || showSystemStatus || showFeatureModelConfig || showAci ||
+            showPermission || showKnowledge || showTerminal || showSchedule ||
+            showTts || showStt || showVoiceService || showSystemStatus || showFeatureModelConfig ||
             showToolCenter || showUsbDebug || showDefaultApp
         SheetOverlay(
             sheet = sheet, lastSheet = lastSheet,
@@ -1850,16 +1834,12 @@ fun ChatScreen(
             onOpenModelConfig = { showModelConfig = true; modelConfigFromSettings = true },
             onOpenFeatureModelConfig = { showFeatureModelConfig = true },
             onOpenPermission = { showPermission = true },
-            onOpenLspose = { showLspose = true },
             onOpenUsbDebug = { showUsbDebug = true },
             onOpenDefaultApp = { showDefaultApp = true },
-            onOpenCms = { showCms = true },
             onOpenToolbox = { showToolbox = true },
             onOpenKnowledge = { showKnowledge = true },
             onOpenTerminal = { showTerminal = true },
-            onOpenPlugins = { showPlugins = true },
             onOpenSkills = { showSkills = true },
-            onOpenBots = { showBots = true },
             onOpenSchedule = { showSchedule = true },
             onManagePersona = { sheet = null; showSoulSheet = true },
             onOpenVoice = { showVoice = true },
@@ -1875,9 +1855,6 @@ fun ChatScreen(
             onOpenAbout = { showAbout = true },
             onOpenCleanup = { showCleanup = true },
             onOpenFileManager = { showFileManager = true },
-            onOpenAci = { showAci = true },
-            onOpenMcp = { showMcp = true },
-            onOpenCluster = { showClusterSettings = true },
             onOpenSystemStatus = { showSystemStatus = true },
             onOpenComponentGallery = { showComponentGallery = true },
             onOpenAppearance = { showAppearance = true },
@@ -1897,13 +1874,6 @@ fun ChatScreen(
         }
 
         // LSPosed 模块页：全屏覆盖层（从设置底部弹层入口进入，返回关页回设置）
-        if (showLspose) {
-            BackHandler { showLspose = false }
-            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
-                QuroLsposeScreen(onClose = { showLspose = false })
-            }
-        }
-
         // USB / 无线调试 (ADB) 页：全屏覆盖层（从设置页入口进入，返回关页回设置）
         if (showUsbDebug) {
             BackHandler { showUsbDebug = false }
@@ -1925,13 +1895,6 @@ fun ChatScreen(
         }
 
         // CMS v2 能力模块系统页：全屏覆盖层（从设置页入口进入，返回关页回设置）
-        if (showCms) {
-            BackHandler { showCms = false }
-            Box(Modifier.fillMaxSize().zIndex(100f).background(Color(0xFFF2F2F7))) {
-                QuroCmsScreen(onClose = { showCms = false })
-            }
-        }
-
         // 聚合式「系统状态」浏览界面：全屏覆盖层（从设置页入口进入，返回关页回设置）
         if (showSystemStatus) {
             BackHandler { showSystemStatus = false }
@@ -1952,13 +1915,6 @@ fun ChatScreen(
         // ★ 2026-09-16 修正：此前这里打开的是 PluginsScreen —— 那是「JS 插件运行时」的演示壳
         //   （QuickJS + WebView，页面本身没有插件列表，所以看起来一片空白）。
         //   APK 级插件框架的管理界面是 PluginManagerScreen，入口必须指到它。
-        if (showPlugins) {
-            BackHandler { showPlugins = false }
-            Box(Modifier.fillMaxSize().zIndex(100f).background(MaterialTheme.colorScheme.background)) {
-                PluginManagerScreen(onClose = { showPlugins = false })
-            }
-        }
-
         // 技能 SKILL 管理页：全屏覆盖层（从工具栏「技能」/ ui_open_skills 进入）
         if (showSkills) {
             BackHandler { showSkills = false }
@@ -2072,29 +2028,7 @@ fun ChatScreen(
         }
 
         // MCP 服务设置页：全屏覆盖层（从设置「MCP 服务」进入）
-        if (showMcp) {
-            BackHandler { showMcp = false }
-            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
-                QuroMcpSettingsScreen(onBack = { showMcp = false })
-            }
-        }
-
-        // 多角色集群设置页：全屏覆盖层（从设置「多角色集群」进入）
-        if (showClusterSettings) {
-            BackHandler { showClusterSettings = false }
-            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
-                QuroClusterSettingsScreen(onBack = { showClusterSettings = false })
-            }
-        }
-
         // ACI 管理中心页：全屏覆盖层（从设置「功能 → ACI 管理中心」进入，AI 工具 ui_open_aci 亦可打开）
-        if (showAci) {
-            BackHandler { showAci = false }
-            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
-                QuroAidlAciCenterScreen(onClose = { showAci = false })
-            }
-        }
-
         // ACI 应用选择器对话框
         if (showAciSelector) {
             AciAppSelectionDialog(
@@ -2148,12 +2082,6 @@ fun ChatScreen(
                 )
             }
         }
-
-        // 多角色集群面板：这里只做「编排控制」（建角色 / 下目标 / 看进度），
-        // 集群的发言经 ClusterChatBridge 投影进**本对话框的消息流**（绑定在
-        // QuroChatViewModel.init，与助手消息走同一套渲染）。
-        //
-        // 编排控制在「设置 → 多角色集群」页。
 
 
         // 技能选择对话框（从输入框工具菜单 / 上下文标识栏进入）
@@ -2378,13 +2306,6 @@ fun ChatScreen(
         }
 
         // 机器人设置页（C2）：全屏覆盖层（从工具箱「机器人」入口进入，返回关页回工具箱）
-        if (showBots) {
-            BackHandler { showBots = false }
-            Box(Modifier.fillMaxSize().zIndex(100f).background(cs.background)) {
-                QuroBotSettingsScreen(onClose = { showBots = false })
-            }
-        }
-
         // 应用内文档查看器：全屏覆盖层（从工具栏「文档」进入；已整合原「文档中心」）
         if (showOnlyOffice) {
             BackHandler { showOnlyOffice = false }
@@ -2413,7 +2334,6 @@ fun ChatScreen(
                     onLaunch = { target ->
                         when (target) {
                             "terminal" -> showTerminal = true
-                            "cms" -> showCms = true
                             "toolbox" -> showToolbox = true
                             "editor" -> showEditor = true
                             "browser_ai" -> {
@@ -4953,17 +4873,6 @@ private fun Composer(
     currentWorkspace: String? = null,
     onOpenWorkspaceSelector: () -> Unit = {},
     onOpenCodeBrowser: () -> Unit = {},
-    /** 打开多角色集群面板（主持编排 + 多角色分工）。 */
-    /** 🔴 集群模式是否开启（对话框的一种模式，与「深度思考」平级）。 */
-    clusterMode: Boolean = false,
-    /** 集群是否有任务在跑：发送键切成「停止」，并显示协作中状态。 */
-    clusterRunning: Boolean = false,
-    /** 🔴 #183：引擎正在后台安装中（建 Room 库 + 注册 258 个宿主工具），期间显示忙碌态并禁用连点。 */
-    clusterEnabling: Boolean = false,
-    onToggleClusterMode: () -> Unit = {},
-    onStopCluster: () -> Unit = {},
-    /** 集群配置面板（角色/工具/授权），纯配置。 */
-    onOpenClusterConfig: () -> Unit = {},
     currentAciName: String? = null,
     enabledSkillsCount: Int = 0,
     scaled: (Int) -> androidx.compose.ui.unit.TextUnit
@@ -5051,51 +4960,6 @@ private fun Composer(
                         LucideIcon("sparkles", null, Modifier.size(12.dp), tint = cs.tertiary)
                         Spacer(Modifier.width(4.dp))
                         Text(stringResource(R.string.qk_00160, (enabledSkillsCount).toString()), fontSize = scaled(11), color = cs.onTertiaryContainer)
-                    }
-                }
-            }
-        }
-        // 🔴 集群模式横幅：模式开着、任务在跑，都必须在输入框附近明说。
-        // 否则用户在对话框里发了消息没回应，只能以为「集群是壳」——
-        // 这正是上一版最大的问题：开关开了却没有任何可见反馈。
-        // 放在**输入条之上**：输入条本身是 Row（横向排列控件），塞不进整行横幅。
-        if (clusterMode || clusterRunning || clusterEnabling) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = 6.dp, end = 6.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (clusterRunning || clusterEnabling) {
-                    CircularProgressIndicator(
-                        Modifier.size(12.dp),
-                        strokeWidth = 2.dp,
-                        color = cs.primary,
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(
-                    stringResource(
-                        // 🔴 #183：装引擎期间 enabled 还是 false，光靠 clusterMode 判不出来，
-                        // 不单独处理的话用户点了开关会看到「什么都没有」—— 那就是上一版的卡死观感来源。
-                        when {
-                            clusterEnabling -> R.string.qk_04064
-                            clusterRunning -> R.string.qk_04056
-                            else -> R.string.qk_04054
-                        }
-                    ),
-                    fontSize = scaled(11),
-                    color = cs.primary,
-                    fontWeight = FontWeight.Medium,
-                )
-                Spacer(Modifier.weight(1f))
-                // 运行中给一个显式停止：任务卡住时用户不至于只能杀进程
-                if (clusterRunning) {
-                    TextButton(
-                        onClick = onStopCluster,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    ) {
-                        Text(stringResource(R.string.qk_04057), fontSize = scaled(11), color = cs.primary)
                     }
                 }
             }
@@ -5590,17 +5454,13 @@ private fun SheetOverlay(
     onOpenModelConfig: () -> Unit,
     onOpenFeatureModelConfig: () -> Unit,
     onOpenPermission: () -> Unit,
-    onOpenLspose: () -> Unit,
     onOpenUsbDebug: () -> Unit,
     onOpenModelGroups: () -> Unit = {},
     onOpenDefaultApp: () -> Unit,
-    onOpenCms: () -> Unit,
     onOpenToolbox: () -> Unit,
     onOpenKnowledge: () -> Unit,
     onOpenTerminal: () -> Unit,
-    onOpenPlugins: () -> Unit,
     onOpenSkills: () -> Unit,
-    onOpenBots: () -> Unit,
     onManagePersona: () -> Unit,
     onOpenVoice: () -> Unit,
     onOpenTts: () -> Unit,
@@ -5615,9 +5475,6 @@ private fun SheetOverlay(
     onOpenAbout: () -> Unit,
     onOpenCleanup: () -> Unit,
     onOpenFileManager: () -> Unit,
-    onOpenAci: () -> Unit,
-    onOpenMcp: () -> Unit,
-    onOpenCluster: () -> Unit,
     onOpenSystemStatus: () -> Unit,
     onOpenComponentGallery: () -> Unit,
     onOpenAppearance: () -> Unit,
@@ -5674,12 +5531,11 @@ private fun SheetOverlay(
                     SheetType.Persona -> PersonaSheetContent(personaList, selectedPersona, onSelectPersona, onAddPersona, scaled)
                     SheetType.Upload -> UploadSheetContent(
                         onPickFile, onOpenBrowser, onClear,
-                        onOpenVoiceService, onOpenToolbox, onOpenCms, onOpenSkills, onOpenKnowledge, onOpenTerminal,
+                        onOpenVoiceService, onOpenToolbox, onOpenSkills, onOpenKnowledge, onOpenTerminal,
                         onOpenStt,
                         { q -> onSendText(q) },
                         scaled,
                         onOpenSchedule = onOpenSchedule,
-                        onOpenBots = onOpenBots,
                         onOpenNovelStudio = onOpenNovelStudio
                     )
                     SheetType.Voice -> VoiceSheetContent(onOpenTts, onOpenStt, onOpenVoice, scaled)
@@ -5688,12 +5544,12 @@ private fun SheetOverlay(
                         settingsSoundOn, onSettingsToggleSound,
                         settingsEnterSend, onSettingsToggleEnter,
                         settingsFontName, onSettingsCycleFont,
-                        onOpenModelConfig, onOpenFeatureModelConfig, onOpenPermission, onOpenLspose, onOpenUsbDebug, onOpenDefaultApp, onOpenCms, onOpenToolbox, onOpenKnowledge, onOpenTerminal, onOpenPlugins, onOpenSkills,
+                        onOpenModelConfig, onOpenFeatureModelConfig, onOpenPermission, onOpenUsbDebug, onOpenDefaultApp, onOpenToolbox, onOpenKnowledge, onOpenTerminal, onOpenSkills,
                         onOpenModelGroups,
                         onManagePersona, onOpenVoiceService,
                         onClearChat, settingsVoiceBallEnabled, onSettingsToggleVoiceBall,
                     settingsAiReplyNotify, onSettingsToggleAiReplyNotify,
-                        onOpenAbout, onOpenAci, onOpenMcp, onOpenCluster, onOpenSystemStatus, onOpenComponentGallery, onOpenAppearance, onExport, onClear, onOpenCleanup, onOpenFileManager,
+                        onOpenAbout, onOpenSystemStatus, onOpenComponentGallery, onOpenAppearance, onExport, onClear, onOpenCleanup, onOpenFileManager,
                         onOpenGitHub = onOpenGitHub, onOpenModelHub = onOpenModelHub, scaled
                     )
                     else -> {}
@@ -5727,15 +5583,12 @@ private fun SettingsSheetContent(
     onOpenModelConfig: () -> Unit,
     onOpenFeatureModelConfig: () -> Unit,
     onOpenPermission: () -> Unit,
-    onOpenLspose: () -> Unit,
     onOpenUsbDebug: () -> Unit,
     onOpenModelGroups: () -> Unit = {},
     onOpenDefaultApp: () -> Unit,
-    onOpenCms: () -> Unit,
     onOpenToolbox: () -> Unit,
     onOpenKnowledge: () -> Unit,
     onOpenTerminal: () -> Unit,
-    onOpenPlugins: () -> Unit,
     onOpenSkills: () -> Unit,
     onManagePersona: () -> Unit,
     onOpenVoiceService: () -> Unit,
@@ -5743,9 +5596,6 @@ private fun SettingsSheetContent(
     voiceBallEnabled: Boolean, onToggleVoiceBall: (Boolean) -> Unit,
     settingsAiReplyNotify: Boolean, onSettingsToggleAiReplyNotify: () -> Unit,
     onOpenAbout: () -> Unit,
-    onOpenAci: () -> Unit,
-    onOpenMcp: () -> Unit,
-    onOpenCluster: () -> Unit,
     onOpenSystemStatus: () -> Unit,
     onOpenComponentGallery: () -> Unit,
     onOpenAppearance: () -> Unit,
@@ -5787,8 +5637,6 @@ private fun SettingsSheetContent(
             HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
             SetRowClickable(Icons.Filled.Security, stringResource(R.string.qk_03833), stringResource(R.string.qk_03867), "", onOpenPermission, scaled)
             HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
-            SetRowClickable(Icons.Filled.Extension, stringResource(R.string.qk_02024), stringResource(R.string.qk_03848), "", onOpenLspose, scaled)
-            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
             SetRowClickable(Icons.Filled.Usb, stringResource(R.string.qk_03845), stringResource(R.string.qk_03860), "", onOpenUsbDebug, scaled)
             HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
             SetRowClickable(Icons.Filled.Apps, stringResource(R.string.qk_01687), stringResource(R.string.qk_03869), "", onOpenDefaultApp, scaled)
@@ -5801,15 +5649,7 @@ private fun SettingsSheetContent(
             HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
             SetRowClickable(Icons.Filled.Info, stringResource(R.string.qk_03837), stringResource(R.string.qk_03865), "", onOpenComponentGallery, scaled)
             HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
-            SetRowClickable(Icons.Filled.Extension, stringResource(R.string.qk_00491), stringResource(R.string.qk_03851), "", onOpenPlugins, scaled)
-            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
             SetRowClickable(Icons.Filled.Person, stringResource(R.string.qk_02449), stringResource(R.string.qk_03854), "", onManagePersona, scaled)
-            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
-            SetRowClickable(Icons.Filled.Hub, stringResource(R.string.qk_02058), stringResource(R.string.qk_03858), "", onOpenMcp, scaled)
-            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
-            SetRowClickable(Icons.Filled.AccountTree, stringResource(R.string.qk_03946), stringResource(R.string.qk_04065), "", onOpenCluster, scaled)
-            HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
-            SetRowClickable(Icons.Filled.Public, stringResource(R.string.qk_03843), stringResource(R.string.qk_03866), "", onOpenAci, scaled)
             HorizontalDivider(color = Line, thickness = 1.dp, modifier = Modifier.padding(horizontal = 12.dp))
             SetRow(
                 Icons.Filled.Code, stringResource(R.string.qk_03849),
@@ -6297,7 +6137,6 @@ private fun UploadSheetContent(
     onClearChat: () -> Unit,
     onOpenVoiceService: () -> Unit,
     onOpenToolbox: () -> Unit,
-    onOpenCms: () -> Unit,
     onOpenSkills: () -> Unit,
     onOpenKnowledge: () -> Unit,
     onOpenTerminal: () -> Unit,
@@ -6305,7 +6144,6 @@ private fun UploadSheetContent(
     onAiSearch: (String) -> Unit,
     scaled: (Int) -> androidx.compose.ui.unit.TextUnit,
     onOpenSchedule: () -> Unit = {},
-    onOpenBots: () -> Unit = {},
     onOpenNovelStudio: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
@@ -6329,14 +6167,12 @@ private fun UploadSheetContent(
             ToolTile({ Icon(Icons.Filled.Public, stringResource(R.string.qk_00213), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00213), { showAiSearch = true }, scaled)
             ToolTile({ Icon(Icons.Filled.VolumeUp, stringResource(R.string.qk_03057), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_03057), onOpenVoiceService, scaled)
             ToolTile({ Icon(Icons.Filled.Build, stringResource(R.string.qk_00214), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00214), onOpenToolbox, scaled)
-            ToolTile({ Icon(Icons.Filled.Extension, "CMS v2", Modifier.size(22.dp), tint = cs.primary) }, "CMS v2", onOpenCms, scaled)
             ToolTile({ Icon(Icons.Filled.Description, stringResource(R.string.qk_00215), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00215), onOpenKnowledge, scaled)
             ToolTile({ Icon(Icons.Filled.Edit, "写作工作台", Modifier.size(22.dp), tint = cs.primary) }, "写作工作台", onOpenNovelStudio, scaled)
             ToolTile({ Icon(Icons.Filled.Terminal, stringResource(R.string.qk_00216), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00216), onOpenTerminal, scaled)
             ToolTile({ LucideIcon("trash_2", stringResource(R.string.qk_00217), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00217), onClearChat, scaled)
             ToolTile({ LucideIcon("sparkles", stringResource(R.string.qk_00218), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00218), onOpenSkills, scaled)
             ToolTile({ Icon(Icons.Filled.Schedule, stringResource(R.string.qk_00219), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00219), onOpenSchedule, scaled)
-            ToolTile({ LucideIcon("bot", stringResource(R.string.qk_00220), Modifier.size(22.dp), tint = cs.primary) }, stringResource(R.string.qk_00220), onOpenBots, scaled)
         }
     }
     showMediaBrowser?.let { k ->

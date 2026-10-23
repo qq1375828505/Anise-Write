@@ -5,7 +5,7 @@ import com.ai.assistance.quro.core.tools.QuroToolRegistry
 /**
  * 网文写作域工具集（PenAi）。
  *
- * 挂载方式与基座其它域保持一致（参照 core/cluster/ClusterTools.kt 的 ClusterToolSet）：
+ * 挂载方式与基座其它域保持一致：
  * 在基座统一注册处（core/tools/QuroBuiltInTools.kt 的 buildQuroRegistry）加一行
  * `NovelToolSet.registerAll(r)` 即可。
  *

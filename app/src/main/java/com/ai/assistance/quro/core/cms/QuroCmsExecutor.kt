@@ -9,7 +9,6 @@ import com.ai.assistance.quro.core.agent.QuroAgentTrace
 import com.ai.assistance.quro.core.QuroBrowserBridge
 import com.ai.assistance.quro.core.linux.QuroLinuxEnv
 import com.ai.assistance.quro.core.terminal.QuroTerminalBridge
-import com.ai.assistance.quro.core.tools.AiBrowserTool
 import com.ai.assistance.quro.core.tools.QuroJsExecutor
 import org.json.JSONArray
 import org.json.JSONObject
@@ -172,21 +171,6 @@ class QuroCmsExecutor(context: Context) {
                 "path=${f.absolutePath}（${items.size} 项）:\n" + items.joinToString("\n")
             }
             "echo" -> "workflow: ${args["text"] ?: ""}"
-
-            // ---- 自动化浏览器（AI 自动化研究 / 抓取正文，接 AiBrowserTool 引擎）----
-            "ai.browser.automate" -> {
-                val query = args["query"] ?: return@runCatching "⛔ 缺少 query 参数"
-                val depth = args["depth"]?.toIntOrNull()?.coerceIn(1, 8) ?: 4
-                val argJson = JSONObject().apply {
-                    put("action", "automate"); put("query", query); put("depth", depth)
-                }.toString()
-                AiBrowserTool().run(appContext, argJson)
-            }
-            "ai.browser.read" -> {
-                val url = args["url"] ?: return@runCatching "⛔ 缺少 url 参数"
-                val argJson = JSONObject().apply { put("action", "read"); put("url", url) }.toString()
-                AiBrowserTool().run(appContext, argJson)
-            }
 
             // ---- 系统：电量信息（应用内 BatteryManager，只读）----
             "battery.info" -> {

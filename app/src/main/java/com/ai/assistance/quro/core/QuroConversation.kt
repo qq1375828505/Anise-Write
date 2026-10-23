@@ -114,7 +114,7 @@ data class QuroMessage(
  *
  * `store` 是**纯内存**的，落盘完全由 ViewModel 的 `commitCurrent()` 驱动 ——
  * 而 `commitCurrent` 只在 `send()`（普通模型回复链路）里被调用。
- * 集群（[com.ai.assistance.quro.core.cluster.ClusterChatBridge]）与子智能体
+ * 子智能体（QuroAssistant.runSubAgent）
  * 是**直接 `store.add()`** 写入的，从不经过 `send()`，于是：
  *
  * >「集群有消息了但是没有保存记录，退出对话框就没有集群记录了」

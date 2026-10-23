@@ -19,7 +19,7 @@ import org.json.JSONObject
  * 2. description 把"什么情况下该调用"写清楚，直接决定模型会不会主动用它；
  * 3. 拆成 web_search 与 read_url 两个工具，模型可自行编排：先搜 → 挑有价值的 → 精读 → 作答。
  *
- * 宿主类型说明：原方案依赖 core.mcp.McpTool/ToolRegistry，但本工程工具系统用的是 QuroTool 契约，
+ * 宿主类型说明：本工程工具系统用的是 QuroTool 契约，
  * 因此本文件把联网能力适配到 QuroTool，业务逻辑（Orchestrator / 引擎 / 抽取 / 重排）零改动复用。
  */
 class WebSearchTool(private val toolName: String) : QuroTool {

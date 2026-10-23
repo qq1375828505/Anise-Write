@@ -165,13 +165,6 @@ kotlin {
 }
 
 dependencies {
-    // 多角色集群编排（去品牌化移植的 cluster-* 六模块）。
-    // ui/engine/model 走 api 暴露类型；storage 需进包才能读写 qurocluster.db；
-    // SQLCipher 由 :cluster-storage 以 implementation 传递，App 侧无需直接依赖。
-    implementation(project(":cluster-ui"))
-    implementation(project(":cluster-engine"))
-    implementation(project(":cluster-storage"))
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.annotation)
     implementation(libs.androidx.appcompat)

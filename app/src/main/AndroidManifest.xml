@@ -405,11 +405,6 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <service
-            android:name=".service.QuroBotBootstrapService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
         <!-- 终端默认会话保活服务：前台常驻，每 15s 保活默认终端会话（installIfMissing=false）。
              进程内 fork 的 shell 子进程属于本服务进程，前台服务存活 → 子进程存活 → 息屏/切 App 不被杀。 -->
         <service
@@ -559,12 +554,6 @@
                 android:name="android.view.im"
                 android:resource="@xml/method" />
         </service>
-
-        <!-- 本地 MCP Server：环回地址 127.0.0.1，仅本机可访问 -->
-        <service
-            android:name=".service.QuroMcpService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
 
         <!-- 百分百开源本地音乐播放器：前台媒体播放服务 -->
         <service
@@ -856,38 +845,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- APK 插件界面承载：插件没有自己的 Activity（独立 APK 不是系统安装的应用，
-             系统 PackageManager 里查不到它，Activity 起不来），
-             由宿主提供这个通用 Activity 显示插件返回的 View 树（uiSurface 扩展点）。
-             configChanges 必须带上，否则转屏/分屏会重建 Activity，WebView 会被重新挂载。
-             入口：插件管理面板「打开界面」按钮，或 AI 走 plugin_surface_open 工具。 -->
-        <activity
-            android:name=".ui.PluginSurfaceActivity"
-            android:exported="false"
-            android:label="插件界面"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode"
-            android:theme="@style/Theme.Quro" />
-
-        <!-- KaleidoBox 真 Android 组件：把某个插件 UI 表面全屏承载成独立可启动 Activity。
-             入口：显式 Intent（工具中心"打开"）或隐式 deep-link（桌面快捷方式/浏览器/分享）。 -->
-        <activity
-            android:name=".kaleidobox.KaleidoActivity"
-            android:exported="true"
-            android:label="KaleidoBox 插件"
-            android:theme="@style/Theme.Quro">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="kaleido"
-                    android:host="plugin" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="com.ai.assistance.quro.kaleidobox.ACTION_VIEW_PLUGIN" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
 
     </application>
 

@@ -33,9 +33,6 @@ import com.ai.assistance.quro.core.QuroMessage
 import com.ai.assistance.quro.core.QuroToolCall
 import com.ai.assistance.quro.core.QuroChatMessage
 import com.ai.assistance.quro.core.QuroLlmResult
-import com.ai.assistance.quro.core.bot.BotConversationBinder
-import com.ai.assistance.quro.core.bot.QuroBotManager
-import com.ai.assistance.quro.core.bot.QuroBotPlatform
 import com.ai.assistance.quro.core.QuroToolSpec
 import com.ai.assistance.quro.core.QuroPersistedConversation
 import com.ai.assistance.quro.core.QuroPersona
@@ -110,16 +107,15 @@ class QuroChatViewModel(context: Context) : ViewModel() {
 
     // 当前会话的内存存储（单一实例，QuroAssistant 始终写入它）
     //
-    // 🔴 #182「集群有消息了但是没有保存记录，退出对话框就没有集群记录了」的真凶。
+    // 🔴 #182「子智能体有消息了但是没有保存记录，退出对话框就没有记录了」的真凶。
     //
     // store 是纯内存的，落盘**只**由 [commitCurrent] 驱动，而 commitCurrent 只在
-    // `send()` 链路里被调。集群（ClusterChatBridge）与子智能体（QuroAssistant.runSubAgent）
-    // 都是**直接 store.add()** 写入的 —— 于是它们的发言在内存里飘着，
-    // 一切换对话框/退出界面，`selectConversation` 的 store.clear() 就把它们全丢了。
+    // `send()` 链路里被调。子智能体（QuroAssistant.runSubAgent）是
+    // **直接 store.add()** 写入的 —— 于是它的发言在内存里飘着，
+    // 一切换对话框/退出界面，`selectConversation` 的 store.clear() 就把它全丢了。
     //
     // 修法：给 store 挂落盘钩子，任何来源的写入都触发一次节流落盘。
-    // 不在 add() 里直接落盘（那是 IO，且在集群的 IO 线程上），
-    // 而是转成一次 viewModelScope 内的 commitCurrent —— 复用既有的节流与 #877 防串台守卫。
+    // 不在 add() 里直接落盘（那是 IO），而是转成一次 viewModelScope 内的 commitCurrent。
     private val store = QuroConversationStore(onMutated = ::onStoreMutated)
 
     /**
@@ -142,42 +138,12 @@ class QuroChatViewModel(context: Context) : ViewModel() {
      *
      * 为什么不继续让集群自建气泡列表（旧集群那套）：
      * 用户原话「集群你并没有做到对话框，而是另外开对话框」。根因不是入口选错了 Sheet，
-     * 而是**数据源根本不通** —— 集群拿不到主对话的消息流，只能自己画一套气泡，
-     * 于是富卡片、工具调用卡、视觉弹窗、记忆、小卡片这些对话框能力全都用不上，
-     * 回复也不进历史。用户看到的自然是「一个只有文本的残废对话框」。
-     *
-     * 只读暴露 + 下面的 [appendClusterMessage] 追加，**不开放 update/clear**：
-     * 集群只该「往对话里说话」，不该改写或清空用户的对话历史。
+     * 只读暴露，**不开放 update/clear**：子代理只该「往对话里说话」，
+     * 不该改写或清空用户的对话历史。
      */
     val conversationStore: QuroConversationStore get() = store
 
     init {
-        // 🔴 集群 → 对话框投影（本轮修「集群进入对话框你老是另开」）。
-        //
-        // 症状真因不是"另开窗口"，而是集群发言**根本没进对话框**：
-        // ClusterTraceBridge 只把事件写进 QuroAgentTrace（思维链/诊断面板），
-        // 那和消息流是两套东西，于是用户盯着对话框看到零回复，
-        // 而后台其实在真跑模型。
-        //
-        // 为什么在 ViewModel 绑而不是 ChatScreen：store 是 private 的，
-        // 只读暴露在 ViewModel；且 ViewModel 生命周期 ≈ 对话框可见期，
-        // onCleared 时解绑，避免往已销毁的会话里写气泡。
-        //
-        // store 是**单一实例**、selectConversation 里 clear() 后重灌同一对象，
-        // 所以绑一次即可，不需要在切会话时重新绑定。
-        runCatching {
-            val engine = com.ai.assistance.quro.core.cluster.ClusterRuntime.get()
-            com.ai.assistance.quro.core.cluster.ClusterChatBridge.registerSink(store, engine)
-        }.onFailure {
-            // 🔴 别静默失败：吞掉的话症状是「集群跑完了但对话框一个字没有」，
-            // 而日志里什么都没有，排查成本极高。这里必须留可检索的一行。
-            android.util.Log.w(
-                "QuroChatViewModel",
-                "集群投影桥绑定失败（对话里将看不到集群发言）",
-                it
-            )
-        }
-
         // 🔴 可视化工具答案回流桥：用户作答/操作可视化弹窗后，把答案作为新用户消息发回主对话，
         // 由 AI 在下一轮继续（非阻塞、非时间等待）。避免「AI 傻等 120 秒」的阻塞性工具行为。
         VisualAnswerBridge.onAnswer = { answer -> send(answer) }
@@ -186,9 +152,8 @@ class QuroChatViewModel(context: Context) : ViewModel() {
     /**
      * 只把用户消息写进对话流，**不触发任何模型回复**。
      *
-     * 集群模式用：集群的发言由 [com.ai.assistance.quro.core.cluster.ClusterChatBridge]
-     * 投影进来，若不先把用户这条写进去，对话流里只有 AI 的气泡、没有用户的话，
-     * 看起来像 AI 自言自语。用 [vm.send] 写是错的 —— 它会连带跑一遍普通模型。
+     * 子代理模式用：子代理发言已由主循环追加，这里只负责用户消息落盘。
+     * 用 [vm.send] 写会连带跑一遍普通模型，所以只走 store.add。
      */
     fun appendUserMessage(text: String) {
         val t = text.trim()
@@ -218,29 +183,9 @@ class QuroChatViewModel(context: Context) : ViewModel() {
     }
 
     /**
-     * 追加一条**集群角色**的消息到当前对话。
-     *
-     * 用 [QuroMessage.senderName] 承载角色名 —— 这样每个角色的发言
-     * 走的是和 ZorvAI 助手消息**完全同一套**气泡渲染（富卡片、markdown、
-     * 工具调用卡、小卡片全都自动生效），而不是另画一个文本气泡。
-     *
-     * @param speaker 角色显示名（如「主持人」「研究员 小林」）
-     * @param text 发言正文（支持 markdown）
-     */
-    fun appendClusterMessage(speaker: String, text: String) {
-        store.add(
-            QuroMessage(
-                role = "assistant",
-                content = text,
-                senderName = speaker,
-            )
-        )
-    }
-
-    /**
      * issue #13：把一条「外部事件」作为**系统提醒**注入当前对话。
-     * 与 [appendClusterMessage] 不同：role=system 且 excludeFromLlm=false —— 既对用户可见、
-     * 又进入 LLM 上下文，但**不伪造用户消息**（用户可直接分辨这是外部事件而非自己说的）。
+     * role=system 且 excludeFromLlm=false —— 既对用户可见、
+     * 又进入 LLM 上下文，但**不伪造用户消息**。
      * 注入后刷新内存消息列表，使气泡立即出现。
      */
     fun injectExternalReminder(text: String) {
@@ -586,84 +531,8 @@ class QuroChatViewModel(context: Context) : ViewModel() {
             _messages.value = store.all()
             emitMeta()
         }
-
-        // 注册机器人会话绑定器：把平台用户消息按设置写�? App 持久化会话（纯内存操作，留主线程�?
-        QuroBotManager.instance(appContext).conversationBinder = BotConversationBinder { platform, userId, userName, userText, replyText, mode, fixedConvId ->
-            when (mode) {
-                "none" -> Unit
-                "fixed" -> {
-                    val targetId = fixedConvId?.takeIf { id -> _convs.value.any { it.id == id } }
-                        ?: createBotConversation(platform, userId)
-                    appendToConversation(
-                        targetId,
-                        listOf(
-                            QuroMessage(role = "user", content = userText, senderName = userName),
-                            QuroMessage(role = "assistant", content = replyText),
-                        ),
-                    )
-                }
-                else -> { // auto
-                    val convId = findBotConversation(platform, userId)?.id
-                        ?: createBotConversation(platform, userId)
-                    appendToConversation(
-                        convId,
-                        listOf(
-                            QuroMessage(role = "user", content = userText, senderName = userName),
-                            QuroMessage(role = "assistant", content = replyText),
-                        ),
-                    )
-                }
-            }
-        }
-    }
-
     // ---- 会话操作 ----
 
-    /** 查找某平台用户对应的机器人自动会话（按标题匹配）�? */
-    private fun findBotConversation(platform: QuroBotPlatform, userId: String): QuroPersistedConversation? {
-        val prefix = "[${platform.label}] "
-        return _convs.value.firstOrNull { it.title == "$prefix$userId" }
-    }
-
-    /** 为某平台用户新建一个自动会话，返回�? ID�? */
-    private fun createBotConversation(platform: QuroBotPlatform, userId: String): String {
-        val id = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
-        val welcome = QuroMessage(
-            role = "assistant",
-            content = qstr(R.string.qk_03819, platform.label, userId),
-        )
-        val conv = QuroPersistedConversation(id = id, title = "[${platform.label}] $userId", createdAt = now, updatedAt = now, messages = listOf(welcome))
-        _convs.value = _convs.value + conv
-        convRepo.saveAll(_convs.value)
-        emitMeta()
-        return id
-    }
-
-    /** 把消息追加到指定会话并持久化；若该会话正好是当前可见会话，也同步刷新 UI�? */
-    private fun appendToConversation(
-        conversationId: String,
-        messages: List<QuroMessage>,
-        updateTitle: Boolean = false,
-    ) {
-        val idx = _convs.value.indexOfFirst { it.id == conversationId }
-        if (idx < 0) return
-        val conv = _convs.value[idx]
-        val title = if (updateTitle) {
-            messages.firstOrNull { it.role == "user" }?.content?.take(20)?.let { if (it.isNotBlank()) it else conv.title } ?: conv.title
-        } else conv.title
-        val updated = conv.copy(
-            messages = conv.messages + messages,
-            updatedAt = System.currentTimeMillis(),
-            title = title,
-        )
-        val newList = _convs.value.toMutableList()
-        newList[idx] = updated
-        _convs.value = newList
-        convRepo.saveAll(_convs.value)
-        emitMeta()
-        // 如果追加的是当前可见会话，同步刷�? _messages
-        if (_currentId.value == conversationId) {
             store.addAll(messages)
             _messages.value = store.all()
         }
@@ -815,9 +684,6 @@ class QuroChatViewModel(context: Context) : ViewModel() {
     }
 
     override fun onCleared() {
-        // 🔴 集群投影解绑：ViewModel 销毁后再往这个 store 写气泡，
-        // 用户会看到「已死会话」的发言冒出来。
-        runCatching { com.ai.assistance.quro.core.cluster.ClusterChatBridge.unregisterSink() }
         // 🔴 issue #11 问题 8：ViewModel 销毁时全局清杀在册工具进程
         // （proot / su / sh -c 等），防止会话没了子进程还在跑。
         runCatching { com.ai.assistance.quro.core.tools.QuroToolProcesses.killAllActive() }
@@ -2433,7 +2299,7 @@ ZorvAI 有一套 **APK 级插件系统**：插件是**独立 APK**，宿主用 D
         // 旧实现：ZorvAI 通过 genui_open 工具把「画界面」的活派给内部 GenUI 画布，
         // 并注入 GenUiBridge.SYSTEM_SECTION 告知模型这条反向通道。整套旧 GenUI 已删除，
         // 现在换成**内置的完整 GenUI-Agent 独立应用**，入口为工具 `genui_agent_open`
-        // （见 core/tools/GenUiAgentOpenTool.kt，工具描述本身就是模型认知来源）。
+
 
         // ══════════════ 人格卡可视化开关【硬强制】放最末尾 = 最高近因偏好（仅云端路径）═════════════
         // 本地离线模型不走到这里（已在上面 isLocal 分支 early-return），本段只在云端路径注入。
@@ -2442,7 +2308,7 @@ ZorvAI 有一套 **APK 级插件系统**：插件是**独立 APK**，宿主用 D
         // ══════════════ 系统提示词 RAG：**备用方案**，按本轮意图追加「进阶段规则」══
         // 🔴 2026-10-08 默认从 FULL_ALWAYS 改成 SELECTIVE（实测依据）：
         // FULL_ALWAYS 实测每轮追加 **3182 字符（≈2100 tokens）**，其中
-        // cluster_orchestration 一段独占 1416 字 —— 那就是「把 RAG 当主要方案」，
+        // cluster 编排一段独占 1416 字 —— 那就是「把 RAG 当主要方案」，
         // 用户明确要求「改成 AI 被动使用，RAG 是备用方案不是主要方案」。
         //
         // 现在的主路径是**AI 自己**调 rag_search(domain="prompts") 主动取规则，

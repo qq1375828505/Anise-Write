@@ -11,8 +11,6 @@ import com.ai.assistance.quro.core.agent.loop.ClosedLoopExecutor
 import com.ai.assistance.quro.core.agent.loop.ExecResult
 import com.ai.assistance.quro.core.agent.loop.FailureType
 import com.ai.assistance.quro.core.agent.loop.ToolOutcome
-import com.ai.assistance.quro.core.mcp.DroidMcp
-import com.ai.assistance.quro.core.mcp.McpTool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -42,7 +40,7 @@ interface QuroTool {
      * 该工具的执行预算（毫秒）——超过即放弃等待并报超时，**执行线程遗弃为后台**。
      *
      * 🔴 为什么需要它：[run] 是普通阻塞函数，适配层用「独立线程 + 限期等待」执行
-     * （见 QuroToolAdapter）；若工具实现阻塞在不可中断的调用上（如 run_code 原生
+     * ；若工具实现阻塞在不可中断的调用上（如 run_code 原生
      * Python 卡在 C 层 JNI），唯一止损手段就是到点放弃等待。默认 10 分钟兜底，
      * 确定耗时的长任务工具（如 CMS 环境供给、本地大模型写章）可显式覆写。
      */
@@ -289,10 +287,6 @@ class QuroToolRegistry {
             "node_editor",
             // 工作流引擎 AI 侧调用入口：创建/点燃/查询运行（缺口清单 · 可实现项）
             "wf_create", "wf_trigger", "wf_run_status",
-            // MCP 客户端：AI 调用外部 MCP 服务器工具（#402）
-            "mcp_servers", "mcp_list_tools", "mcp_call", "mcp_deploy", "mcp_undeploy", "mcp_list_local",
-            // MCP-ACI 桥接：通过 ACI 调用外部 MCP 服务器工具
-            "mcp_aci_list", "mcp_aci_call", "mcp_aci_bridge",
             // 第三方服务授权保险库
             "auth_service_add", "auth_service_list", "auth_service_remove",
             // CMS v2 能力模块 + 特权通道自查
@@ -328,11 +322,6 @@ class QuroToolRegistry {
             "fluid_cloud_notify",
             // 隔离沙箱 + 私有数据库只读查询（应用内免权限）
             "sandbox", "private_db",
-            // KaleidoBox 工具包运行器：进程内 JVM / Dex 引擎运行 Kotlin/Java 工具包（list/install/invoke）
-            "kaleidobox",
-            // ★ APK 级插件框架总控（唯一入口）：列/装/卸/重载插件 + 查看与调用插件贡献的 AI 工具
-            //   + 打开插件界面。插件动态贡献的工具由 pluginHostToolSpecs() 另行并入。
-            "apk_plugin",
             // 七维能力补全（Dim1/2/3/4/7）：扩展生态 / 五语言真执行 / UI 自动化 / FFmpeg 链 / 终端增强
             // Dim1 扩展生态（网络类 + 编排）
             "crossref_search", "search_provider", "img_gen_provider", "train_12306", "github_read",
@@ -359,11 +348,7 @@ class QuroToolRegistry {
         val imported = QuroImportedToolRegistry.all().map {
             QuroToolSpec(it.name, it.description, it.parametersJson)
         }
-        // APK 级插件框架：宿主内置的插件管理工具（plugin_list/install/uninstall/reload/info）
-        // + 已装插件动态贡献的 AI 工具。二者都由 QuroPluginHost 统一产出，
-        // 保证「装了插件 → 下一轮 function calling 就能看到它的工具」。
-        val pluginTools = runCatching { pluginHostToolSpecs() }.getOrElse { emptyList() }
-        return guardSpecs((base + imported + pluginTools).plus(skillSpecs()))
+        return guardSpecs((base + imported).plus(skillSpecs()))
     }
 
     /** 完整工具规格（全部内置工具 + 技能工具）。仅在 API 代理确认支持时使用（见 coreSpecs 说明）。 */
@@ -464,10 +449,6 @@ class QuroToolEngine(private val registry: QuroToolRegistry) {
             "root_status", "shizuku_status",
         )
     }
-
-    private val droidMcp: DroidMcp = DroidMcp.builder()
-        .addTools(registry.all().map { it.toMcpTool(this) })
-        .build()
 
     internal fun getContext(): Context? = appContext
 
@@ -728,7 +709,8 @@ class QuroToolEngine(private val registry: QuroToolRegistry) {
             withTimeout(TOOL_EXEC_TIMEOUT_MS) {
                 val run = QuroToolProcesses.beginRun(coroutineContext[Job])
                 try {
-                    droidMcp.callTool(call.name, argsMap)
+                    val text = tool.run(context, call.arguments)
+                    mapOf("result" to text)
                 } finally {
                     QuroToolProcesses.endRun(run)
                 }
@@ -757,6 +739,5 @@ class QuroToolEngine(private val registry: QuroToolRegistry) {
     }
 
 
-    /** 导出 MCP 格式工具清单（供协议/桌面客户端）。 */
-    fun listToolsMcpJson(): String = droidMcp.listToolsJson()
 }
+

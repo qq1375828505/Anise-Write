@@ -244,15 +244,7 @@ class ApkPluginTool : QuroTool {
             } + "\n\n用 apk_plugin(action=\"open\", surface_id=\"<id>\") 打开指定界面；" +
                 "要打开「插件桌面」本体（启动器式管理界面）请用 ui_open_plugins。"
         }
-        val ext = HostToolBridge.surface(surfaceId) ?: return "没有找到插件界面：$surfaceId"
-        return try {
-            context.startActivity(
-                com.ai.assistance.quro.ui.PluginSurfaceActivity.intent(context, surfaceId, ext.title)
-            )
-            "已打开插件界面：${ext.label}（$surfaceId）"
-        } catch (t: Throwable) {
-            "打开失败：${t.message ?: t.javaClass.simpleName}（若在后台执行，请让用户手动打开插件界面）"
-        }
+        return "插件界面功能已裁剪（Phase 9）：ui.PluginSurfaceActivity 已移除。"
     }
 
     private fun install(context: Context, path: String, skipSignature: Boolean): String {

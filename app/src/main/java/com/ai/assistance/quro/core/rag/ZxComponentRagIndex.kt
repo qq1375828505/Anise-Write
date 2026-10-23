@@ -38,7 +38,7 @@ object ZxComponentRagIndex {
     /**
      * 组件域独立召回门槛。
      *
-     * 与 [ClusterSkillRagIndex.SKILL_MIN_SCORE] 同理：组件文档短、域内文档多（477），
+     * 与技能域 RAG 阈值同理：组件文档短、域内文档多（477），
      * 照抄工具域默认 `MIN_SCORE(0.62)` 会系统性砍掉真查询。取 0.12：
      * 低于它意味着「查询里连一个组件实词都没有」，安全且召回充分。
      */
@@ -181,7 +181,7 @@ object ZxComponentRagIndex {
     /**
      * 从检索结果取出**完整组件契约 + 分类 + 示例 DSL**，交给调用方回吐给模型。
      *
-     * 与 [ClusterSkillRagIndex.skillBodyOf] 同理：AI 命中后必须拿到可抄的字段契约与示例，
+     * 与技能域 RAG 取正文同理：AI 命中后必须拿到可抄的字段契约与示例，
      * 而不是只看 description 摘要。返回的 JSONObject 含：
      * `name / category / title / zh / description / fields / arrays / fn / sample / keywords`。
      */

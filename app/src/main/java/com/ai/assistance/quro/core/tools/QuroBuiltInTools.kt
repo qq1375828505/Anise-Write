@@ -4,25 +4,7 @@ import android.content.Context
 import android.os.Build
 import com.ai.assistance.quro.core.model.QuroModelConfigRepository
 import com.ai.assistance.quro.core.knowledge.QuroRagKnowledgeTool
-import com.ai.assistance.quro.core.cms.QuroCmsCallTool
-import com.ai.assistance.quro.core.cms.QuroCmsDeployTool
-import com.ai.assistance.quro.core.cms.QuroCmsListTool
-import com.ai.assistance.quro.core.cms.QuroCmsLogsTool
-import com.ai.assistance.quro.core.cms.QuroCmsResultTool
-import com.ai.assistance.quro.core.cms.QuroCmsRunDagTool
-import com.ai.assistance.quro.core.cms.QuroCmsStatusTool
-import com.ai.assistance.quro.core.cms.QuroCmsEngineStatusTool
-import com.ai.assistance.quro.core.cms.QuroCmsUndeployTool
-import com.ai.assistance.quro.core.cms.QuroCmsToolboxTool
-import com.ai.assistance.quro.core.cms.QuroPrivStatusTool
-import com.ai.assistance.quro.core.tools.QuroDevEnvTool
-import com.ai.assistance.quro.core.tools.QuroKaleidoBoxTool
-import com.ai.assistance.quro.core.aidlaci.QuroAidlAciCallTool
-import com.ai.assistance.quro.core.aidlaci.QuroAidlAciListTool
-import com.ai.assistance.quro.core.aidlaci.QuroAciHttpServerTool
-import com.ai.assistance.quro.core.mcp.McpAciListTool
-import com.ai.assistance.quro.core.mcp.McpAciCallTool
-import com.ai.assistance.quro.core.mcp.McpAciBridgeTool
+
 import com.ai.assistance.quro.core.tools.ReadScreenTool
 import com.ai.assistance.quro.core.tools.GetForegroundAppTool
 import com.ai.assistance.quro.core.tools.GetScreenStateTool
@@ -56,8 +38,6 @@ import com.ai.assistance.quro.core.tools.DeviceAdminStatusTool
 import com.ai.assistance.quro.core.tools.SetCameraDisabledTool
 import com.ai.assistance.quro.core.tools.RootExecTool
 import com.ai.assistance.quro.core.tools.RootStatusTool
-import com.ai.assistance.quro.tools.VncTool
-import com.ai.assistance.quro.tools.MiniAppAliasTool
 import com.ai.assistance.quro.core.tools.LinuxRunTool
 import com.ai.assistance.quro.core.tools.LinuxInstallTool
 import com.ai.assistance.quro.core.tools.LinuxStartTool
@@ -298,41 +278,13 @@ fun buildQuroRegistry(context: Context? = null): QuroToolRegistry {
     // ═══ 构建台：端侧 APK 构建（Java → DEX → APK，AI 可真正触发编译打包）═══
     r.register(BuildApkTool())
     r.register(ExportApkTool())    // 让 AI 也能「导出产物」（构建台 UI 的导出是文件选择器、AI 调不起）
-    // Web 应用：多文件多语言 Web 应用工程（WebView + native.* 原生桥）。
-    // workbench 是 miniapp 的兼容别名（MiniAppAliasTool），历史对话/手册仍可能引用。
-    r.register(MiniAppAliasTool())
-    // Web 应用：AI 直接 CRUD/运行 Web 应用工程（HTML + Page() 运行时 + native.* 原生桥）。
-    // 产物经 ```miniapp 围栏回到对话框气泡渲染；工具箱「Web 应用」面板与它共享同一份工程文件。
-    r.register(MiniAppTool())
-    // 原生小程序引擎（miniapp-sdk / com.yuanbao.miniapp，移植自 Quor-a/GenUI）：自研 C++ JS 引擎 + WXML/WXSS
-    // 原生渲染。与上面的 WebView「Web 应用」并列两套引擎；本工具让 AI 生成/治理 WXML 工程，
-    // 渲染由工具中心「小程序（原生引擎）」面板的 MiniAppView 完成。
-    r.register(MiniAppSdkTool())
-    // 内置的完整 GenUI-Agent（独立应用，GenUI JSON DSL → 原生 Compose 组件，530+ 组件）。
-    // 与上面的 miniapp 是**不同范式**的两套东西：miniapp 走 HTML/WXML 引擎，本工具走原生 Compose。
-    r.register(GenUiAgentOpenTool())
     // TTS 朗读
     r.register(SpeakTool())
     r.register(StopSpeakTool())
     // Intent / 广播
     r.register(ExecuteIntentTool())
     r.register(SendBroadcastTool())
-    // CMS v2 能力模块系统：让 AI 自我感知并真实调用已安装的能力
-    r.register(QuroCmsListTool())
-    r.register(QuroCmsCallTool())
-    // CMS v2 终端部署/卸载（原创运行时）：把模块推到 proot 终端并运行
-    r.register(QuroCmsDeployTool())
-    r.register(QuroCmsUndeployTool())
-    // CMS v2 统一工具箱：整合模块管理、引擎管理、开发环境管理、部署修复于一体
-    r.register(QuroCmsToolboxTool())
-    // 开发环境管理工具：独立管理终端开发环境的安装/卸载/检查
-    r.register(QuroDevEnvTool())
-    // ACI（Agent Capability Interface）：让 AI 作为控制方发现并调用第三方 App 暴露的能力
-    r.register(QuroAidlAciListTool())
-    r.register(QuroAidlAciCallTool())
-    // ACI HTTP 模拟服务器（当真实 API 尚未完成时使用）
-    r.register(QuroAciHttpServerTool())
-    // 工作区 AI 工具：AI 直接读写 ZorvAI 自己的 QuroWorkspace（与构建台 ACI 协作）
+    // 工作区 AI 工具：AI 直接读写 ZorvAI 自己的 QuroWorkspace
     r.register(WorkspaceWriteTool())
     r.register(WorkspaceReadTool())
     r.register(WorkspaceListTool())
@@ -340,25 +292,6 @@ fun buildQuroRegistry(context: Context? = null): QuroToolRegistry {
     r.register(WorkspaceDocTool())      // 工作区文档创建
     r.register(WorkspaceMediaTool())    // 工作区媒体播放（音乐/视频）
     r.register(WorkspaceDocViewTool())  // 工作区文档查看（系统应用打开）
-    // VNC 桌面环境工具
-    r.register(VncTool())
-    // 特权通道状态查询：AI 调用高风险能力前自查可用通道、自行选择
-    r.register(QuroPrivStatusTool())
-    // CMS v2 反馈环：状态/日志/结构化结果查询（让 AI 自我确认「部署/调用是否成功」）
-    r.register(QuroCmsStatusTool())
-    r.register(QuroCmsEngineStatusTool())
-    r.register(QuroCmsLogsTool())
-    r.register(QuroCmsResultTool())
-    // CMS v2 DAG 编排：按依赖执行一组 terminal 命令
-    r.register(QuroCmsRunDagTool())
-    // QuroTerm 自研沙盒终端能力（集成 NovaTerm为 QuroTerm）
-    r.register(QuroTermTool())
-    // #564 终端直用特权通道执行（Shizuku→ROOT 自动降级）：run=以 root 执行命令 / status=查特权通道
-    r.register(QuroPrivExecTool())
-    // #565 ADB 可当 ADB 终端（无线调试中枢）：shell=本机 ADB shell / tcp_status|tcp_enable|tcp_disable=管理 TCP adbd
-    r.register(QuroAdbTermTool())
-    // LSPosed/Xposed 模块 AI 直驱（完整对接）：status/foreground 读桥数据、enable/disable 写 lsposed_bridge.json 管控桥开关
-    r.register(QuroLsposeTool())
     // 记忆库：AI 自动沉淀长期记忆（保存/列出/检索/删除）
     r.register(QuroMemorySaveTool())
     r.register(QuroMemoryListTool())
@@ -467,16 +400,10 @@ fun buildQuroRegistry(context: Context? = null): QuroToolRegistry {
     r.register(LocalMusicPlayerTool())
     r.register(MusicPlayTool())
     r.register(LocalVideoPlayerTool())
-    // AI 自动化浏览器 + 联网搜索（后台可用）
-    r.register(AiBrowserTool())
-    // AI 操控内置浏览器（接管前台 WebView）：snapshot/click/fill/eval/wait/read
-    r.register(BrowserActTool())
     // AI 在 proot 容器内执行 Python 代码
     r.register(PythonRunTool())
     // AI 抓包：在 proot 容器内启动 mitmdump，flow 写到 /mnt/quro/mitm/
     r.register(PacketCaptureTool())
-    // AI 驱动网页爬虫：用内置浏览器 WebView 批量渲染抓取（支持 JS 动态页、同域限流、去重、导出 Markdown）
-    r.register(WebCrawlerTool())
     // 终端监控：proot 内读 /proc 暴露负载/内存/进程（无 root 的 Android 应用也可观测，无需 cgroups）
     r.register(TermMonitorTool())
     // 升级版知识库（add / search / list，后台可用）
@@ -532,22 +459,8 @@ fun buildQuroRegistry(context: Context? = null): QuroToolRegistry {
     // 与卡片栏那条老路（ui_control action:"update"，只覆盖少数字段）并存 ——
     // 本工具走 JSON Pointer 补丁，对全部组件一视同仁且新增组件无需登记。
     r.register(CardPatchTool())
-    // MCP 客户端工具：让 AI 调用外部 MCP 服务器暴露的工具（#402）
-    r.register(McpServersTool())
-    r.register(McpListToolsTool())
-    r.register(McpCallTool())
-    // MCP-ACI 桥接工具：让 AI 通过 ACI 调用外部 MCP 服务器的工具
-    r.register(McpAciListTool())
-    r.register(McpAciCallTool())
-    r.register(McpAciBridgeTool())
     // 工具发现工具：让 AI 主动查询工具能力目录，解决不会主动使用工具的问题
     r.register(ToolDiscoveryTool())
-    // KaleidoBox 工具包运行器：让 AI 以进程内 JVM / Dex 引擎运行 Kotlin/Java 工具包（list/install/invoke）
-    r.register(QuroKaleidoBoxTool())
-    // 本地 MCP 部署工具：AI 创作并部署 MCP 服务器到本应用内（#Task8）
-    r.register(McpDeployTool())
-    r.register(McpUndeployTool())
-    r.register(McpListLocalTool())
     // 广义 IDE 集成工具：图形/视频/音频/3D/游戏/低代码/代码 IDE 的完整知识库和调用能力
     r.register(CreativeStudioTool())
     // 可视化问答和操作弹窗工具
@@ -603,16 +516,6 @@ fun buildQuroRegistry(context: Context? = null): QuroToolRegistry {
         r.register(QuroTaskSchedulerTool(ctx))   // task_scheduler  ：定时任务调度（Cron）
         r.register(QuroDataManagerTool(ctx))     // data_manager    ：数据导出 / 导入 / 加密备份
     }
-    // APK 级插件框架：插件管理工具（plugin_list / plugin_info / plugin_install / plugin_uninstall / plugin_reload）。
-    // 注册进运行时注册表后，它们既下发给 LLM 又能被 engine 真正执行；
-    // 插件自己贡献的 AI 工具不进 map（其执行体是 suspend，由 QuroToolEngine 单独分支处理），
-    // 只通过 coreSpecs() 里的 pluginHostToolSpecs() 下发给 LLM。
-    allPluginManagementTools.forEach { r.register(it) }
-    // 新集群（tool-first 重写）：一组 cluster_* 工具。
-    //   🔴 必须在 ToolCapabilityDirectory.install(...) **之前**注册 —— 目录与 RAG 索引都以
-    //   install 那一刻的 fullSpecs() 为快照；晚注册的工具不会进目录，match_intent 意图检索
-    //   就永远召不回 cluster_start（表现为「明明有集群功能，助手却说不会」）。
-    com.ai.assistance.quro.core.cluster.ClusterToolSet.registerAll(r)
     // 工具能力目录以真实注册表为单一真相源动态生成（修复「分组目录残缺→AI 查不到/不主动用工具」）
     // 用 fullSpecs()（内置全部 + 技能工具），与模型实际下发集合严格一致（core/full 模式下目录==可调用全集）
     ToolCapabilityDirectory.install(r.fullSpecs())
